@@ -5,11 +5,15 @@ services:
     env_file: .env
     ports:
       - "${PORT:-8000}:8000"
+    # Connects to the ONE shared Phansora Postgres (owned by the phansora
+    # frontend stack — container `phansora_postgres`), never a DB of its own.
+    # When running via this compose, set DB_HOST=host.docker.internal in .env so
+    # the container reaches the host-published port (5433 dev / 5432 prod).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
       - media:/app/book_alchemy
-    depends_on:
-      - db
     restart: unless-stopped
 
   worker:
@@ -17,28 +21,12 @@ services:
     build: .
     command: ["python", "-m", "phansora.products.spokenverse.worker"]
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
       - media:/app/book_alchemy
-    depends_on:
-      - db
-    restart: unless-stopped
-
-  db:
-    image: postgres:16-alpine
-    # Credentials come from .env (via Compose variable interpolation). No inline
-    # fallbacks — a literal here trips secret scanners (GitGuardian) and risks a
-    # weak default reaching production.
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-    ports:
-      - "${DB_PORT}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
 volumes:
-  pgdata:
   media:
