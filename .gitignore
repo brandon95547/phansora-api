@@ -16,7 +16,8 @@ ENV/
 
 # Env / secrets
 .env
-.env.local
+.env.*
+!.env.example
 
 # IDEs / editors
 .vscode/
@@ -37,20 +38,40 @@ htmlcov/
 # Logs
 *.log
 
-# ── Runtime / generated data ──
-# Product working dirs (created at runtime)
-/book_alchemy/
+# ─────────────────────────────────────────────────────────────────────────────
+# USER-GENERATED / RUNTIME DATA — never tracked.
+# Created when users run conversions/generations. Anchored at the runtime root
+# (repo root in dev, PHANSORA_DATA_DIR in prod). The directory structure is kept
+# via .gitkeep files; the contents are ignored.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# SpokenVerse — generated audio/text, history, upload staging
+output_audio/
+output_txt/
 history/
 input_pdf/
 input_txt/
-output_audio/
-output_txt/
 .tmp_uploads/
 
-# Local vector store & caches are shipped as seed data under data/; ignore
-# regenerated/large ones if they grow. Uncomment to stop tracking seed data:
-# data/dossier_nova/embeddings.db
-# data/chrono_origin/cache/
+# Book Alchemy — per-user source uploads + narrated session audio
+/book_alchemy/
+
+# Dossier Nova — temp uploads + generated TOC output
+tmp/
+toc/
+
+# Dossier Nova — cumulative local vector store (appended to on every generation)
+data/dossier_nova/*
+!data/dossier_nova/.gitkeep
+
+# Chrono-Origin — cached trace results (written on every trace)
+data/chrono_origin/cache/*
+!data/chrono_origin/cache/.gitkeep
+
+# Any stray SQLite stores
+*.db
+*.sqlite
+*.sqlite3
 
 # systemd unit files are environment-specific
 *.service
