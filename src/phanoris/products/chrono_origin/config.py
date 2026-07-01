@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     cors_allow_origins: str = "*"
 
     # Cache
-    chrono_cache_dir: str = "./cache"
+    chrono_cache_dir: str = "./data/chrono_origin/cache"
 
     @property
     def cors_origins_list(self) -> List[str]:

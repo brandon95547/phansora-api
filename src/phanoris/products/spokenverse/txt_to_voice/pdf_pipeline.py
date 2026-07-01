@@ -59,9 +59,9 @@ class PdfToTxtConfig:
 
 class PdfConverter:
     def __init__(self, cfg: PdfToTxtConfig | None = None) -> None:
-        # Load .env from project root (spokenverse/.env)
-        project_root = Path(__file__).resolve().parents[2]
-        load_dotenv(dotenv_path=project_root / ".env")
+        # Load .env from the process runtime root (repo root / PHANORIS_DATA_DIR).
+        from phanoris.shared.paths import runtime_root
+        load_dotenv(dotenv_path=runtime_root() / ".env")
 
         self.cfg = cfg or PdfToTxtConfig()
         self.chat_cfg = DeepSeekChatConfig.from_env()

@@ -19,10 +19,11 @@ from .config import Config
 from .utils import serialize_vector, deserialize_vector, hash_text
 
 
-# Anchor paths to the package directory so running
-# `python -m tomeweaver` from another folder still keeps data
-# inside the tomeweaver project.
-BASE_DIR = Path(__file__).resolve().parent
+from phanoris.shared.paths import runtime_dir
+
+# The cumulative SQLite vector store ships as seed data and is written to at
+# runtime, so it lives under the runtime data root, not inside the package.
+DEFAULT_DB_PATH = runtime_dir("data", "dossier_nova", "embeddings.db")
 
 
 class EmbeddingStore:
@@ -33,10 +34,11 @@ class EmbeddingStore:
         Args:
             config: Config instance (provides similarity_threshold, dimensions, etc.).
             db_path: Optional override for the SQLite DB path. If None, defaults
-                     to <package_dir>/embeddings.db.
+                     to <runtime_root>/data/dossier_nova/embeddings.db.
         """
         self.config = config
-        self.db_path = Path(db_path) if db_path is not None else BASE_DIR / "embeddings.db"
+        self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # --- SQLite setup ---
         self.conn = sqlite3.connect(str(self.db_path))

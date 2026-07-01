@@ -21,12 +21,6 @@ import logging
 import os
 import signal
 import socket
-import sys
-from pathlib import Path
-
-# Make `src/` importable exactly like server.py does.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()

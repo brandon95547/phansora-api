@@ -14,10 +14,6 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path as _Path
-sys.path.insert(0, str(_Path(__file__).resolve().parent / "src"))
-
 import asyncio
 import os
 import re
@@ -32,6 +28,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from phanoris.shared.paths import runtime_root
 from phanoris.shared.utils.email import send_email
 from phanoris.products.spokenverse.txt_to_voice.adapters.backend import discover_voices
 from phanoris.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
@@ -42,7 +39,7 @@ from phanoris.products.spokenverse.txt_to_voice.pipeline import BatchConverter, 
 # Paths
 # ----------------------------
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = runtime_root()
 OUTPUT_TXT_DIR = PROJECT_ROOT / "output_txt"
 OUTPUT_AUDIO_DIR = PROJECT_ROOT / "output_audio"
 TMP_UPLOADS_DIR = PROJECT_ROOT / ".tmp_uploads"

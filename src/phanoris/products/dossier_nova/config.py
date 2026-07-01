@@ -4,8 +4,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 import openai
 
+from phanoris.shared.paths import runtime_root
 
-BASE_DIR = Path(__file__).resolve().parent
+# Default input/output paths live under the runtime root (CWD / PHANORIS_DATA_DIR),
+# not inside the installed package. Both are overridable via env.
+BASE_DIR = runtime_root()
 
 
 def _get_int_env(name: str, default: int) -> int:

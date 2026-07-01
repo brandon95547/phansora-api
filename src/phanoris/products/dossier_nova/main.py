@@ -36,9 +36,10 @@ from .validation import (
     compute_duplication_ratio,
 )
 from .text_cleaner import clean_extracted_text
+from phanoris.shared.paths import runtime_root
 
-# This is the tomeweaver/ folder, no matter where you run `python -m tomeweaver`
-BASE_DIR = Path(__file__).resolve().parent
+# Runtime data root (CWD / PHANORIS_DATA_DIR), not the installed package dir.
+BASE_DIR = runtime_root()
 
 
 # ------------------------------------------------------------------

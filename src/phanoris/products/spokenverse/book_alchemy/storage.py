@@ -8,8 +8,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# spokenverse project root = .../spokenverse (parents: book_alchemy -> src -> root)
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from phanoris.shared.paths import runtime_root
+
+# Anchored on the process runtime root (CWD / PHANORIS_DATA_DIR), same disk as
+# output_audio/, one folder per user/project: book_alchemy/<user_id>/<project_id>/
+PROJECT_ROOT = runtime_root()
 BASE_DIR = PROJECT_ROOT / "book_alchemy"
 
 
