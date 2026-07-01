@@ -64,13 +64,26 @@ class DeepSeekChatConfig:
         default_base_url: str = "https://api.deepseek.com",
         default_model: str = "deepseek-chat",
     ) -> "DeepSeekChatConfig":
-        base_url = os.getenv("DEEPSEEK_CHAT_BASE_URL", default_base_url).rstrip("/")
-        api_key = os.getenv("DEEPSEEK_CHAT_API_KEY", "").strip()
-        model = os.getenv("DEEPSEEK_CHAT_MODEL", default_model).strip()
+        # Canonical vars are DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL
+        # (shared with Dossier Nova). The legacy DEEPSEEK_CHAT_* names are still
+        # honored as a fallback so existing deployments keep working.
+        base_url = (
+            os.getenv("DEEPSEEK_BASE_URL")
+            or os.getenv("DEEPSEEK_CHAT_BASE_URL")
+            or default_base_url
+        ).rstrip("/")
+        api_key = (
+            os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY") or ""
+        ).strip()
+        model = (
+            os.getenv("DEEPSEEK_MODEL")
+            or os.getenv("DEEPSEEK_CHAT_MODEL")
+            or default_model
+        ).strip()
 
         if not api_key:
             raise RuntimeError(
-                "Missing DEEPSEEK_CHAT_API_KEY environment variable. Set it in .env."
+                "Missing DEEPSEEK_API_KEY environment variable. Set it in .env."
             )
 
         return DeepSeekChatConfig(base_url=base_url, api_key=api_key, model=model)
