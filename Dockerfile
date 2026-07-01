@@ -1,4 +1,4 @@
-# Phanoris API — unified image (serves all products; also runs the worker)
+# Phansora API — unified image (serves all products; also runs the worker)
 FROM python:3.11-slim
 
 # System dependencies:
@@ -28,4 +28,4 @@ RUN pip install -e .
 ENV HOST=0.0.0.0 PORT=8000
 EXPOSE 8000
 
-CMD ["uvicorn", "phanoris.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "phansora.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

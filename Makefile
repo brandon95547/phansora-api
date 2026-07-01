@@ -1,4 +1,4 @@
-# Phanoris API — developer tasks
+# Phansora API — developer tasks
 .PHONY: help install dev run worker test compile docker-build docker-up docker-down clean
 
 VENV ?= .venv
@@ -18,13 +18,13 @@ install: ## Create venv and install dependencies
 	$(PIP) install -e .
 
 dev: ## Run the unified API with autoreload
-	$(PY) -m uvicorn phanoris.main:app --host $(HOST) --port $(PORT) --reload
+	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --reload
 
 run: ## Run the unified API (no reload)
-	$(PY) -m uvicorn phanoris.main:app --host $(HOST) --port $(PORT) --workers 2
+	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --workers 2
 
 worker: ## Run the SpokenVerse / Book Alchemy durable worker
-	$(PY) -m phanoris.products.spokenverse.worker
+	$(PY) -m phansora.products.spokenverse.worker
 
 test: ## Run the test suite
 	$(PY) -m pytest -q

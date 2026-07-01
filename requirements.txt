@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Phanoris API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
+# Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
 # Torch reconciliation: SpokenVerse (StyleTTS2) needs the GPU build
 # torch==2.5.1+cu124; Dossier Nova (sentence-transformers/faiss) previously

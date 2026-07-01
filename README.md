@@ -1,6 +1,6 @@
-# Phanoris API
+# Phansora API
 
-The unified Python backend for [phanoris.com](https://phanoris.com) — a platform
+The unified Python backend for [phansora.com](https://phansora.com) — a platform
 that hosts multiple AI products behind a single FastAPI application. It
 consolidates three formerly separate services:
 
@@ -13,11 +13,11 @@ consolidates three formerly separate services:
 ## Layout
 
 ```
-phanoris-api/
-├── src/phanoris/
+phansora-api/
+├── src/phansora/
 │   ├── main.py                 # unified FastAPI app — mounts each product
 │   ├── config.py               # platform-level settings
-│   ├── cli.py                  # `phanoris serve|tts|dossier`
+│   ├── cli.py                  # `phansora serve|tts|dossier`
 │   ├── shared/                 # cross-cutting infra (product -> shared only)
 │   │   ├── ai/                 #   anthropic + deepseek clients
 │   │   ├── auth/  billing/     #   platform scaffolds (Square credit system)
@@ -46,7 +46,7 @@ product → shared. A smoke test enforces this.
 ```bash
 cp .env.example .env          # fill in API keys / DB creds
 make install                  # venv + pip install -r requirements.txt + pip install -e .
-make dev                      # uvicorn phanoris.main:app --reload
+make dev                      # uvicorn phansora.main:app --reload
 ```
 
 System packages required: `ffmpeg`, `tesseract-ocr`, `espeak-ng`.
@@ -61,22 +61,22 @@ Then:
 
 Products are mounted only if they import cleanly. A host missing one product's
 heavy optional deps (torch, faiss, styletts2, asyncpg…) still serves the rest.
-Restrict what's mounted with `PHANORIS_ENABLED_PRODUCTS=spokenverse,chrono_origin`.
+Restrict what's mounted with `PHANSORA_ENABLED_PRODUCTS=spokenverse,chrono_origin`.
 
 ### Book Alchemy worker
 
 Book Alchemy runs long jobs in a separate durable process:
 
 ```bash
-make worker        # python -m phanoris.products.spokenverse.worker
+make worker        # python -m phansora.products.spokenverse.worker
 ```
 
 ### CLI
 
 ```bash
-phanoris serve                 # run the API
-phanoris tts   --help          # SpokenVerse batch TTS / PDF->TXT
-phanoris dossier --help        # Dossier Nova pipeline
+phansora serve                 # run the API
+phansora tts   --help          # SpokenVerse batch TTS / PDF->TXT
+phansora dossier --help        # Dossier Nova pipeline
 ```
 
 ## Dependencies note

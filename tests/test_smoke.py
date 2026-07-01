@@ -10,12 +10,12 @@ import pytest
 
 
 def test_package_imports():
-    pkg = importlib.import_module("phanoris")
+    pkg = importlib.import_module("phansora")
     assert pkg.__version__
 
 
 def test_config_loads():
-    from phanoris.config import settings
+    from phansora.config import settings
 
     assert settings.app_name
     assert isinstance(settings.cors_allow_origins, list)
@@ -23,7 +23,7 @@ def test_config_loads():
 
 def test_shared_utils_import():
     # Dependency-light helpers should import cleanly with no third-party stack.
-    from phanoris.shared.utils import chunking, naming
+    from phansora.shared.utils import chunking, naming
 
     assert callable(chunking.chunk_text)
     assert callable(naming.sanitize_stem)
@@ -31,20 +31,20 @@ def test_shared_utils_import():
 
 def test_shared_does_not_import_products():
     """Guard the platform -> product dependency direction: no shared module may
-    reference phanoris.products."""
+    reference phansora.products."""
     import pathlib
 
-    shared_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "phanoris" / "shared"
+    shared_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "phansora" / "shared"
     offenders = [
         str(p)
         for p in shared_dir.rglob("*.py")
-        if "phanoris.products" in p.read_text(encoding="utf-8")
+        if "phansora.products" in p.read_text(encoding="utf-8")
     ]
     assert not offenders, f"shared/ must not import products: {offenders}"
 
 
 @pytest.mark.parametrize("module", [
-    "phanoris.shared.ai.anthropic",
+    "phansora.shared.ai.anthropic",
 ])
 def test_optional_ai_client_import(module):
     """shared.ai.anthropic imports the 'anthropic' SDK; skip if not installed."""

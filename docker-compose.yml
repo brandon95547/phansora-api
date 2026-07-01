@@ -1,7 +1,7 @@
 services:
   api:
     build: .
-    image: phanoris-api
+    image: phansora-api
     env_file: .env
     ports:
       - "${PORT:-8000}:8000"
@@ -13,9 +13,9 @@ services:
     restart: unless-stopped
 
   worker:
-    image: phanoris-api
+    image: phansora-api
     build: .
-    command: ["python", "-m", "phanoris.products.spokenverse.worker"]
+    command: ["python", "-m", "phansora.products.spokenverse.worker"]
     env_file: .env
     volumes:
       - ./data:/app/data
@@ -27,9 +27,9 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${DB_USER:-phanoris}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-phanoris}
-      POSTGRES_DB: ${DB_NAME:-phanoris}
+      POSTGRES_USER: ${DB_USER:-phansora}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-phansora}
+      POSTGRES_DB: ${DB_NAME:-phansora}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:

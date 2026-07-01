@@ -1,7 +1,7 @@
 [project]
-name = "phanoris-api"
+name = "phansora-api"
 version = "0.1.0"
-description = "Phanoris platform API — unified backend for SpokenVerse, Chrono-Origin and Dossier Nova."
+description = "Phansora platform API — unified backend for SpokenVerse, Chrono-Origin and Dossier Nova."
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 readme = "README.md"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-phanoris = "phanoris.cli:main"
+phansora = "phansora.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
