@@ -33,6 +33,7 @@ from phansora.shared.utils.email import send_email
 from phansora.products.spokenverse.txt_to_voice.adapters.backend import discover_voices
 from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
+from phansora.products.spokenverse import voices as voice_store
 
 
 # ----------------------------
@@ -375,8 +376,16 @@ async def txt_to_audio(
     await _save_upload(file, txt_path)
     user_audio_dir = _user_audio_dir(safe_user)
 
+    # A non-"default" voice may be one of the user's saved cloned voices; resolve
+    # its id to the on-disk reference clip StyleTTS2 clones from.
+    resolved_voice = voice
+    if voice and voice != "default":
+        clip = voice_store.voice_path(safe_user, voice)
+        if clip is not None:
+            resolved_voice = str(clip)
+
     cfg = TTSConfig(
-        voice=voice,
+        voice=resolved_voice,
         use_gpu=use_gpu,
         rate=rate,
         volume=volume,
@@ -531,6 +540,81 @@ async def tts_options() -> dict:
             "volume": "accepted for compatibility; currently ignored by backend",
         },
     }
+
+
+# ----------------------------
+# Custom voices (StyleTTS2 cloning)
+# ----------------------------
+
+@app.post("/voices/preview", response_model=None)
+async def voice_preview(
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+) -> dict:
+    """Upload a reference clip; trim to <=90s and normalize to 24kHz mono WAV.
+
+    Returns a token used to preview and then approve/discard. Nothing is saved as
+    a usable voice until it is approved.
+    """
+    safe_user = _safe_user_id(user_id)
+    job_id = uuid.uuid4().hex
+    ext = _safe_ext(file.filename or "") or ".bin"
+    tmp_path = TMP_UPLOADS_DIR / f"voice_{job_id}{ext}"
+    await _save_upload(file, tmp_path)
+    try:
+        result = voice_store.create_pending(safe_user, tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not process audio: {e}") from e
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return result
+
+
+@app.get("/voices/preview/{token}", response_model=None)
+async def voice_preview_audio(token: str, user_id: str) -> FileResponse:
+    p = voice_store.pending_path(_safe_user_id(user_id), token)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Preview not found or expired.")
+    return FileResponse(path=str(p), media_type="audio/wav", filename=f"{token}.wav")
+
+
+@app.post("/voices/{token}/approve", response_model=None)
+async def voice_approve(
+    token: str,
+    user_id: str = Form(...),
+    name: str = Form("My Voice"),
+) -> dict:
+    rec = voice_store.approve(_safe_user_id(user_id), token, name)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Preview not found or expired.")
+    return {"ok": True, "voice": rec}
+
+
+@app.post("/voices/{token}/discard", response_model=None)
+async def voice_discard(token: str, user_id: str = Form(...)) -> dict:
+    voice_store.discard_pending(_safe_user_id(user_id), token)
+    return {"ok": True}
+
+
+@app.get("/voices", response_model=None)
+async def voice_list(user_id: str) -> dict:
+    return {"ok": True, "voices": voice_store.list_voices(_safe_user_id(user_id))}
+
+
+@app.get("/voices/{voice_id}/audio", response_model=None)
+async def voice_audio(voice_id: str, user_id: str) -> FileResponse:
+    p = voice_store.voice_path(_safe_user_id(user_id), voice_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Voice not found.")
+    return FileResponse(path=str(p), media_type="audio/wav", filename=f"{voice_id}.wav")
+
+
+@app.delete("/voices/{voice_id}", response_model=None)
+async def voice_delete(voice_id: str, user_id: str) -> dict:
+    existed = voice_store.delete_voice(_safe_user_id(user_id), voice_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail="Voice not found.")
+    return {"ok": True}
 
 
 @app.get("/users/{user_id}/history")

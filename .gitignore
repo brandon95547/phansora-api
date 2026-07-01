@@ -45,13 +45,14 @@ htmlcov/
 # via .gitkeep files; the contents are ignored.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# SpokenVerse — generated audio/text, history, upload staging
+# SpokenVerse — generated audio/text, history, upload staging, custom voices
 output_audio/
 output_txt/
 history/
 input_pdf/
 input_txt/
 .tmp_uploads/
+voices/
 
 # Book Alchemy — per-user source uploads + narrated session audio
 /book_alchemy/
