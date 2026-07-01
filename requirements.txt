@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Phanoris API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
+#
+# Torch reconciliation: SpokenVerse (StyleTTS2) needs the GPU build
+# torch==2.5.1+cu124; Dossier Nova (sentence-transformers/faiss) previously
+# pinned CPU torch==2.2.2. We standardize on the cu124 build — 2.5.x is
+# compatible with sentence-transformers >=2.7. For a CPU-only host, swap the
+# index URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
+#
+# System packages required: ffmpeg, tesseract-ocr, espeak-ng
+# ─────────────────────────────────────────────────────────────────────────────
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124
+torchaudio==2.5.1+cu124
+
+# Shared numeric / runtime pins
+numpy<2
+typing-extensions>=4.14.1
+filelock>=3.12.4,<3.13
+networkx>=2.8.8,<3.0.0
+
+# ── Web framework (all products) ──
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ── Config / HTTP ──
+python-dotenv
+httpx
+aiohttp
+tenacity
+orjson
+
+# ── AI clients ──
+anthropic>=0.49          # chrono_origin — Claude grounded web search
+openai>=1.51.0           # dossier_nova — DeepSeek via OpenAI-compatible API
+pydantic>=2.6            # chrono_origin models
+pydantic-settings>=2.2   # chrono_origin settings
+
+# ── SpokenVerse: TTS + media ──
+styletts2==0.1.6
+numba<0.61; sys_platform == "darwin" and platform_machine == "x86_64"
+pymupdf
+pillow
+pytesseract
+faster-whisper
+aiosmtplib
+
+# ── SpokenVerse Book Alchemy: source parsing + Postgres ──
+asyncpg
+python-docx
+ebooklib
+beautifulsoup4
+trafilatura
+markdown
+mobi
+
+# ── Dossier Nova: local embeddings ──
+faiss-cpu>=1.7.4
+transformers>=4.40,<5.0
+sentence-transformers>=2.7,<3.0

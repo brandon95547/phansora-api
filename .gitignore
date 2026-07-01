@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+src/*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Env / secrets
+.env
+.env.local
+
+# IDEs / editors
+.vscode/
+.idea/
+*.swp
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# ── Runtime / generated data ──
+# Product working dirs (created at runtime)
+/book_alchemy/
+history/
+input_pdf/
+input_txt/
+output_audio/
+output_txt/
+.tmp_uploads/
+
+# Local vector store & caches are shipped as seed data under data/; ignore
+# regenerated/large ones if they grow. Uncomment to stop tracking seed data:
+# data/dossier_nova/embeddings.db
+# data/chrono_origin/cache/
+
+# systemd unit files are environment-specific
+*.service

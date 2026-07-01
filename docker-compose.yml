@@ -1,0 +1,41 @@
+services:
+  api:
+    build: .
+    image: phanoris-api
+    env_file: .env
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - ./data:/app/data
+      - media:/app/book_alchemy
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  worker:
+    image: phanoris-api
+    build: .
+    command: ["python", "-m", "phanoris.products.spokenverse.worker"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - media:/app/book_alchemy
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-phanoris}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-phanoris}
+      POSTGRES_DB: ${DB_NAME:-phanoris}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:

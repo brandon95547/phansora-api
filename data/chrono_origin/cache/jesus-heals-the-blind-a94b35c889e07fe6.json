@@ -1,0 +1,624 @@
+{
+  "title": "jesus heals the blind",
+  "normalized_title": "jesus heals the blind",
+  "origin": {
+    "year": -2640,
+    "era_label": null,
+    "precision": "year",
+    "source_title": "Ancient Egyptian Medical Beliefs",
+    "summary": "The earliest defensible origin for the story's core concept is the established link between divinity and eye diseases in ancient Egypt, dating to at least 2640 BC. Medical papyri from the period show that physicians believed many eye ailments were punishments from the divine. This foundational belief, connecting supernatural forces with the cause of blindness, created the necessary cultural context for later narratives about the divine healing of sight.",
+    "citations": [
+      {
+        "title": "nih.gov",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFpXd6qiOMPIftaK_9Gu_0Uc3pSQ2osDf5bfDFFZ8RQTsUSb2i8lE8VHxETCbhUhaeqktvwjqtcOVqq1yFD1IuoA2A_7hYjfGRlJRTEJoFa7CXsCNEc7keY8K8FanFTbaTEdTcS8Ij_J8-48I2y",
+        "snippet": null
+      }
+    ],
+    "confidence": 0.8
+  },
+  "timeline": [
+    {
+      "year": 125,
+      "era_label": "A.D. 100-150",
+      "precision": "decade",
+      "source_title": "Early Papyrus Fragments (P52, P90, P104)",
+      "claim": "The existence of the written Gospel narratives in the early 2nd century is confirmed by physical evidence, such as the Ryland Papyrus P52 (John) and Papyrus P104 (Matthew).",
+      "citations": [
+        {
+          "title": "biblearchaeologyreport.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG3iVbsoXFQHf4AaW9XyWUbJ4Li_X02MGif0gzh___id-yESCmZ9Hge8B6JLTaIcRsybfgwTSY1ORgb8zY6DdyML7QPeOTNQMwwK0LAObLa03iV4159V4DK6nDfaR7LfVLrogTPB4Xbzd_ax104a5ntbBGNFV-cKPdc2S-lndyCMwZWj2EQU0dbhhzDW42dFA==",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 550,
+      "era_label": "6th century",
+      "precision": "century",
+      "source_title": "Sant' Appollinare Nuovo mosaic",
+      "claim": "A 6th-century mosaic in Ravenna, Italy, provides an early artistic retelling of the story, depicting the healing of the blind man at Jericho.",
+      "citations": [
+        {
+          "title": "biblemythhistory.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1MBhFosg1TGBM4BQmw72os1vWZMgAP1jzD4fQNsCGGh1IavLvWdMUcuSwS6xvWiGw4jTT6AMenIZ2yC5KtBONtckKZ7DgM6E5VqlgxZdDDgUddjQjo4KTb-V_a00F4orGlpkoMtVXPxO2vFcGFiS6vpR_PEnbR86CXNk79p3022v373PlyUIcZTjepIlkvmIFXGJg6CDy5V0q7WAZZzY=",
+          "snippet": null
+        },
+        {
+          "title": "journeywithjesus.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHziHT-KPSZchckM9766FCdtU0nRem2Bhln7zAINXAbUNgW0ZO8TsjEqqhoROKEJ6vrzCqgIEYR78BgfFnO8ShB07u97K0EpUi-hnYrJQglDZMmFTl1PMA2g_UPH3Bb4GS3I__WYRnJNjriM185KgTn-Up4i8Ce",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 850,
+      "era_label": "9th century",
+      "precision": "century",
+      "source_title": "Carolingian Andrews diptych",
+      "claim": "The story continued to be retold in art, as evidenced by a 9th-century Carolingian ivory diptych depicting the healing of the blind.",
+      "citations": [
+        {
+          "title": "biblemythhistory.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1MBhFosg1TGBM4BQmw72os1vWZMgAP1jzD4fQNsCGGh1IavLvWdMUcuSwS6xvWiGw4jTT6AMenIZ2yC5KtBONtckKZ7DgM6E5VqlgxZdDDgUddjQjo4KTb-V_a00F4orGlpkoMtVXPxO2vFcGFiS6vpR_PEnbR86CXNk79p3022v373PlyUIcZTjepIlkvmIFXGJg6CDy5V0q7WAZZzY=",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 1050,
+      "era_label": "11th century",
+      "precision": "century",
+      "source_title": "Armenian illuminated manuscript",
+      "claim": "An 11th-century Armenian illuminated manuscript illustrates the specific story of Jesus healing Bartimaeus, showing the narrative's persistence across different cultures.",
+      "citations": [
+        {
+          "title": "journeywithjesus.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHziHT-KPSZchckM9766FCdtU0nRem2Bhln7zAINXAbUNgW0ZO8TsjEqqhoROKEJ6vrzCqgIEYR78BgfFnO8ShB07u97K0EpUi-hnYrJQglDZMmFTl1PMA2g_UPH3Bb4GS3I__WYRnJNjriM185KgTn-Up4i8Ce",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": null,
+      "era_label": "Homeric Era",
+      "precision": "era",
+      "source_title": "Homer's Iliad",
+      "claim": "The Greek epic poem, the Iliad, contains a narrative of divine intervention in sight, where the goddess Athena lifts a mist from the eyes of the hero Diomedes, allowing him to see clearly.",
+      "citations": [
+        {
+          "title": "oraltradition.org",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFT_kLKsd1-Cz23MoBp1saVgoQhuYSeOM2ICjcnH7G5YiMhE7rjl7hp6wB-ErxZddCmcNfxjSuSpMH8N-lKi_ogDFjnMfQmNfQ4s8q6XmQc-sB7N_sQ",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "year": null,
+      "era_label": "Ancient Greece",
+      "precision": "era",
+      "source_title": "Cult of Athena",
+      "claim": "In religious practice, the Greek goddess Athena was specifically honored for her ability to cure eye diseases, earning her epithets such as 'Ophthalmitis' (of the eyes).",
+      "citations": [
+        {
+          "title": "wikipedia.org",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF2swAi-S4M_qKjULKh6_3lctHrCJwZ9EMhM1RvX6W0DghYWDiJeciYY8v7whkbTh_zMBRyPRz_63hxonVgxTXyD3n1cMdzebC0NdMzBnbLp_sWMxaTLMgalVmJYRnt0Q==",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "year": null,
+      "era_label": "Old Testament Period",
+      "precision": "era",
+      "source_title": "Hebrew Scriptures (Genesis 21:19)",
+      "claim": "The book of Genesis provides an early Hebrew narrative of divine intervention in sight, describing God opening Hagar's eyes to see a well of water in the desert.",
+      "citations": [
+        {
+          "title": "biblehub.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQESE7RIcKuhX05o68-mO4geOK3uyB0dy_koh0nJ6PVD7HsKckLA6iLvs26CVSelesKNfrS5oSSALMiRG7CUh2juf2FYeFSZoloMwzGd2QtSpaKr-ManAr5MhL3FMFDAznyHJfnrjodg-DV0_xeNsKFC-gy09peZ4O_Cpq0cp3n72zU7sxY=",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": null,
+      "era_label": "pre-Christian",
+      "precision": "era",
+      "source_title": "Isaiah and the Dead Sea Scrolls",
+      "claim": "The book of Isaiah established a Jewish expectation that the blind receiving sight was a sign of the Messianic age, a belief confirmed to be present before Christian writings by the Dead Sea Scroll 4Q521.",
+      "citations": [
+        {
+          "title": "biblemythhistory.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1MBhFosg1TGBM4BQmw72os1vWZMgAP1jzD4fQNsCGGh1IavLvWdMUcuSwS6xvWiGw4jTT6AMenIZ2yC5KtBONtckKZ7DgM6E5VqlgxZdDDgUddjQjo4KTb-V_a00F4orGlpkoMtVXPxO2vFcGFiS6vpR_PEnbR86CXNk79p3022v373PlyUIcZTjepIlkvmIFXGJg6CDy5V0q7WAZZzY=",
+          "snippet": null
+        },
+        {
+          "title": "journeywithjesus.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFszdYcggMAKRPTXtTQJQeYqXJzYvDwAIkmHQdxiIqnzrAj3zY2pfKyVSYaJlX9E0Jqlx8S7CT8TCs8qrXbGTsDeICXu15ZWjJO4RvNpDQTJgPUvMBOnn7sIrR2bRv03bLErGYmKPl4DMdlgEZLRZ5WuZn-Dz3IrA==",
+          "snippet": null
+        },
+        {
+          "title": "journeywithjesus.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHziHT-KPSZchckM9766FCdtU0nRem2Bhln7zAINXAbUNgW0ZO8TsjEqqhoROKEJ6vrzCqgIEYR78BgfFnO8ShB07u97K0EpUi-hnYrJQglDZMmFTl1PMA2g_UPH3Bb4GS3I__WYRnJNjriM185KgTn-Up4i8Ce",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": null,
+      "era_label": "1st century CE",
+      "precision": "century",
+      "source_title": "New Testament Gospels",
+      "claim": "The story is explicitly told in the New Testament Gospels, written in the 1st century CE, with the Gospel of John recording Christ's healing of a man born blind.",
+      "citations": [
+        {
+          "title": "biblegateway.com",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF3nhd9AKGB1vy8iq2N-3t9bu6kpMWlKXs9dygSFbxHua2pvNRh4Tf7Bx0Na9eQW1a2HShHz7YYOp5wZ-rdDbZzXlLmH6dOXe0WnpH6EIetfPhejTrEnAUkJ1sgEu0ePgNCiI6duT4j9EJoN6F5ksXE6a6Xyjytu5jzoAxJknwZuPP3b2FDoP4=",
+          "snippet": null
+        },
+        {
+          "title": "journeywithjesus.net",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHziHT-KPSZchckM9766FCdtU0nRem2Bhln7zAINXAbUNgW0ZO8TsjEqqhoROKEJ6vrzCqgIEYR78BgfFnO8ShB07u97K0EpUi-hnYrJQglDZMmFTl1PMA2g_UPH3Bb4GS3I__WYRnJNjriM185KgTn-Up4i8Ce",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "reasoning": "The chain of evidence begins with the ancient world's association of divinity with eye conditions, first documented in Egypt. This general concept evolved into specific narratives of divine intervention in sight in both Greek (Homer's Iliad) and Hebrew (Genesis) traditions. Within the Jewish context, this idea was further refined into a specific Messianic prophecy (Isaiah, Dead Sea Scrolls), which directly set the theological stage for the New Testament accounts of Jesus healing the blind. The Gospels codified these accounts in the 1st century CE, with early manuscript evidence confirming their existence by the 2nd century. Later artistic retellings show the story's continued cultural importance. There is high confidence in this general trajectory, though the exact dating of oral traditions and ancient texts always carries some uncertainty.",
+  "confidence": 0.9,
+  "queries_run": [
+    "Earliest written accounts Jesus healing blind",
+    "Pre-Christian parallels divine healing blindness myths",
+    "Academic dating of Jesus blind healing narratives",
+    "Oldest New Testament manuscripts Jesus healing blind",
+    "Evolution of healing the blind story across early Christian texts",
+    "Ancient Near Eastern myths divine healing blindness",
+    "Pre-biblical traditions miraculous sight restoration",
+    "Egyptian myths gods granting sight",
+    "Mesopotamian literature healing eye ailments divine intervention",
+    "Oral traditions ancient world healing blindness scholarship",
+    "Hittite mythology divine healing sight",
+    "Ancient Near Eastern medical incantations eye healing",
+    "Bronze Age myths miraculous sight restoration",
+    "Sumerian deities healing eye ailments",
+    "Ancient curses blindness divine removal",
+    "Ugaritic texts divine restoration of sight",
+    "Vedic hymns divine restoration of vision",
+    "Pre-Israelite legends divine reversal of blindness curse",
+    "Mycenaean era myths divine healing eye ailments",
+    "Pre-biblical symbolism divine opening of eyes"
+  ],
+  "citations": [
+    {
+      "title": "biblemythhistory.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1MBhFosg1TGBM4BQmw72os1vWZMgAP1jzD4fQNsCGGh1IavLvWdMUcuSwS6xvWiGw4jTT6AMenIZ2yC5KtBONtckKZ7DgM6E5VqlgxZdDDgUddjQjo4KTb-V_a00F4orGlpkoMtVXPxO2vFcGFiS6vpR_PEnbR86CXNk79p3022v373PlyUIcZTjepIlkvmIFXGJg6CDy5V0q7WAZZzY=",
+      "snippet": null
+    },
+    {
+      "title": "journeywithjesus.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEy4YDDbcoWz9tTSCkxrM9g7imERlQk7u3HwrBucb5mqDw8lah5GAMM_-3Go78EoZEQ4i9wGMTDJcqtntLpG2oWjchu1EK_Z0lf7DB7CDAoTzXDjJ1nv6UdFPIp2oaJVIzeQRzC3xjBhjG_NijV7CUDaXe0Z9KI_A==",
+      "snippet": null
+    },
+    {
+      "title": "catholic.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEuDVNbK7e27LEYgkEYAu_1PFjmiuAMyNvGEgjRSU8ViCPov-NySKSgUFDiBDq3uFVrLKS9IRmLFBaQx89GWz2-Vhw3EP-9Dpv9_DAROfYdXpOFQAZOmdsWMPUm2Fba0LbV-OC6s5G3fGdVl8uJZAKZNnoylVNVKc7eF3jYy0AXLidQYxeZPij_T9k=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEzSgtU6b44mCeX6-qlnINA9Mo7xQI0GbKEd0b7f1AwGnBYUDJYmaP0rP2LFF7papEXY0ShC7xPsc5FVRxKBrBymS53lHrJOImwzsQ5S-VQaCM-DO4eoQpSGrKsqdxQ78wWNE3X8o9EEiMj_1ywRfcIottsuR34qHX9JXtspQ==",
+      "snippet": null
+    },
+    {
+      "title": "biblegateway.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHc-M2UqG2UsTELkpYDwkB2PSItoBXvaWFP60lAPz6riq13KY6hl9nSe8zzs7y94XRmd5eLxB7Jz-7Dn6kO1qUNsKSZW9KjDiN0q_Xv9_a6R3AsJhgw4zZZVCKM8p-Ueb14zcRJ40sir3e52vovr5JUMSm_SacpPsl4ekrJ",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFpdRnVZzqTcSCE5MzI-C0WwhdKaQARu6lgrcnNwSF0ZqIKHSrJYKIytPxlPW8j7NdnKxHA79aXoGitvFaHKqHoWLckTGHndgF58HAyE0cUID6eMciZCV28Hsu0Q3zJnwNg4E5wNg==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGmiGDxM0lKvabLYSTykxITaI6foRXQ5tr8RxbUj3e3g1uDmySPA0wqJYRN5sKRi0M0bmzAHd2UGpng2uXHoziuo9VgFjGp4SHxOH8fX1e141S1rlsH7olzj-0QCa5f-CQTAuIenYu_h8fyyz1TLwX-9OQOed0ixC4=",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFxWkjwLbKhk4yQz9_SJRQP83aY22VQax76-o1UH9mkloGLZrXHcumHbqUfOyanUTvY8Bgws1UVCyCn5YixTos7dIDdi-g04rsLeWMXTbi5E_hoXlYmz1p3QICfMNIBzqfc1BXZcqOXjOeDRN7YiQPWttc-Fl5HqATjKiUkpfTC-32tfvaHASrQ433vX3IoWkEfZGtIqQq62GZNfRr5qHFlGA==",
+      "snippet": null
+    },
+    {
+      "title": "journeywithjesus.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHziHT-KPSZchckM9766FCdtU0nRem2Bhln7zAINXAbUNgW0ZO8TsjEqqhoROKEJ6vrzCqgIEYR78BgfFnO8ShB07u97K0EpUi-hnYrJQglDZMmFTl1PMA2g_UPH3Bb4GS3I__WYRnJNjriM185KgTn-Up4i8Ce",
+      "snippet": null
+    },
+    {
+      "title": "byu.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFPQZJv8b5ZgXe8Xkqn2nShDpKrhYrhbxnH-UX58raLnyGfnKQwCz62fbcmOf4IsGfTet7M2uApTKJElG5gfMzOPK2A1VSkOhsesbfFZO4tkN2tJisMOS6GSiwqwGlDUtUxVSchxpGlAS-V1IL6tl95cRSEyH0BBIFW84IlKjLjr3M=",
+      "snippet": null
+    },
+    {
+      "title": "biblicaltheology.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEdXTytZP6jf-1N7G1BujqWHJeWRv6s2ESk344cAPmNjcyZ5k-ew1HluPENoPUAJmrUIuQed3TvNjowOMFxfoDbwOxCbHeck0dsO15i1-xYtI7MGJqQ3Bg5N-a6aTakX94pMENoMTDxWPSHG34mstHkNw==",
+      "snippet": null
+    },
+    {
+      "title": "catholic.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGFwaz_RIRGGPK-auUPTZSlC6SqaAl6EPjm7qpM25lNS5VLt-j4VmftH230e4QrP0YX1M1OKzsrSc9yB1hVkWeLWt_83bUHv43saF3sqYuzGFIJxsAa77D3ljzQFr5iTa8-gbNJQpXvq6enB1Er07CuWu1Bq9PwDLogJrHfmTC3655GY2GpuIX0BQ==",
+      "snippet": null
+    },
+    {
+      "title": "biblearchaeologyreport.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG3iVbsoXFQHf4AaW9XyWUbJ4Li_X02MGif0gzh___id-yESCmZ9Hge8B6JLTaIcRsybfgwTSY1ORgb8zY6DdyML7QPeOTNQMwwK0LAObLa03iV4159V4DK6nDfaR7LfVLrogTPB4Xbzd_ax104a5ntbBGNFV-cKPdc2S-lndyCMwZWj2EQU0dbhhzDW42dFA==",
+      "snippet": null
+    },
+    {
+      "title": "esv.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHFCJApD1pcFGdl-j6k11ony3GZ_nws6Rbw3WUhmYFqoT421Nc23GYogkyQiUw6YjQoXcTO_CHryTN87EJCmTUJ4MbAEnEPXnpDTdwl0F3XlrBXVZkvxMwfNLvrS7QeL8DPtxtigjcqTX7mda-NnPGtdDCOal-pJYDfAuthytM8eePsMvvgtVDuIgyUoldF",
+      "snippet": null
+    },
+    {
+      "title": "journeywithjesus.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEbBQLfHzJtER2uv7-qLoFKQKpGpq5Bhj7y99GUHj5XQ6tTy4FVSObyZPAOyYLNncH9tXsvi2PeoRnpx7QVVKAzDh41qYT8nIra7QIUF2JS9Hdo2NnczUHDN_JFrFnC5LRFel0i2SH2XQlRIeXWjrbj3qUVpA9N",
+      "snippet": null
+    },
+    {
+      "title": "biblegateway.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF3nhd9AKGB1vy8iq2N-3t9bu6kpMWlKXs9dygSFbxHua2pvNRh4Tf7Bx0Na9eQW1a2HShHz7YYOp5wZ-rdDbZzXlLmH6dOXe0WnpH6EIetfPhejTrEnAUkJ1sgEu0ePgNCiI6duT4j9EJoN6F5ksXE6a6Xyjytu5jzoAxJknwZuPP3b2FDoP4=",
+      "snippet": null
+    },
+    {
+      "title": "biblegateway.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGigz3FRn2_K9D8Sny6FCTRlcJz3tn-4w70WUXn8teMv8i4DFEugLW8W2rCm264pRD8t6lDeDZdRT9qlUsEWQqwwABHTa7cr4kMpx2_B1EldMY1fjFR-KWTksaKrJhow-lStHSYDoChqd5a01OgMmBhB0Z9AzxAQvAuL8U=",
+      "snippet": null
+    },
+    {
+      "title": "catholic.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHj13bt1A8o1D3MA-iKMr6kQQ9ysTfCu5_SouUv-SeN-P0RgKFWFMNiBSmtsVTNBCTmbuc5264C-wl7KFxXYU5mz-FIQ4gHLMB-qU73-41iOGyUfZLhQeE-BGhIzdcOD0-nAzhXX4i1DOx63DY0CpGzwQ6NTsv28o3cz6rneIyVPHdGLDLgUxkX1lg=",
+      "snippet": null
+    },
+    {
+      "title": "journeywithjesus.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFszdYcggMAKRPTXtTQJQeYqXJzYvDwAIkmHQdxiIqnzrAj3zY2pfKyVSYaJlX9E0Jqlx8S7CT8TCs8qrXbGTsDeICXu15ZWjJO4RvNpDQTJgPUvMBOnn7sIrR2bRv03bLErGYmKPl4DMdlgEZLRZ5WuZn-Dz3IrA==",
+      "snippet": null
+    },
+    {
+      "title": "medium.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGqVJ9qvuuAnzgndgYl32mbvgj0SbOOG07yKGLAjMAz22vortG_1w5Ie74XyszEtmn49WkAnilGIDWBhxQIiR5YkDHsIeAAYrapKyL5iXX_jlqN2DgQoUGrrFJeILrKanNwysps76qZZlVaCDszX0PEnsw4MLG55iyAHT_ntoOYzLAqJyHQhq-p8Ck=",
+      "snippet": null
+    },
+    {
+      "title": "jonathansrock.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHcstxXFSxFeAC2AsGAkgPXRilhdo-lEtB2xNayuPNG3kwVJIV7RN-EqIiGpfw0Cz_LLsUjcjsCETfaSchlv_VFjgnv2OXEWuaGqi6QvzUQVZeCeCntg1_ma2YWjAmsumq7wpfxM5P9EBaDTLRpk0Q2_qUASZG1oKIU02kG-_zKVLY8wWaNiOE=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFiLr7cIrQknyf1uMb7BzelVhzSyPrTEj-dOIFsg0WOh2M1JOJkx1AtYOymA5FHZ2C0NtJgY5Ghls8zP7uso74qC0E9P4BEptyHlah6md8COcz1RmeRVi3EVRMxe4U0Rz-JqncUFdLsLCaJ-SIbv4sqGAfvdZAD6gsu",
+      "snippet": null
+    },
+    {
+      "title": "wisdomlib.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG-zv56ZjQm2lRWqIckclhlHnVQkrRNbal5l77Ud_gyz_Sg21DAHXAAsuWjfx3Uy55D2TtTUavC9vwHzFS-T2ULVHW_4gzp42IgQCgY4Ug2rVYlRRuvPbHVmW4ZWchh_KX7Yqw9WKQbbl9toMNZ",
+      "snippet": null
+    },
+    {
+      "title": "encyclopedia.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE5ciM7370EcvxySdG83sGUOzimG__LBgh7gXDUdr3Lxo-VA-zogvBT2-J7bOBfeC4N6FWoyyysJ7F5cGjosmqE2M_ZvOMzXsJvJnDGPBpR4ZURyjD2Tt-mqbfnIGzm-5Ugsw_dXYvCzHazZS1k0JOvdU375wiFLoPgu_Wy0BDyoktU-72KN3RClwn-4sAq-XlorLLOJPcQqaJACWhVM2AqhIRLJHRmp8LSj-BiKA8KI4tIPBMKkotjgxzwFzdBJ96CsOmPqZq4WKqz7w==",
+      "snippet": null
+    },
+    {
+      "title": "scispace.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH8gxZ326mfbj5Qsk8u8iPbTWm9XJfjNw0y3Xhuk38ok1YKZebW9rRndKaLUoniB5v8qrZXR0qhjpy5Gb-z9FznJFH5m0s_uL0TNRza-u4f_bod1hPDqp7N_7MwBNFZDMF77hDLuOziIaqerTC1hnzV6I5EwSFRdz4Wy-zEp-sKQ-UzmNkUdhTASnWUoPgCSUM=",
+      "snippet": null
+    },
+    {
+      "title": "catholic-resources.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEy01k7pDJUvyWcmMcRQ6Jk2wkjGCJu6EaA8Ij9KLz1QAk5S3p_4hYpvNoHHzlnfG5_FAoUujH0pAaKXnCzx6RRAiC7QPWSKaq-EWHyKtKdareeFIK1jj5BCKsk_23lsQt1pPZ7AVYuioyD2av1R_5xi60FS7prFhbrYTfIRqM8LQrkgxh-KJ5UvDc=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEMbyAQKOqEUQMhjlzHBv2E6-B8EQNVyTqV636YEXceFEZtv5RgO7B--JYuHGdjAPu6UioMbjTykExEqpPLdJvCnqMAKYQmOHI-JvsEFm_kaLS7HW1TOZ8SrpTHIQ3KewrysoOPygB1XzhvKyU_pXEHChHPUqMMsr0=",
+      "snippet": null
+    },
+    {
+      "title": "biblehub.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE7HBHzUheq0WYSrc5s7qA10yjSd2XZdS-5Hh_u_7jUvsgoLgy-LiR-vGvUxXaKtDwrkjHC-ATGR0tDVKCrK7Ucy_s5O6F_qnxhdOEhw8YGq7l7DLUaqQgY6BxGnrP-D9UjTHxQEsRqr4SIDcuyorMiVZA=",
+      "snippet": null
+    },
+    {
+      "title": "biblehub.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQESE7RIcKuhX05o68-mO4geOK3uyB0dy_koh0nJ6PVD7HsKckLA6iLvs26CVSelesKNfrS5oSSALMiRG7CUh2juf2FYeFSZoloMwzGd2QtSpaKr-ManAr5MhL3FMFDAznyHJfnrjodg-DV0_xeNsKFC-gy09peZ4O_Cpq0cp3n72zU7sxY=",
+      "snippet": null
+    },
+    {
+      "title": "wisdomlib.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEXGObj6Dx6t38OWVes_N6Sb11eEFv9XzkeHwAxDYLsKSNjnvW681gOnYa_PelCXi1LK3hO0lWaGhXXVpDE7C_u33soG92jiGD9cl_I9BAZW3runxjF3g-mxrp_skKavzYe_lEQm1hNkZUSUn9cpZBy3KC58Kf1",
+      "snippet": null
+    },
+    {
+      "title": "pastorhogg.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFXKn5BU96DrZXy6slLZJNYc8qXfKNXhQgedGq8dqPknI8dNEXUaqpJtluhLfHi_xWqj7X_o3JNAipgrl4tPrAlnjjFfyfDZL-8QaFBd2bUei7UV-ejL5-PTX4ijcMlsuK3gtOg6BLn4q3WqeN2WMU6z4Gw0SCy8dX5E43Yakox0NOQ",
+      "snippet": null
+    },
+    {
+      "title": "brill.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFphIZVhVMqeUW_oCNWzVycV11YdFhwNUr8fT-0mI4llCx81GEJ2VkM4BOSN4Tn_cAVRzQpIPx6bmr_q33xWo3J_3loRR4gkXu6UfHQYJ_uBjEmvP_1L1pXPFJVLuMTwd5IXk09I3WoSszNHzW3lGf_E59qug==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGi4JSa8wIt1gulsmdjTxEI9aQy_lHbGiNaPh4OMOeKccpAmxcAQhpKlphxXQMEvEagUnty_Jsbax14X5aAKBd5cxuTfw5XSi_xSH6pK_nyYAjkj6pLk2hufCghFZDdGG2Rwmo-EA==",
+      "snippet": null
+    },
+    {
+      "title": "culturefrontier.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFvQxsRokULdsOwz8dr-zeFl9DDBS99C-G7_x9_armkYLRqOXhMsC5322YrPXOzm-kj3at46vnHiAoSBxX500TPZMw6luJE3o0grPcJ4hjPQrIzbReVPo1-2g94pJb0l6kZ7z1qNkdjzbPqRi7wfORO3CBzhL0p5UAG2VU=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdvnQVS8kge_a1JOulcMgnMhZ_voyVCRtEiZXkBvE4WSQEaSj0jcQ8mmEen8sUStfIuSiQL0UR6OcV4eaSl1_AGTRgrPn_rRkuR1VAo3tZh-gyUo-EIW_eWkSQoNLE",
+      "snippet": null
+    },
+    {
+      "title": "medium.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEaJKSP-lBXbK7chlN8wBdnbSlEih_Y73QvXqlO57Xlp13cY44drXXSpaENQLHHNLl6uBb1Z2qwID6HEiIbUwYoesFBapB0Aobqq_heDdi7A2-OHAXW3oHnsHUUm-NoZE_xBK1vQf8npxoXD3E0ad9vITmv_Z1RhWeQoN6ldMquG45QDiijvVYAK-BfnMflZ-_l1oBd0Mfn5EIJoCW7598y8kKbDTMBmPEiwsXmH3K7lW5atYDAF_MeE23fh8jlTU_tnNje",
+      "snippet": null
+    },
+    {
+      "title": "brewminate.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGRrsv6ORunJjczkumLtTZoHCUPWoNfrvQrREzwomRolpIy5-uSM1Rc4GaMkyPjwI0DYldot6ff0KkeXfHP1q6vNFxqWnnLPEaYB0SfCNTC0Ot9n4lZRaRF75C-Qn-Or1OLiHJu_PMHo1A3hlkcOQSSxDl5yqY=",
+      "snippet": null
+    },
+    {
+      "title": "worldhistory.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFQWfXeR0CgXBP1OxajeyPqtjd9WCpexgE6kh2W7PCHDKKpUfQ_QM5SQRvmBhMqcqnAAsio-c4AfT38s1P0fD_vqQIbC_p5klOg7Ezwp9M9gnRFmIiOBvvbReBfQTtUaH2S8XMjw7AMW52j_pCvKh7jT9pIxf3l-8t06RzeOKGYnEJZXVo=",
+      "snippet": null
+    },
+    {
+      "title": "erudit.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEdjxaroUOm55d2HmPPBV2DG2MwVQ7a1qvkUF5RQgKnQlaWPB2qopX2fhhHsctkw1JrVS-1sLIZhnj-2uNIDkhMHjFet_RhAlH8dliHwVe7f4siR3x0juA91WLzTd8imA3sEWg19Blsdp3--4UNQcIuR1vlc3AuApkofPkrNW26v0BIy_XPNBGUJamKRtAg-Syt",
+      "snippet": null
+    },
+    {
+      "title": "researchoutreach.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEmtrcHTp0WM1UxBsOKEWeKkmL_R5YhBsppG_RfJPm4vqYPBNqYM8816jsXb67CeneUvnxm6IlhUWjq3xM4wexd-_FxgGttTsVe5oNTnaDq1PLfO-C2KAb0oRy0N9XklKL4kO0pj4B7D0GuF1BeFGKl3ukCul9pJK9bjUo5NPY1o_9PkgRcUmGayhY5ckE6FRk=",
+      "snippet": null
+    },
+    {
+      "title": "oraltradition.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFT_kLKsd1-Cz23MoBp1saVgoQhuYSeOM2ICjcnH7G5YiMhE7rjl7hp6wB-ErxZddCmcNfxjSuSpMH8N-lKi_ogDFjnMfQmNfQ4s8q6XmQc-sB7N_sQ",
+      "snippet": null
+    },
+    {
+      "title": "firebirdfellowships.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE5ezADyvf3mWAdu1FXnHUw8cnVqZCNToTYbZ221gLIt-xwNAIEcDsXiQnL_DnEVRgvlHwbIUGk3z4Kpsd2Ft2J-9dEpMs9FmZbbU32LiN4Et6nLTON-f9yg8zYhE609b2xAqIuIE4UxppiywPycIQFWLmHzuFhD1U7og==",
+      "snippet": null
+    },
+    {
+      "title": "oralhistory.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEP4g6QyQlCpfQE_vPzKfuWr3nXGMTt14t3zH6eHDa0nehxxa2lX1XUBSm4vU_wIp6MsZEm-17pUq7oqQc_9R2F74zRPX9-kF7RcBmbhNaFSFYSVLmNA3G7GCMP5nRu5GupcJoWbiRJ6RxSHhl08Wo=",
+      "snippet": null
+    },
+    {
+      "title": "nfb.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGkM4Q9xxsOgBqqnF3YbPE5mVaLIhdJ1vco5RIXSAEx4U5yJWU7xrkS1hG7a5bZEqOoN_2pD6_04Hiyi_CCFlJBPzy6pBTjOOUUgFGN9kuEGqRcNOAOeG7faiEefZ98MX8uopqRDiPjQDXqYwM7J1CBXZQFEA==",
+      "snippet": null
+    },
+    {
+      "title": "firebirdresearchgrants.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYGrJn9SBPU4bl98dRXnNrNFYt_F3ekkprDYdnilRFjGw0rC3pepjHAzWi0t03ayHNTWnss8ML0wRgI6gma1ZwBwbFx_lZna-k3YJf9xVF_hTEzfTY0MU7-4qJOERo8TJvYw==",
+      "snippet": null
+    },
+    {
+      "title": "mythlok.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGOrRzPISodOK9vyvihZ3qZYq3pDU_-QsX8PfpYTtcicvfgxxig3LsbyzROW0KyGxneO3yaVkazpZ-Q5kgJiAV1bCa_l9Y7EfyuPwhUpjmpRejhfnuxa7jKsA==",
+      "snippet": null
+    },
+    {
+      "title": "judithstarkston.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGzy_g0HPbvrSz6Kj-Rz--E7Ou5WtWXCvCY43eve1hAqBJrG-64kA2HQXqrpQluPuz5k22_6tirzj9BPnPyh2xTPMeKpbnoEOa9UiKf8ULF07evJTNMleGqdsU0McvA-4N1m672hFtPhPpgvUZVPZYbZfc3GU3kcDDQNN-e_w_k1sYbhxka537ykCLNS9f7WZjF0QAvLPqZBbNPZGqRFmpxvIfuMK5n_vI=",
+      "snippet": null
+    },
+    {
+      "title": "encyclopedia.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFxH99m4k_kTdYB_m1f0y0DyRmWGe_KMARCp4Ct-uv42VwPgzypu7sIRItPRvtb6F0sq-tUEV6pSTzuhx7oizl7EdIpiKk2DvGOHTgdHAdqeY_Pyu14WeVN-nwaujNARd8gfOzUMtKAgUCngDTd8_-H_jaMseqUfb2SD_LmdJgqkx90ZR3ONJxYrnl5YcmtgjM-yNE-ZrlNwjccuLDO2hvRcZBrUBGM-9BsWw==",
+      "snippet": null
+    },
+    {
+      "title": "allaboutturkey.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEnGSxxlmEhO9T6nrvwv7eiHsrCl1X-C8ETVWa3NJl7fMAmKWAa3AQZrVcxBhDmCdYSHJdnx0Sqx1ZpvU3HguQC6FVJSxqCzRWoExEogZD7gUMjMFPEaXj4u3ge-VK3q86cvFqmskBXf8d3vA==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFyLICb9uJiHTQKom-K68AmT4MCcSR91gw9nmzPvyhGZhwE-hHiEhAFwStD7hkx6lPhiX2j-2Vr4Zz895biae2HrcqC9EfU1jS3YgPg2HUFC7fXe90T627AFcE_kE1UOSHFu7VAEIPC9fvXrvGgs3YxOtmLBWIJWg==",
+      "snippet": null
+    },
+    {
+      "title": "erudit.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQELgljmQJA9MvzlSX9rThTYKETB523LWs9JQQ5kDbjcaGZdt1mxHjcEXtGHW0BVw5rKbUDsiy5l2e-MQNL8CEAgsZCCIPP0MdmHKHUbzyGEr-yLq9WwhQPkcttu7kXDztFRSKS5ewOg9vA5gLMFfWEDa3ynDu0bortRt7YaGSW9x-7Tsr7eNcZyoaJ6q8p-eSF2",
+      "snippet": null
+    },
+    {
+      "title": "brill.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFXvwK8mOgiZh1GjmZUwFVyF63WLIrfeMRvJFMJB0MO1-jCutHtb87kuXfrKTkFHAzeku3CgwMfOHbnJ16f_NlRNBFP1LBV1abM_7GBnPxFhy-t4bFwFcrFwW97AnXjGF1QqueOrtQ0NyBYv2QMXeuyqxnvF85YOhbcFtg=",
+      "snippet": null
+    },
+    {
+      "title": "encyclopedia.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFfRvWp50w3tGbguo2PRmXlh1pXJfcxIykOTc4OjzeGZTe_YUNVvnW4pwa0HtHbVWJSmhjAz23NgyrPJeHYqEHuw35Ic6NqkXIkjV6TwTw-0FWfntcw-duYW_WuzpbF5K7gufx37iQJaH7PzxruJv40tk8bqxIXAwMg1D2UKT9xzK8p_qAKI41hfWDM_9J-xR0pv1ZnWwGfSJleN8phTfOGeSMtMkhhv-VIeWQtSStvQ55NGFyL5rcjtnLHIpzm_jytc6lHjrceZImd4SU=",
+      "snippet": null
+    },
+    {
+      "title": "researchoutreach.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEACwTBBGCZR1cQ9qJx1aj1sUgm7uoE9P5WxhGxMMEBSvYYf6VBh--6w1XwM9s7B9pT2IKGeHIWa_CXrqsbLQoQUOgHrLJXjVeeKP8IBlgnPlcIbeW55mSfjnKk4vi0DNrfVmmB09gfhhp1ii-o2AYomHNNHLAhuaPZyHDNA4MdrQzAvgkJbA07RT6cmUqNvww=",
+      "snippet": null
+    },
+    {
+      "title": "arizona.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHZkVoxf23a_CVwfvmocljGUhn9Vn6ZEul_si0CjgC8tBzgc8IeilfsGnJBaDysZxBHrV5UJu7mGghenW94kbrym58KlfVTZItT1BuuzZvWDEXSN5wjUqIoyU3M75EtqTBji7_laruFJlMZkp41OFHTbYCJPPoAEVQmUfw794QBE0pF09_L3VOIBJPEZxdBFidjqk4=",
+      "snippet": null
+    },
+    {
+      "title": "blogspot.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQExWUGWHiwAL704kXBLRqyuZabat_FM4zVGGcqH8HKnR6daQcRvlO1GN9Nq2kSwy5arh83sW__mkcPYzxFD20uW1_xxiMm30oRYsqdowMThfLU9sU56WynBy4Cct78YWmThcPR3wQfDm2ErFUKHAXizlVJGaLvmyruyR2IZc7LGBcwF2-In88VZOs-i3qs=",
+      "snippet": null
+    },
+    {
+      "title": "wisdomlib.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH7fm9znvU_FkozJjjuGux_xonZvmQlCX4Qxuc55dZJlz6aWP1wlbx8BmxjvmYnwESSt_6687YSVZgF_M-rQX5oMbyDV6iS8ZK1Nxti1F5VNMnDCJ8IMXQclFdvgP5oEHsauHjEH23MWIj7DQ8O",
+      "snippet": null
+    },
+    {
+      "title": "uoosd.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFDiLHCMrAUSJ6rjLB34eeckGfH3uDPrzKi2vjtkkb4Dff6PAAdqlY5MfxDdwCys5XB1yxxI8wP26FWgGn8lvF0BCsb-04N1ZBeRRk3-ZbqINAi_IS-EugarANK2JBQaFVO3046",
+      "snippet": null
+    },
+    {
+      "title": "raegillibrand.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGaVP4ei70uHeDyEZvAeg_CwMPFTjoQhjT1fvWBb3vdVZipURK4MY5yl3Fl20O3HBZFcYZZp9EowbUaaXjYDsahIBh-Z-xtHNLoXNt4qaZPCcVThrbzyqpo5oFu-ryd-35liLdcC4sv-1U9hVytkyzwpJPQO2IvDh3-uxn68wf3hEY2l_cdJJqFHS4FK_P3P2iHtPQ9sHkwsw==",
+      "snippet": null
+    },
+    {
+      "title": "brewminate.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHn8cz0cuGFmm1lk_yn9_iCkjLE4VKVKZzEdz8aSYmzM3cKuG83g1DPGoC6ekEYre8nrE9YzDe4SjRe1kj1CrUgWPE9Ae_ASHANo94sVocEZgqapQqF5A9Lh0vewOoIijGLRdrjOkHylJw1tPD_mZGNICt_lWE=",
+      "snippet": null
+    },
+    {
+      "title": "erudit.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGdL3GytxvirEYiMMUNwaFrkr2g4zI1iyvLniMaz_0ZRIty4ieEp7P7_qaItuxN71i15UDfWPdygGtYmtqyVPueamSh6B3jeE0dqQP44YbiERwPyPgzMaOJTWEcWgx9gPb8DCq0MKE43R8DSiyGnJKIuKAkTfC6Wn0IEGeSpcXi6gWIEfWrMpgzXDEvRobS2fb1",
+      "snippet": null
+    },
+    {
+      "title": "wisdomlib.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG0xn0_1kq8QdSRz0w5twFhAXTbcYQjyqdIECmJvE_yKZ0cVtnjNtegK2355bYwd9s1UjqFCqWH1_uEPy8jYrKp1DoLsf1HH0J1oUjLmbMHo0ExVJ48nAf3hrsss6MrKU-LWbemqlNbiy2apuMUCwM=",
+      "snippet": null
+    },
+    {
+      "title": "sabbath.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHaq2abvN_vuDpswAmntZAyIA0nl94mHDAtU8-9CM7UT5R8Ga2yMBTBih2g4OVx8p0WjHaPAfb9SW9w7_HVN1VrfJKzeMS1Ta0nVFEfUYiSl2IDsqFT1ukkrhZNadGNGAdGsdezrHUCpILP9dXxuk_DaTMgjMa15bVeTOkO3ZXylTKHH_gNBTNHDBwRzDJGQb-UXpoSAYJT_l8F8i0c1jXlyvWzp1dC",
+      "snippet": null
+    },
+    {
+      "title": "bibletools.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF5ebC_srL7oJOKUhaqC2Xjiussy5JvbPsrd7OmO7VqXRhwmzYyWNjjkJ_0c5J-eLEuCdP5R5oDiA-wuEtMNm1aLpPRObh-YuG3suAFm4b9uL2uYEzElu8mjDlODNRnIBI8dK-HZvDPteHw_SydZCs8tHHQgyueUugb1AZduucKkrHdN6Dt_7jetkNSxDquF-Drcq_AwENkwH9Y1f0Es5GcPvTrEAvPkjo=",
+      "snippet": null
+    },
+    {
+      "title": "brill.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFvIrXNKNNC2IddhuUT-q3_f2ck1gBngafMVrkydTrj6DgnBw82vgJS5ifdE-GJp6hp0uODIEqoXbo9eCbVpMwy8na9fGP-9j-wgsD-qBCBhR3Q_pWr846ModeOBkXD-PDTXtbzEYDiBfT5HJRS10DGeL1ddw==",
+      "snippet": null
+    },
+    {
+      "title": "scribd.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFel3x-kGPdqtBFfKJFx4eD_TRh84YHmtuyf18H8CNulD9vBKkwXhXoK3QO5ABF36uuP-Ih2bSj9atFGP3ESr-SbiYQKLsi0ha3OYR_w81GWcxmjsdkFvIv2tFi4NOOaUY5DVgtgOJwa1hWtJCG-jLGT8cP_TYaGqxocBRzq0RhjSdCleGGtA==",
+      "snippet": null
+    },
+    {
+      "title": "biblicalarchaeology.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHlRQBKI62LVxZzlkRr86F2RLxjzTn7gnlFFfBwEQVJpJIBNbLeK5m04rJ_rnnUIMOZqxCidA308j_ERdNbRrDBKAXoaxUTRhtUoWwZGAnSovztkuPGzTWcCBNyj5X-IDzQvwQ6LBZhIfYOIRZXP25xEbCDHkMtNOBeQKxV32wXvh_VYpaTtNkJMYQhHTOz4b32DhT6",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEY7HV-SZ81PwTXrtpsPU9qiDQtKwtjF0sbt7mov81t90Sg-M45W7gEBbYV61UXUIiEjjJ_W79RLmhTR2h9AN0CpZzcswNZYOqITKi9KzcfjokcwdYAe5s-i3gYMaWshLhFx5_tOSk=",
+      "snippet": null
+    },
+    {
+      "title": "brynmawr.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQECSoR8fpuHbty4UJcAx_AcXqA0ON1DmxgjYMxFmoCMennPgrRvxFAucdjlmYWwSyOGw10_ssKklAsKoiePOqjjU27UhzuXSmK3oK1a1uE6x-Hg2g1n8VIGR-Mqn3HG0tG_OEyQ4g==",
+      "snippet": null
+    },
+    {
+      "title": "trsiyengar.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH3__4JD0HNA0Dan-Md2ZO9GB30e9_ApzJgv0_0AAGEsMM5Pn2HQd9anLtoe1HVH0iujvnYoxGsNDaR21_T4F67CTwFh3hjH94pu0V0PyUvmtnWiiFkmiPy_1Hkrsl9xW1wvD37NN3W-EL1banRVgkNIEk=",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEFK02MUrK0zbNESQT2BacqD5YCTa4aNQdkNNx8mNG8M9MpjN99jPKO83bJ91NB3F1R2djf53K0NnL-oWDoP0ORE5dHa5yMlKQRHmdOxexGBkjIwuucznEi6MiQBGkDQxsEN6YOZuQ=",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGHoqMqJS0wVAX0He_FyXAByFz-QNxm26mUVnggXJhJM9tm1MgWU4yO_bKDd6Svr-DjbVGKCeaSZEl7Y2NcQ_udyDBpgKr5eMM2nenQ7r07LZeKb8OtYkK3jOZGb-l2R9GAkohFO4s=",
+      "snippet": null
+    },
+    {
+      "title": "himalayanacademy.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFaPrjc5v4IvHe21126E7JMBH0hsUeN7IOJ28VWDc0M_wx_iFheMRwRc3ZaxZTQrLfmdF_cLGXhOGRynXt8NVytfcktp3xqh5q3xAnRnWcKtb_8Kezkb6vD9eg6FMi0dbU6CVzc1tJMplRLbck85-YX_VFwiCjRj3kkbTVO2w==",
+      "snippet": null
+    },
+    {
+      "title": "cgg.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEhrusXlkGLf3LBq1_xJ_RKBuXtC5r81OBToh0E_8h4LBSn274BLYsbkn6lCP_abLtPIYJyiQJrO4-GSfV3ykKzRNViRkNFA4HUMzT5TXOmAnfjF268KaEHpByT67T0lAWP7xoA_azDobjdQSdNCp5rH-X2RhMM52mx4xjtyDIfk-CG_RLpEo2voWDQi-rv6O_6F6wFMsl7",
+      "snippet": null
+    },
+    {
+      "title": "sefaria.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFlZTDLm4DrVJv3YMpP9yQdlahLwOYJUAUxuxYQqla1HFvSDdqnAm88snRSsHmkY4bJmXJ5C8CYYVk3ErcIN2VM9OOxc1W_ZA7S_mubDHdjK-41uBQlXSvp0RMxOZrUrwbeZDSWQhwLRSuS",
+      "snippet": null
+    },
+    {
+      "title": "posenlibrary.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGiEX0pcjhZ8IrziGXzlLLGS9LraSu6-DodULD9ETMVRPoLktez4EVc0XbZhNTilWdiJAumq-l_8KQ-3hOYERiTXnt0x0sC6ltiDATjQP-NaS-bpl1MutJXs1XiKs8s0w_tkLWWzbJb1VNK1mD7pv_JVtIWDwj4Ek2S_HDno5NbOztMrX8=",
+      "snippet": null
+    },
+    {
+      "title": "scispace.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGLQ8aSOe76P-HAhnb637ZX2ZvdQAk97mRs_kaYnRQe_8NiglsdK6qMP-BuzvfJQLMlXheTIhlc49IwmJXkm0d0ZuvQI-JwYN04U0HF6uGgGHSCStdpWusl4Ebw0Bdf8CbCIdE53kz1d9dhk-85elFVWi07-_5719wex_g_JKAw7Ysmv7BpOxBYwYjRj47mEfFO",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQG_7UnFNAgxPkOR0ZO4H9e3MMGgp1LqVxP714FhOGXFVedAaFA8kL4WcCGcmwYWDpFOAB-F0ys1kygta7yBMkfNIJsCCQS7E52J-1QB5qO7KDzcUGehQ3zPemnLDrnMv9uaUFwdhmsht94bDgVDu96_WbnTTl-WXYc7-uCRpyhw8BzcMf0BdQu0kmlRwNv80yxC3vOLzrrMqhm7vg==",
+      "snippet": null
+    },
+    {
+      "title": "nih.gov",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFpXd6qiOMPIftaK_9Gu_0Uc3pSQ2osDf5bfDFFZ8RQTsUSb2i8lE8VHxETCbhUhaeqktvwjqtcOVqq1yFD1IuoA2A_7hYjfGRlJRTEJoFa7CXsCNEc7keY8K8FanFTbaTEdTcS8Ij_J8-48I2y",
+      "snippet": null
+    },
+    {
+      "title": "novoscriptorium.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGZ7Ho-mPhFtu7R5szwiLlq8E8W5SFWZqkSintVIO4sTfPoGLbCHqBGq7LuYml9TZmgVuQNXUwlTyCELs3IKyOJFZpdCA7MYBbv0p3_nhAGIgOZ06N2mwj4LljtwAdB4-3BVdRo3KiDIFX0l9QRIUotceWuWA81PiXcIAFuArC-yeJ3M5V5lU4InARGPHKlWEn9j_ZEx1Icpt3u0MN47Ua4dxWWs4AR6S3-TWg8kPb3EBnY",
+      "snippet": null
+    },
+    {
+      "title": "greeka.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF0namtenDqtBve__QWWJWYe4kkZhCWlewtXuHSTUVCfYewZmnB-QEICMgTCA5-Qx6fpz_vHHuRZZCAwA1d8RGvOysE0W9lawpWJGpw_MIarUe1vxreArjx4_GWRvsPtSUmV7a9y2T5cyM=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQF2swAi-S4M_qKjULKh6_3lctHrCJwZ9EMhM1RvX6W0DghYWDiJeciYY8v7whkbTh_zMBRyPRz_63hxonVgxTXyD3n1cMdzebC0NdMzBnbLp_sWMxaTLMgalVmJYRnt0Q==",
+      "snippet": null
+    },
+    {
+      "title": "wisdomlib.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGK3bM4da4ZPmZ0ZY_hKKRgc3FsqsPsrBRC2ov2FDDiqsgPQ10rsdk6Iq6KtpE1l8wKZgbVNtedC9Dqfu4YgxGpU4B3G89FaIyyJlZa1HfKuQV4x3VZM3kIrYye6aLDnkXnTag31r2mBawf29aVCR4epjZZiac=",
+      "snippet": null
+    },
+    {
+      "title": "openthoumineeyes.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHbkj2Y_QZCNRNPTgVVllp_3imH44ZgsqXJrOky1C1roFbsqlOlqW_Q95V75R6bUdvvtJHH1fhWLbn8w41AL1q2wIUnzy6wQnorg4CP1nnkK0A8x4oyO0DLekRdp7FarfQoJlhGSne9NtRwpNFMUofwfc-faA==",
+      "snippet": null
+    }
+  ],
+  "iterations": 4,
+  "duration_seconds": 427.97
+}

@@ -1,0 +1,459 @@
+{
+  "title": "moses and the sea that was red",
+  "normalized_title": "moses and the sea that was red",
+  "origin": {
+    "year": -1200,
+    "era_label": null,
+    "precision": "century",
+    "source_title": "Ugaritic texts (Baal Cycle)",
+    "summary": "The earliest thematic origin for a divine being conquering the sea is found in older Canaanite mythology, particularly the Baal Cycle discovered in Ugarit, dating to the Late Bronze Age. These texts, which predate the destruction of Ugarit around 1200 BCE, describe a cosmic battle between the storm-god Baal and the sea-god Yam. This 'Chaoskampf' (struggle against chaos) motif is a strong literary precedent that likely influenced the biblical authors, who adapted the theme to describe Yahweh's victory over the sea.",
+    "citations": [
+      {
+        "title": "wikipedia.org",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEwgtnTTAApBjWMfvDqT99cLES1fWauWuAiJme5HPaRFRQ44Mq-3eXjIMg3647JvjF3sfPms9uGpRhaIghXo8mutyH5si0Gj5oo7s9KYcyfPMcYKFeebXXWG_4_hs_H9ZFYEWoWVIG_C5DnMGGhgA==",
+        "snippet": null
+      },
+      {
+        "title": "bartehrman.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGwQr7QTu9e18rXCR465alI0A2y9dDjrE15RQw5Y558W417fbg1AKiGrloBPdrpdkmMJcY_gICY5nu06dHjSr5gvgkSqXcJiZiWMM2XQz81XAm1mFmbaXP2E_g6zOtFnQD1-HHUmBDzk8ifF9qhy-A=",
+        "snippet": null
+      },
+      {
+        "title": null,
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ==",
+        "snippet": null
+      },
+      {
+        "title": "quora.com",
+        "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrJEBkl2h5cspDROdKkvQ9H_mdE4vT7tcDhP9jyQFNDDAxSYFsjlqAu9jERynSbo4f6AHbAP9o80h4vG2TMMS3tRYP0N2NTJUHByL312Lagkp_1Ru2hpFJaieP7sz-IzxRQ3RhTt_LvXlyPzbVHQOclQzXRWwml_u0rKRSFUjVpwhNCD1kFBV8bZXpNzukxH1FYw==",
+        "snippet": null
+      }
+    ],
+    "confidence": 0.9
+  },
+  "timeline": [
+    {
+      "year": -750,
+      "era_label": null,
+      "precision": "century",
+      "source_title": "Prophetic Books (Amos and Hosea)",
+      "claim": "The earliest allusions to the Exodus story within Israelite literature appear in the writings of 8th-century BCE prophets, indicating the existence of the narrative in oral tradition.",
+      "citations": [
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ==",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "year": -450,
+      "era_label": null,
+      "precision": "century",
+      "source_title": "Pentateuch (final composition)",
+      "claim": "The story of Moses and the parting of the sea was compiled and documented in its canonical form within the Pentateuch during the Achaemenid Empire period.",
+      "citations": [
+        {
+          "title": "wikipedia.org",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEwgtnTTAApBjWMfvDqT99cLES1fWauWuAiJme5HPaRFRQ44Mq-3eXjIMg3647JvjF3sfPms9uGpRhaIghXo8mutyH5si0Gj5oo7s9KYcyfPMcYKFeebXXWG_4_hs_H9ZFYEWoWVIG_C5DnMGGhgA==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ==",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.95
+    },
+    {
+      "year": -200,
+      "era_label": null,
+      "precision": "era",
+      "source_title": "Septuagint and Dead Sea Scrolls",
+      "claim": "The Greek Septuagint translation solidified the interpretation of \"Yam Suph\" as the \"Red Sea,\" while the Dead Sea Scrolls provide the oldest extant manuscript evidence of the Hebrew narrative.",
+      "citations": [
+        {
+          "title": "wikipedia.org",
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEwgtnTTAApBjWMfvDqT99cLES1fWauWuAiJme5HPaRFRQ44Mq-3eXjIMg3647JvjF3sfPms9uGpRhaIghXo8mutyH5si0Gj5oo7s9KYcyfPMcYKFeebXXWG_4_hs_H9ZFYEWoWVIG_C5DnMGGhgA==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFiTWGtIMIgdTGiUaPZlZZTAkAYM-zEu9JGCjP1SCprH8nDVyLlLbh6OVAdQl73-coePAoE4D4BX0u57iye_91xa4clIPXrUYPzeRGAF2NuFvz-XBEYhPGlmgiWRZLXk5N7IbRPzyGoVyarH38EP7obFOWsKJFfs2BxE9PgjqrVZ_PqwENXlB_DH_3B9NT1qrZ6rN0==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHKPYoJ10mM86ZduN5wrn39Zhdwv9uWtmtsnWXZobbi_MEGEpqftqj9tDFKjqNHbbcl9zctqKq1LhXADKpMHUPoZxRrFDVto-C8QrMnwD-LCuH4dsOdzxFFDX-6MyLuxJ8E6Bw==",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 75,
+      "era_label": null,
+      "precision": "century",
+      "source_title": "New Testament and Josephus' 'Antiquities of the Jews'",
+      "claim": "In the 1st century AD, the story was retold by Jewish historian Josephus and referenced in the New Testament, cementing its theological importance for both Judaism and early Christianity.",
+      "citations": [
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.g.com/grounding-api-redirect/AUZIYQFiTWGtIMIgdTGiUaPZlZZTAkAYM-zEu9JGCjP1SCprH8nDVyLlLbh6OVAdQl73-coePAoE4D4BX0u57iye_91xa4clIPXrUYPzeRGAF2NuFvz-XBEYhPGlmgiWRZLXk5N7IbRPzyGoVyarH38EP7obFOWsKJFfs2BxE9PgjqrVZ_PqwENXlB_DH_3B9NT1qrZ6rN0==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHKPYoJ10mM86ZduN5wrn39Zhdwv9uWtmtsnWXZobbi_MEGEpqftqj9tDFKjqNHbbcl9zctqKq1LhXADKpMHUPoZxRrFDVto-C8QrMnwD-LCuH4dsOdzxFFDX-6MyLuxJ8E6Bw==",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 650,
+      "era_label": null,
+      "precision": "century",
+      "source_title": "Quran",
+      "claim": "The narrative was incorporated into Islamic tradition in the 7th century AD, with the Quran recounting the story of Moses leading his people to safety as Pharaoh's army drowns in the sea.",
+      "citations": [
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ==",
+          "snippet": null
+        },
+        {
+          "title": null,
+          "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHKPYoJ10mM86ZduN5wrn39Zhdwv9uWtmtsnWXZobbi_MEGEpqftqj9tDFKjqNHbbcl9zctqKq1LhXADKpMHUPoZxRrFDVto-C8QrMnwD-LCuH4dsOdzxFFDX-6MyLuxJ8E6Bw==",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "reasoning": "While the biblical story is traditionally set in the Late Bronze Age (c. 15th-13th centuries BCE), scholarly consensus places the writing of the narrative much later. The story's core motif—a divine figure defeating a chaotic sea—has clear precedents in earlier Canaanite mythology, specifically the Baal Cycle from Ugarit (c. 13th-12th centuries BCE). The Israelite version of this theme likely existed as an oral tradition, with the first textual allusions appearing in prophetic books around the 8th century BCE. The full, canonical narrative was compiled as part of the Pentateuch around the 5th century BCE. Its subsequent translation into Greek (the Septuagint) and its inclusion in later religious texts like the New Testament and the Quran ensured its wide transmission and adaptation across major world religions.",
+  "confidence": 0.9,
+  "queries_run": [
+    "earliest written attestations Moses Red Sea parting narrative",
+    "ancient Near East myths sea division parallels Exodus story",
+    "historiography dating of Exodus narrative Red Sea event",
+    "primary source manuscripts Exodus story Red Sea crossing",
+    "cultural evolution of Moses Red Sea narrative across texts",
+    "Bronze Age myths water division escape ancient Near East",
+    "ancient Near East folklore divine intervention water crossing",
+    "Egyptian mythology water manipulation escape themes",
+    "Ugaritic texts sea deity conflict human journey",
+    "Bronze Age migration narratives divine water intervention",
+    "pre-Israelite traditions miraculous water passage ancient Near East",
+    "oral traditions divine water separation myths pre-1500 BCE",
+    "Mesopotamian myths deity parting waters escape motif",
+    "chaoskampf myth water monster defeat path creation ancient Near East",
+    "proto-Semitic folklore miraculous river crossing ancient Near East"
+  ],
+  "citations": [
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEwgtnTTAApBjWMfvDqT99cLES1fWauWuAiJme5HPaRFRQ44Mq-3eXjIMg3647JvjF3sfPms9uGpRhaIghXo8mutyH5si0Gj5oo7s9KYcyfPMcYKFeebXXWG_4_hs_H9ZFYEWoWVIG_C5DnMGGhgA==",
+      "snippet": null
+    },
+    {
+      "title": "bartehrman.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGwQr7QTu9e18rXCR465alI0A2y9dDjrE15RQw5Y558W417fbg1AKiGrloBPdrpdkmMJcY_gICY5nu06dHjSr5gvgkSqXcJiZiWMM2XQz81XAm1mFmbaXP2E_g6zOtFnQD1-HHUmBDzk8ifF9qhy-A=",
+      "snippet": null
+    },
+    {
+      "title": "biblehistory.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHCIOlXorVo2MRCIX9oYQV3J3nr9YzMRthMHL8sESp4gGbST62dc0ptHdR4G0aMqj7mghlUOnDl3nsW5J3s7pa3uZc0bcBrkWfygMlhBwJEVqPp_KZIF4KuUmqNWe8yUQW8Aglo9mGpxrIx7JHXFWNMtVIhxkQ=",
+      "snippet": null
+    },
+    {
+      "title": "quora.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGrJEBkl2h5cspDROdKkvQ9H_mdE4vT7tcDhP9jyQFNDDAxSYFsjlqAu9jERynSbo4f6AHbAP9o80h4vG2TMMS3tRYP0N2NTJUHByL312Lagkp_1Ru2hpFJaieP7sz-IzxRQ3RhTt_LvXlyPzbVHQOclQzXRWwml_u0rKRSFUjVpwhNCD1kFBV8bZXpNzukxH1FYw==",
+      "snippet": null
+    },
+    {
+      "title": "cambridge.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEdwwZ4_aqOrKxd-QHj0C_ZkifPHYDIfEfbxm7QOtYD8d5H61pHuGbvaN3-vD3xeCT8KUP7Qn-wrGADyhWSI3KzzffOseOLEU20St-QTA5KFgmjObkvs1CdMTeNk68oslHCnbgUmsfdab9XvSNEq9aW71rls-ZMCKziGRwgs-y0vicSmMl0FzQ5lEGS3MxD-n4bq7DZ_UwkuwoAHzeeLnsi0UmmqJ7vVERdhJbBbG3gJs8KZ1gV3p9YUQz567qNWtdnH8M=",
+      "snippet": null
+    },
+    {
+      "title": "nextstepbiblestudy.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGSzbvzctKxmrcYOWxpAGWyoV0jEIUWHBGZAMgf0qD4fLR56dh6fDxFI03ZTCnNWonjBsZ-sdlofYCR5-RdsOYAbNgE5gLRoV2k-yx1xSm9iSzoRELFiIlFvXI1KoLotlHwt8awCumZSczK52GmoVFW8mmIi1HDoPR4PtTGlzBNKyCvmCiB3n8vQw3kWPPdRPMuSUfmRHz5Yo_U0Ja-u5zrkNI=",
+      "snippet": null
+    },
+    {
+      "title": "wordpress.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE8mRdhnPiAvuhEs4to0vRL5_cdN1g8lqBJ69mHCKdknAImvv_G7qv6tR_OMGy4uxrWPJ3OnyksAESDixCpknigpnqMgX1xQoDUCja8_NHPqgYoi8FvE8RJyP4CwhiFBtfuBM-LHT80PdZctrSoCylKV3LtTy7k0VhY0iVkaa9HlvoECrbDlbjYDsv4NLAnaw==",
+      "snippet": null
+    },
+    {
+      "title": "biblearchaeologyreport.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFiTWGtIMIgdTGiUaPZlZZTAkAYM-zEu9JGCjP1SCprH8nDVyLlLbh6OVAdQl73-coePAoE4D4BX0u57iye_91xa4clIPXrUYPzeRGAF2NuFvz-XBEYhPGlmgiWRZLXk5N7IbRPzyGoVyarH38EP7obFOWsKJFfs2BxE9PgjqrVZ_PqwENXlB_DH_3B9NT1qrZ6rN0=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHA2JDmKIs1Mh4TLgSA5rwnIBfvNeiJbsSO07x7y14yKJ0YfQDIy3bsewpkrzs_-j_cZCBbeMvcG8h2xb9paJ4jpTW23oCz_j5o4RmFjhJOc5CBhoJlra3Bmr1rxtxROPp_ZiG86PK35tCxcDrGCLFA5JlHAY7qcYPwrLb_",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHKPYoJ10mM86ZduN5wrn39Zhdwv9uWtmtsnWXZobbi_MEGEpqftqj9tDFKjqNHbbcl9zctqKq1LhXADKpMHUPoZxRrFDVto-C8QrMnwD-LCuH4dsOdzxFFDX-6MyLuxJ8E6Bw=",
+      "snippet": null
+    },
+    {
+      "title": "biblehistory.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGT0Rtqw6oBTtnsTqtKTL__5kP1b61JJ2o5JbdQ7TcgIgYeGAivc8R1bJEiH5Et9gekU0VzZogcCVo-T9ZfpL-OHLbRYr4Dz1b_c8tW7F1lB2D1wwTDXf96fd0fbF4VOeEnRO9uksQLN1uwrxSgqKzJTZOM04c9eSiieSUFrVA__zk=",
+      "snippet": null
+    },
+    {
+      "title": "truthgracefellowship.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEDehz9f_YrI6vF7dqTQeoPYmusJW1AIryHPLEW02KSV3iqdNwIwxdORlYBibcwdc7hFJtjZdAPHa-QvBtElLXutnCnh94ndAzoE2r3I1lXiWO4DhebKWzaqIqw8JZbCkkS7rMIhKmHHRqN0jD7StOyKjYczhyp6FnqC2PrQAzEhb9pWwjTtNHJ5N4F0mOvsyfztxoTlk_AflOw",
+      "snippet": null
+    },
+    {
+      "title": "biblehub.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE6ydnWbKAwKhCawhStqS-EAHxNKzHugYP6RNQoUAuQmN2xUcy-_gvusDN70mZD_aenKZYNM-ZNfQeXv4UUm2XDQ_aqmudVOOSy3l1cgXgSXLVYSN1pEd4_LDbV0Tr2irDPZ4mJhLOMRITqN9hAMCyxyPU4ac_obEU=",
+      "snippet": null
+    },
+    {
+      "title": "academia.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHpcqXSNmO7Ga378DZQT_DCcIjwqeKALEUY6iwXl4yp8PXRDEtNIYp9nq9hjODBl6kv7pyO57H-O1V-HX2Uaz2O1PYYQumo-j3_c6t_hEKuMMyik0K4ivAn1wseBuwAKZTNXFozUTuJmZC8r_ALc7GSEZjSSOW-bEyauLjFU6mEltoybnbLTk1mihFp6k4v80UcM4zrwWHaufyMoRUq9-FOmZGXowk0ybymjUG17Iy7yjb9J9_HyyIIDMgCapxHlla_NKRFDeCwY_4rpridx-NIaHVoawDYJFAOp781CJ1VnacP_Umw1KNiW8wvuKQzZ64H95vtsLs=",
+      "snippet": null
+    },
+    {
+      "title": "tms.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEb7Vd9Gh691k1Fm71swmmAbreN5p2kAikesnixb1B5qXCMmaUaDcU9u4mG0-bmlWG3x7ST3HGSCox3xmlrMOHMJ-heQ6gx7s12wou6E_4gkC2hLeqMamgxvSQX78xHL4dvLBposijpGV2gMdxD6dEVZM49npK35hU=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHTkxv2PuB-uIYKdOZXMSAaa8yRhR75EvLM--pMbt285ZL4qfz6r00buuMbrABwFnulcBZXsRXiUDtqafjxbbvhEAN5QHj92b499zQEekOzkVd59NauzoznQxIIWIY67xad9t8UfwSJvBUAxBQ-0Fc=",
+      "snippet": null
+    },
+    {
+      "title": "biblearchaeology.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWbDVPe9SWOT1GZzzG6u3XNoiRpPAGbhAnpYV2YPr1jYYgKoVMhaR0CQA8KfI1cvtVDDrwLklithLQeYOYHy8QIRbZ0ByJd1Yzz-VoV51usfTNxmZKFO46p5Pw3E0hsLXWN59YbfVMpz61BYtOvnu8_Q04RaU-xn5Ivd0FgnXfwys7RohA4HNgWnrkBCQHZQPUkZ-aiVeU0ihFvuZX6pnBe4QilaonVbX_Biwz_ydW3-36WTzn3R7iE4z5NL9duQ1LQnNNf6YcShScLxNo8bkfQMZU0Ziah_DD9DIfMHEutfBaMujEPzN2r9cnZPJuON42o7Kzkx2W1fWNoMvxtSpzrkUkKF4DA9skXGT3gWB2CpjdDIP5ZNxCLMAkvHkqnW5MTb3CnZ9cpKg1Pt2I7U1xbAlyCG3P4BZZyUtSK2wbD2myJI3AUKPeuaaFxEzb5YFR3Jex46q_hDOCIhmEGicROY4GelPDuPtbLz5dXr48tvKO1-Bpztfx_6UL5DUgx2RWWT6Z7awBnX5E960M2FzNy_tSmsoeWTWbtgXIcK77CrFAJTFcIdReKA==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEujziwS0SknVqT2LU3DsBSbPhZY0lYHVzrddHfJjG2D4tX0_zGdIgwqJkZLIYcW7WPG0zsMKN8YtRl7VofY55u58VwezNsXZtxW_dwsVpubjtw3Gaxx1CP8MaM0WdtE1zwtSeP2j46h4W15dS-U_Yz5Jsu9XoG",
+      "snippet": null
+    },
+    {
+      "title": "nextstepbiblestudy.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFzjfdHYB925vnMOWL7LBrpPXIepLCVwO4UI1ZHQff__OjOG6R92C46_la1PCoPiNMi8gm662MkVofKz6fjROfnYgMWoMA6ZbsoIFNZeBjGgoDcgET5BPX0M0K3TS37sREJd0zAfxdTQYM88oYCB5vuZkrgDs7CkTsyZuiATHIw2JVu3PU115IiyFtorIs5L4-65EpSGo1ICXGg02_fJkeNNA==",
+      "snippet": null
+    },
+    {
+      "title": "srce.hr",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFtmEJJKx0_mylTA8d0mjhY-4nl84c_xxhfeSYUnzBSMeTUQK5YerDB7iYgwQgKTQ7CG7-Ex0Refn-7lrND_kfXwLyKRAALwSyOCwxt3mW1Ekhdk23KFHXWd-vRPg==",
+      "snippet": null
+    },
+    {
+      "title": "goingcoastal.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHVDsfQI7j7FEifSXqc7T3Tjf7dxVTO7i1wnaoy9uMuyHGf-0LAiTKKJYqhFnh0X8D5ZMp8GJ-U7KKHJs5-23o53Y85y0tBOchtNV9s4e10WOHHNrQp_rDp6ODs1OK6xvvmcaZMVNN9",
+      "snippet": null
+    },
+    {
+      "title": "openedition.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQETZWfI0K46aS8FkSH34MXnUQsgVGr_9aAUZ18H0Uh_alIqDW22C7Ve9zv9kQadEQxPHoTfj4l61Q87vu7QkoiL-LoobnLqy283-scIPt-zCcG0O7JzPVkDK2M4Pp3JRBWceuJaa__1DbGV",
+      "snippet": null
+    },
+    {
+      "title": "nextstepbiblestudy.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFntKnF-nohlix0IbhSMQIgLzQyc6iy9lOOgjo1ktyJaSmZB0-asydgSF-0pq5TmgoPquzXNSa2BWPpBReME3GIi8GsxJ2sNJXaBAMQ6zmgdAmuPHY3if1RypjhYpm3gI82_sSLHfh9QqD440ewlnyfkjmU6lfcsavmLqSS8WT6dxfXMcNRXmhJS7jL5YTt51-iAnGr6Has1mCQHXO3WaDnZoE=",
+      "snippet": null
+    },
+    {
+      "title": "utexas.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFKL9J7hZBRf2U_YZj8dZuvw-kuFQejSVIJsaASePt9LBZ_bXZPJc5werJ6XwM7CktSFmVv1Ud8btef0N7xDIJ69wq7U6V3WO0fsXfuKb9KSgHYcbh0p7yefIUys_mrXDeroxLKebPhD7uSt05EfyCamP27",
+      "snippet": null
+    },
+    {
+      "title": "goingcoastal.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH1EnlaLYN6g0ECFSMhCO8Hkp60548taDBbH1UmKRd0pjcdrPKY-DPLyVZTEi5L4iRIjnchm587j0bIoDCSYOSRwiQMY5sOiAGjuxJuE_WLJWd22DUohrbs2sz3pEESdSzYaBdidMNx",
+      "snippet": null
+    },
+    {
+      "title": "aaroncheak.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHM1PnY1LCwOktQwHJkdWeqcFzcyS8TnfVdd5PFMSL8tnaQSU4KouXZaFuaBZ8i8tScobZjFs1qGsjuaoJmFXzM-LmaqsNozjS_82BzUjsxhNJaYYO80dLPMx8YId04FnFG14nxZA==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEQrDSyqnPbZHXxgXIMKkQ3QdxzHM9fBG0nvP8qXN1N353aK9OhfEZF559rdTzGDLxAif06Bv-KKmyuRsH9R7oot5v5Qj51jQwMeUd63at7rd0X84Bx6B6lnXjYxwYBgw==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHe3VYn1y8ldYORhwJEfALZAcmxTxboaW4Pcs25DmkOW2YIwURgpBoNsdt0fH8nfgSD6h6fb0hZFHc9aPNOVkAg-qN06dq8hjlBzOSwotcTrYgZdQD59ZgouRZHkNEHlpLrpQ==",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFDG5f8A4vhOr69EvSAWWuA0uJLDqQwyRUzpfFz2VkX63LKPsRJyS_Wn7ss-ttq8OmVXpOQmjlyLhICI_iAvYfVLZ8LGd_mGNQoxwpURbvu4BgVRtHu3X7fzp3m3dVcBr1oywkmKQ==",
+      "snippet": null
+    },
+    {
+      "title": "logos.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGg71yfqIdM6PWhlNdhGTDOdRGYoNqkEAJ9I3Q_omZz4bYeiBk-IUrzAVZoU_i1kqZTbfh5OsNgHz_kW4-PAfNKY80MRxiiI9hkSP-Ot_Awa5OO-mF6hFgwOOwtols1xRqpnXnimwf6YjV9a70Q9w==",
+      "snippet": null
+    },
+    {
+      "title": "cambridge.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE6eyCHUJEshoQnMEmC15pM5V5eNsbpmXdjMMdBVDyL2RERpy_i0_pa1OHDIzXBIOw_5aadKp3cf0OiDIAiF7C-ZudbUhlFQNSMz5yab2xG3w2Se6FeKsk8FgpTaJ_TxTo0-Owff_iKBcpDqepNH-fcUzmpPQwab9qbICFBrU9N6FF3TLvAjgC_tEtZYTFjdNxHtbEEXr9cC18O-ia2KO-oJ7cYmIVSMdnKLX8F1mVENiT34FYXvNqgfnp-3XgDZDzgTIfDuV5Hd6IZBau2bQ==",
+      "snippet": null
+    },
+    {
+      "title": "researchgate.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGLQIqyRhS4opNTPWpSERDmwWAZeqFkP18I3MulKEWtNuPM52xIfaItRLBz07RnHDgaEceUFyFp0LHjzjQJ2yg2F3mVr9kVCbhkbMoZuPGhweOJl3WFKMhKMRnlSLJe5PcIyqriNkc9UUuI197usnK-8kDJ0OjQ9Sthmf_gclbf9ZlCgV3yIfB8oEFMc0-zUMuemzP0QFlIBT5sTzo7O1YMHvc-JJIkjjtjqsGuV2BWQPwtUd5u27Q=",
+      "snippet": null
+    },
+    {
+      "title": "stonetemplegardening.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGR49ZBObFqpexAvbY-FUSMIYj7nOvQCIHcw1Dd0ZDjvk3YEF5VXgQpissQiQWVj84aIEGLZ6LXDSCW2iqsxI0JfN8jBJP2qMCkf-uLBTdLDKBSL-IO5RHRPcIql_whSEgynjF82CsZ36_G3nzNtEjGGL3ZJcvEbEvzrSdMh3RNLzSl_n0IJMKhYSDGDuR94bMTr7KYZSzy8H9SeObf58dPTr_QjJlTpD6D4VydQmi1DisY-nP1jjqbfA1N",
+      "snippet": null
+    },
+    {
+      "title": "weforum.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHC0ZlwmiSeKBX_3a0zA4EyFNZ_1NDslsujKwwBDuqs1MaAwhy8V_oOsceh7NomKn5SxTLRfcqUGRoykpN-ISL9t-fKjHMQCM1Tbf35QyaWuvdADkajJSw5NM6TvqbTS-RfCd-7JXdp__dhewh5C0sUjw4H1pDuUBH9sWMFaE25thn0g2ozaWBunhn74w1IxBXN4XCB-g==",
+      "snippet": null
+    },
+    {
+      "title": "heraldinsight.co.kr",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHz7YA9eAERT0t7L3gPgKFTeOeYd3pQSCmGJBuNcvL4oGVxBGiaB1c09CzA2wkzAGazbBb3B_Gc9nXExYtbAaQB5eX9qLhFDz9a3LjDpiPcEpPnHPvH9iRWNE-6nA8TVK68gNGpURyThcim0iuQdxz8zL3Jexo0qawX",
+      "snippet": null
+    },
+    {
+      "title": "katrinadhamel.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFjhWCmEtYdi9VAfn7dFNBt6xG8KSnPr6-2hoyO_IV_iNvviHQhqVLa8wWUodEuyBMN5D0UCL6bJTqzLo0enEzqA9gHcyUMnussia8dUqfX0sIC885zoNrFk1_MrNlHwjVCIw2rWWWeC6LetRYOAD-0nOdiVtNxN3bTnXdur4UUKquBiWKHoBIFrM2hWl5Z",
+      "snippet": null
+    },
+    {
+      "title": "jpost.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFI8pBiOWWdU_-H4T1NDR64yU2fw7uNtL8r53JbcBkUezbwtnQww5GRZL_Cg46d0fWpRtqWjDMs2oxoLSfnujOTJf10LpcwOTvtgBrtkk7ZXFKQrQeKNjnxDPOI7a5bVfbQ0WGYg45lnAjR67YDVgpjjzgVVDas4Q==",
+      "snippet": null
+    },
+    {
+      "title": "biblehub.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGI1NaGXJ0xTWwXt3ImeRKdqTxKzx6vtuqdDP9dU40pMrjaa56Rqjh5P2fcRMNMCqw7_9V2GbEfU92_PtLRLZn4WgLJAAaIr1WmRpoGmZzVHHj-EUVuke5sXZ_0vvCFd8JzLtdaJRXlhsRr3JHKzjA--JqaingJcF3Y4ze10ECPyzuOVSfoi6JWpwGFb-qFWqqu6jyVvQ==",
+      "snippet": null
+    },
+    {
+      "title": "biblicalarchaeology.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEaVUK7Uk4Q1XOLcioRZhMyKjvrWX4LQjCaPBdXAgZZlgE9UI1vU8UxsbHG0NfWoHRxBXL0lcfAEpNPPI4JW6hJ32B8mIHa4kDqeZ1ioiO_8iabbyiv-zj4spHJFbMPdU9ftPrWj6yKJZSk1zlMYSvlEm6qY4P9oA4syPC0xP8Bd0UWjk2sut-lhzpEYLOkP2GvqLPe0V7IrIkBKiGf",
+      "snippet": null
+    },
+    {
+      "title": "academia.edu",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHB2ZiXc2ObCGMknlUNAP6GyZtpcW3A3_-vDbSr9ODdI0SgjLe03xgo7IGxcsxf2hUIhI6Z4HECyaWlYtn-_H9kelSuq9WDl6mHUEJkUgSO-G7cTAW0aVRIPMmVLVY_gLPmjFQ6E1aEOO010ipwGnRJnW8imGgB_mX_bx0tQKLfaGX5mqgkVPenEqENiOR4FqNjmtyKOgDNa5H0I21YEtb9yhv8JDervElr0QtuBsgg",
+      "snippet": null
+    },
+    {
+      "title": "amacad.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHfV8kBb3_IGcNgs_G8nq3NtFz_UmPT8nQCtt8WlEanctBemxHDtKBl82J3itihmw9oZxptAe_GTZCDRLT7yJCYjxQUl1tqyfaT4VuTdHMsWjKL1U64c8NcvVVc7VE4NfzDf1P0mfKQ4DUWPPIbXEwdaBHVLIJy",
+      "snippet": null
+    },
+    {
+      "title": "medium.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHBNxegKiCnMiGi5oHaFph-fZAbOBrBV0O2d41Bs6OcDOK4X8qjwwgxzJdY1_ZHd8P8_ofc433vDhxGZTW9Y7mKl3tlrPnhQY6MZhejCq-NkzxGLLraI4x01IlxsvqNQk0_XdQwV5fR5Tv99hyripDHViRHfQ2ek2EJkbMPXMEOB5iqBwA0qmXKIch9vJYF2SC56RgS7aGYJtxTp5IgJRKWxcdOOql1fPSewuw7EVjdaYMXxS098Kig2e-WGAm6K8v9JQ==",
+      "snippet": null
+    },
+    {
+      "title": "ancient-origins.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFJPJ_uZd1kDakvakEVOiiz_Qbj0f0RVc9G7o1web3c82RtUDx-wWI5GmzUVfAT6Wy_C7XNXcY3j0Ja4EfP6b7Kn0LZZFAWKlJD1uX6zPW-QgzwxI_SiA11bz_4f6hXnpTcu5geUa572W7BnSjdoQbgfj4Fu_sDW8EgduYkkSIBZk3f",
+      "snippet": null
+    },
+    {
+      "title": "metmuseum.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHBgomcN_cv-QojUF08_2gjFOGeaNESozvQzccK195MnCKlominsR3ABu3cx3b82T19Y1SFKlNQHUzab9CRnJJdV1M33QHQUXbMnqlJAFDQ1pusWeXMn-Ko7jpdwo3DFviTRubVo040-zY68ZKTVjH5270U9zj6-t8=",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFYRcHVg17LJtFj0WnFap_NPY6sFImZXTarTjphi95HMoZXziW0tBriGt9BtUb3sNgMn3v24Q3oWalZQDqkKRELOtDaojlvWeqiUBqWjghGV8rca9-3MTS_bNWXIrR8Xw==",
+      "snippet": null
+    },
+    {
+      "title": "study.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHlLOw8iZYMYXyV50Dw---mtwpnGMXFBnU0OuQgKrfkLdnChUm2Cbw_5w15pOODnXyNaq6LM3u3EdViSPppMVxk5MC3igXOCjal3QUVkMVosX1s5c53ccGAGEIFi9xahyOW9s3iqwuaVChefoOYK-gcGtVZ9WTgl-l0TYCaBBHCwiHBNZ8OBs1e4pO2dw==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGJdYSfLRkiE7AI7EJehNYqw121dcyJZumfMQdB9KnuSpIhwk7Etc2sJIfoLO7v0vneYIDwLxVi5OHAt3RVrO2xoe838rkyPGOfnsmN7xYMhdtc6TPMtKxGt-Hj-BHPBm0FT_1WpeJs58oaX160",
+      "snippet": null
+    },
+    {
+      "title": "study.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGLlGE8_P9nDRQud1R1NmDD4eh9VksSI-2-FUxTxcrWpF6xF62hL7HPokgBbiNanXRqdkbcfuUsWDMHFt4vo3lra5GTTgdVV7TI5kFUk2Uyggrn2etwS0tkQGJAt6PcsEhNBpGBTz0pqkPdUpWunFDrLic_lf1u5eehWA7zWxCZR19x785a2NfhZpLJ",
+      "snippet": null
+    },
+    {
+      "title": "thesacredcalendar.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGkkLgLHRq3yHuLxnA_Y9myR_2CfWWga_NqTUREKMr8sNA1pqdtWsgm2u_71bkfgDDKT0gbh-ifLLhQHCkn4fWI67luFMptsqRzMJBmCg_XJu-RFzXBmh9Zp-3SjaAoXYOKWMYrEoGcpwIOrLM0JUkeXVQ77O56A_WLTG6meCpDpkxq23eihvpsCg==",
+      "snippet": null
+    },
+    {
+      "title": "preacherpollard.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQEjNzPCpE7KcvWH2zajqjJZbmplRs2bK4RBGGmU7w1HAuk4KlcpOxFyulnQN-IEZzdIonIa36VZBiw86DNrVyQo7z1rcly1PpqS9AcVBMbE84rZdUQrylEldKEYpzE0yod7H7TMCvRh",
+      "snippet": null
+    },
+    {
+      "title": "bham.ac.uk",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHzKa_SgEp8WX-04ODko2p2-NRIOE3a72tmk6dkT5OXQ4fizIBTejss-U9xBTvI07Y1Hl2waHyrQ-i3AGdpScxMonT1Suthyv2Vv6AdX_0gGh1CqC7ja_v8WyOWNZmJ0AMZdkPZ_z5KkgYdv4-v",
+      "snippet": null
+    },
+    {
+      "title": "jaminbradley.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHytaBHTLKWlELla5s3wjbhb4bgjprVSzkJDQ_EohR_EVsvWYeiHsEEEd-d_rb9aUrtPl-tfG6BwrZ30xYeIOk4x40A8qlYscWEB0eUb_ATjLjOyZr4uVK4e_tlWXHE5gXmwbPusLMSRybLQnWSgXdkEE-BDqXgBx9ydzgWGAE1ezEUvus2ew==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGFDpqSzW72E8kHBQsRYgoMOrLiWUNBNIePcPt4mOQGkD-jE2j4KQPKEe6ghWOncqVsdGxXDX-O7KUPNN7og9PmSIfL2u8gdgWkjEZuWEnp3zdEJq0_5B2lRnKMQvt0qIt4lA==",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFE-jaxwnPVIiIik-gTT-vvbNR-DglXnDbhVswYSyzelBRjve2xYbIKTOrd8oJK8bxRyTcFBUx2o4ukcDuPUwmmT0shLfjlIM-rGkXm71Tts3YHUVqBbrkA_38eB8EecEOqgLDl8OAPHdCnRhAFAw==",
+      "snippet": null
+    },
+    {
+      "title": "gotquestions.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFNPdmCztWJwCtvF0ZO-UHITnLQjbjKZOYvTy1kw2B_pNgiWeMjntaxfwN6f8ZGrCjzxvNk4HWSSWDUIPGPYrngAgYfqCR32Wg4LCTVe33vEJYOU39DkVtA-4AAuMzDOhb2UQ59TZ_o2g==",
+      "snippet": null
+    },
+    {
+      "title": "openedition.org",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHXAvG0WHQwIH4nNQiJ_rDsvdHLlQwic1ug5RnVgUc-Q-gSsZ6ulO49KIPgI_ZWV7wZvVhT0jxQXADCQI-eX70Ho3CGY9N6mQc3Ws61gOGUuhBZzxBPyolm42DB6EiH_tAbXAf84Oe5PzRA",
+      "snippet": null
+    },
+    {
+      "title": "holylandsite.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH8e5T9sIcFkRXut5ueJI5sb3kCdt5Ujmeii54HV3oN9nb3nBboZShsPkNyDQe2nwe05tkEN3VRGiC8Ko13GjLupIP7CX627WZkzGAr4ig7iqfWG9GJtYaGD_6Lqzs4hxPggyREQr5Uc8qqbPle",
+      "snippet": null
+    },
+    {
+      "title": "forward.com",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGjUgBQMD-_QFsOqZ1NkMp-cG8g6cVpmgYfuDHd7qxNg8SV4Euf8XFoAJqLFgO2GIO3jhMJGthx5PdFGOnn8D2nrCXSjqgIsa46ltnSGc4SSob7LnxxE8GSVD7CuGv38-G2JurvCu9jnDwJTOasZgePPuXEtF0tQHqKV45ODH5x8II=",
+      "snippet": null
+    },
+    {
+      "title": "ancient-origins.net",
+      "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGWEmFY9kVXPsneeBGOXhA_37AzKRY-u5yy-kB8d3uszzyENxh9OOQA2eKUR6MGEEilyOBm_hAq80wxd6C0bH3L4ohXrfTHXlkc6JaZKS1gZiOlssMTSHk_rz-WANvb1TvK0w7EaoEjzkhYlYNPLADc21Qucq8Bh_FF7V_tvHVSrV51xuBY",
+      "snippet": null
+    }
+  ],
+  "iterations": 3,
+  "duration_seconds": 466.73
+}

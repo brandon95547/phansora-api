@@ -1,0 +1,669 @@
+{
+  "title": "jesus christ",
+  "normalized_title": "jesus christ",
+  "origin": {
+    "year": -500,
+    "era_label": "6th to 4th centuries BCE",
+    "precision": "era",
+    "source_title": "Zoroastrian influence on Judaism",
+    "summary": "The earliest defensible origin for the conceptual framework of a messianic savior figure, which influenced the later story of Jesus Christ, traces back to Zoroastrianism. Between the 6th and 4th centuries BCE, Zoroastrian concepts of a final savior (Saoshyant) who would preside over the end times are considered a significant theological backdrop that shaped messianic expectations within Second Temple Judaism.",
+    "citations": [
+      {
+        "title": "gmu.edu",
+        "url": "https://olli.gmu.edu/docstore/600docs/1403-651-3-Zoroastrianism,%20Judaism,%20and%20Christianity.pdf",
+        "snippet": null
+      },
+      {
+        "title": "jewishencyclopedia.com",
+        "url": "https://www.jewishencyclopedia.com/articles/15283-zor",
+        "snippet": null
+      },
+      {
+        "title": "reddit.com",
+        "url": "https://www.reddit.com/r/Zoroastrianism/comments/1d35m01/why_do_scholars_think_that_zoroastrianism/",
+        "snippet": null
+      },
+      {
+        "title": "zoroastrians.net",
+        "url": "https://zoroastrians.net/2026/03/14/how-the-ancient-persian-religion-of-zoroastrianism-shaped-early-judaism/",
+        "snippet": null
+      },
+      {
+        "title": "youtube.com",
+        "url": "https://www.youtube.com/watch?v=Yf5vIl4OPug",
+        "snippet": null
+      }
+    ],
+    "confidence": 0.7
+  },
+  "timeline": [
+    {
+      "year": -250,
+      "era_label": "Second Temple period (516 BCE–70 CE)",
+      "precision": "era",
+      "source_title": "Second Temple Judaism",
+      "claim": "During this era, the Hebrew term 'the Messiah,' the origin of 'Christ,' came into titular use, and the 'Son of Man' concept evolved within apocalyptic literature from a symbol to a pre-existent, divine messianic individual.",
+      "citations": [
+        {
+          "title": "wordpress.com",
+          "url": "https://reformedreader.wordpress.com/2023/05/03/1st-century-jewish-expectations-for-the-messiah-strauss/",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Messiah_in_Judaism",
+          "snippet": null
+        },
+        {
+          "title": "thirdwell.org",
+          "url": "https://www.thirdwell.org/What-Second-Temple-Judaism-Reveals-About-Jesus.html",
+          "snippet": null
+        },
+        {
+          "title": "israelbiblicalstudies.com",
+          "url": "https://israelbiblicalstudies.com/blog/category/jewish-studies/son-of-man-on-the-jewish-scene/",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "year": -100,
+      "era_label": "1st Century BCE",
+      "precision": "century",
+      "source_title": "Pre-Christian Jewish Texts",
+      "claim": "Texts like the Dead Sea Scrolls, Psalms of Solomon, and a pre-Christian Targum on Isaiah established specific messianic expectations for a Davidic king, a figure with a healing and resurrecting ministry, and a 'suffering servant' identified as the Messiah.",
+      "citations": [
+        {
+          "title": "britannica.com",
+          "url": "https://www.britannica.com/topic/Qumran-community",
+          "snippet": null
+        },
+        {
+          "title": "patheos.com",
+          "url": "https://www.patheos.com/blogs/anxiousbench/2015/04/messiahs-at-qumran/",
+          "snippet": null
+        },
+        {
+          "title": "wordpress.com",
+          "url": "https://reformedreader.wordpress.com/2023/05/03/1st-century-jewish-expectations-for-the-messiah-strauss/",
+          "snippet": null
+        },
+        {
+          "title": "lancasterseminary.edu",
+          "url": "https://courses.lancasterseminary.edu/pluginfile.php/13758/mod_folder/content/0/Suffering%20Servant%20Levine%20Brettler.pdf",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.85
+    },
+    {
+      "year": 25,
+      "era_label": "Pre-50 AD",
+      "precision": "era",
+      "source_title": "Hellenistic Philosophy",
+      "claim": "The pre-existing Hellenistic philosophical concept of the 'Logos' as a divine, ordering principle provided a conceptual framework that influenced the early Christian theological understanding of Christ's pre-existence and divine role.",
+      "citations": [
+        {
+          "title": "researchgate.net",
+          "url": "https://www.researchgate.net/publication/384595479_The_Concept_of_Logos_from_Heraclitus_Philo_of_Alexandria_and_the_Early_Christianity_of_the_First_Century_CE",
+          "snippet": null
+        },
+        {
+          "title": "ust.edu.ph",
+          "url": "https://philsacra.ust.edu.ph/admin/downloadarticle?id=7B233F3B9AF1E7868309DFF7347786C3",
+          "snippet": null
+        },
+        {
+          "title": "stackexchange.com",
+          "url": "https://christianity.stackexchange.com/questions/55244/what-is-the-relation-between-the-logos-of-greek-philosophy-and-the-logos-in-chri",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.8
+    },
+    {
+      "year": 50,
+      "era_label": null,
+      "precision": "decade",
+      "source_title": "Pauline Epistles",
+      "claim": "The letters of Paul, dated between A.D. 50-66, represent the earliest known Christian writings, establishing the core theological narrative of Jesus's death and resurrection.",
+      "citations": [
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+          "snippet": null
+        },
+        {
+          "title": "reddit.com",
+          "url": "https://www.reddit.com/r/AcademicBiblical/comments/aqm0ay/what_do_we_really_know_and_can_we_regard_as/",
+          "snippet": null
+        },
+        {
+          "title": "stephensizer.com",
+          "url": "https://stephensizer.com/2017/12/the-historical-jesus-the-evidence-from-scripture-and-archaeology/",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 55,
+      "era_label": null,
+      "precision": "year",
+      "source_title": "Lost work by Thallus",
+      "claim": "The Samaritan historian Thallus is considered the earliest non-Christian author to reference an event associated with Jesus, writing around AD 55 about the darkness that accompanied his crucifixion.",
+      "citations": [
+        {
+          "title": "biblearchaeologyreport.com",
+          "url": "https://biblearchaeologyreport.com/2022/11/18/top-ten-historical-references-to-jesus-outside-of-the-bible/",
+          "snippet": null
+        },
+        {
+          "title": "coldcasechristianity.com",
+          "url": "https://coldcasechristianity.com/writings/what-the-earliest-non-biblical-authors-say-about-jesus-free-bible-insert/",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.75
+    },
+    {
+      "year": 70,
+      "era_label": null,
+      "precision": "decade",
+      "source_title": "The Gospels",
+      "claim": "Written in the latter half of the first century, the Gospels provided the first narrative biographies of Jesus's life, ministry, death, and resurrection, becoming the foundational texts of Christianity.",
+      "citations": [
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+          "snippet": null
+        },
+        {
+          "title": "reddit.com",
+          "url": "https://www.reddit.com/r/AcademicBiblical/comments/aqm0ay/what_do_we_really_know_and_can_we_regard_as/",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Quest_for_the_historical_Jesus",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 93,
+      "era_label": null,
+      "precision": "year",
+      "source_title": "Antiquities of the Jews",
+      "claim": "The Jewish-Roman historian Josephus provided the earliest non-Christian Jewish account of Jesus, mentioning him twice and referring to James as 'the brother of Jesus, who was called Christ.'",
+      "citations": [
+        {
+          "title": "biblearchaeologyreport.com",
+          "url": "https://biblearchaeologyreport.com/2022/11/18/top-ten-historical-references-to-jesus-outside-of-the-bible/",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+          "snippet": null
+        },
+        {
+          "title": "stephensizer.com",
+          "url": "https://stephensizer.com/2017/12/the-historical-jesus-the-evidence-from-scripture-and-archaeology/",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.95
+    },
+    {
+      "year": 115,
+      "era_label": null,
+      "precision": "decade",
+      "source_title": "Roman Historical Accounts",
+      "claim": "Roman historians and officials, including Tacitus, Pliny the Younger, and Suetonius, recorded the existence of 'Christus,' his execution by Pontius Pilate, and the activities of his followers, whom they called Christians.",
+      "citations": [
+        {
+          "title": "biblearchaeologyreport.com",
+          "url": "https://biblearchaeologyreport.com/2022/11/18/top-ten-historical-references-to-jesus-outside-of-the-bible/",
+          "snippet": null
+        },
+        {
+          "title": "coldcasechristianity.com",
+          "url": "https://coldcasechristianity.com/writings/what-the-earliest-non-biblical-authors-say-about-jesus-free-bible-insert/",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 180,
+      "era_label": "late second century AD",
+      "precision": "century",
+      "source_title": "Writings of Celsus",
+      "claim": "The philosopher Celsus provided the first known comprehensive intellectual critique of Christianity, arguing that stories like the virgin birth and resurrection were fabricated by borrowing from earlier pagan myths.",
+      "citations": [
+        {
+          "title": "crossway.org",
+          "url": "https://www.crossway.org/articles/what-about-pagan-parallels-to-the-resurrection/",
+          "snippet": null
+        },
+        {
+          "title": "substack.com",
+          "url": "https://worldviewbulletin.substack.com/p/the-resurrection-and-dying-and-rising",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Dying-and-rising_god",
+          "snippet": null
+        }
+      ],
+      "confidence": 0.9
+    },
+    {
+      "year": 1890,
+      "era_label": null,
+      "precision": "year",
+      "source_title": "The Golden Bough",
+      "claim": "James Frazer's anthropological work popularized the 'dying-and-rising god' archetype in comparative mythology, framing Jesus as a Jewish example of a widespread ancient motif alongside figures like Osiris and Adonis.",
+      "citations": [
+        {
+          "title": "crossway.org",
+          "url": "https://www.crossway.org/articles/what-about-pagan-parallels-to-the-resurrection/",
+          "snippet": null
+        },
+        {
+          "title": "substack.com",
+          "url": "https://worldviewbulletin.substack.com/p/the-resurrection-and-dying-and-rising",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Dying-and-rising_god",
+          "snippet": null
+        },
+        {
+          "title": "ehrmanblog.org",
+          "url": "https://ehrmanblog.org/other-gods-who-died-and-rose-from-the-dead/",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    },
+    {
+      "year": 1980,
+      "era_label": "late 1980s",
+      "precision": "decade",
+      "source_title": "Scholarship of Jonathan Z. Smith",
+      "claim": "A major academic reassessment challenged the Frazerian model, with scholars like Jonathan Z. Smith arguing there was no clear, unambiguous evidence for a dying and rising god motif before Christianity, suggesting later pagan myths may have been influenced by the Jesus story instead.",
+      "citations": [
+        {
+          "title": "crossway.org",
+          "url": "https://www.crossway.org/articles/what-about-pagan-parallels-to-the-resurrection/",
+          "snippet": null
+        },
+        {
+          "title": "substack.com",
+          "url": "https://worldviewbulletin.substack.com/p/the-resurrection-and-dying-and-rising",
+          "snippet": null
+        },
+        {
+          "title": "wikipedia.org",
+          "url": "https://en.wikipedia.org/wiki/Dying-and-rising_god",
+          "snippet": null
+        },
+        {
+          "title": "ehrmanblog.org",
+          "url": "https://ehrmanblog.org/other-gods-who-died-and-rose-from-the-dead/",
+          "snippet": null
+        }
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "reasoning": "The story of Jesus Christ is a synthesis of pre-existing theological concepts and historical events. The origin is placed in the 6th to 4th centuries BCE with Zoroastrian ideas of a savior figure, which influenced messianic expectations in Second Temple Judaism. These expectations were refined in the centuries before Jesus's birth, as evidenced by the Dead Sea Scrolls and other texts, which describe a Davidic, healing, and even suffering Messiah. The narrative of the historical Jesus was first documented in the mid-1st century CE by the Apostle Paul, followed by the narrative Gospels. These accounts were corroborated by non-Christian historians like Josephus and Tacitus shortly after. Uncertainty remains regarding the direct lineage of the earliest conceptual influences, but the historical existence of Jesus and the rapid development of his story in the 1st century are strongly attested.",
+  "confidence": 0.9,
+  "queries_run": [
+    "earliest non-biblical accounts of Jesus Christ",
+    "academic dating of the historical Jesus",
+    "pagan dying and rising gods parallels to Jesus",
+    "earliest New Testament manuscript fragments",
+    "Jewish messianic expectations first century CE",
+    "Second Temple Jewish messianic figures pre-Jesus",
+    "Pre-Christian mystery cults savior narratives",
+    "Oral traditions about a divine deliverer ancient Judea before 1st century AD",
+    "Hellenistic philosophical concepts influencing early Christian Logos pre-50 AD",
+    "Jewish apocalyptic literature pre-Christian messianic archetypes",
+    "Qumran community messianic beliefs pre-1st century AD",
+    "Hellenistic 'theios aner' concept pre-Christian era",
+    "Persian Zoroastrian savior figures influence ancient Judaism",
+    "Pre-Christian interpretations of Isaiah 53 suffering servant",
+    "Development of 'Son of Man' concept Second Temple Judaism"
+  ],
+  "citations": [
+    {
+      "title": "biblearchaeologyreport.com",
+      "url": "https://biblearchaeologyreport.com/2022/11/18/top-ten-historical-references-to-jesus-outside-of-the-bible/",
+      "snippet": null
+    },
+    {
+      "title": "blogspot.com",
+      "url": "https://bigccatholics.blogspot.com/2015/11/five-first-century-non-biblical.html",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/Christian/comments/18x1z9h/earliest_nonbiblical_evidence_of_jesus/",
+      "snippet": null
+    },
+    {
+      "title": "coldcasechristianity.com",
+      "url": "https://coldcasechristianity.com/writings/what-the-earliest-non-biblical-authors-say-about-jesus-free-bible-insert/",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/Christianity/comments/1dqs9sq/is_there_any_nonbiblical_evidence_for_jesus/",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Historical_Jesus",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/AcademicBiblical/comments/aqm0ay/what_do_we_really_know_and_can_we_regard_as/",
+      "snippet": null
+    },
+    {
+      "title": "stephensizer.com",
+      "url": "https://stephensizer.com/2017/12/the-historical-jesus-the-evidence-from-scripture-and-archaeology/",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Quest_for_the_historical_Jesus",
+      "snippet": null
+    },
+    {
+      "title": "crossway.org",
+      "url": "https://www.crossway.org/articles/what-about-pagan-parallels-to-the-resurrection/",
+      "snippet": null
+    },
+    {
+      "title": "substack.com",
+      "url": "https://worldviewbulletin.substack.com/p/the-resurrection-and-dying-and-rising",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Dying-and-rising_god",
+      "snippet": null
+    },
+    {
+      "title": "ehrmanblog.org",
+      "url": "https://ehrmanblog.org/other-gods-who-died-and-rose-from-the-dead/",
+      "snippet": null
+    },
+    {
+      "title": "biblearchaeologyreport.com",
+      "url": "https://biblearchaeologyreport.com/2019/02/15/the-earliest-new-testament-manuscripts/",
+      "snippet": null
+    },
+    {
+      "title": "biblicalarchaeology.org",
+      "url": "https://library.biblicalarchaeology.org/sidebar/earliest-new-testament-fragment/",
+      "snippet": null
+    },
+    {
+      "title": "ox.ac.uk",
+      "url": "https://www.magd.ox.ac.uk/blog/the-magdalen-papyrus-p64-possibly-the-earliest-known-fragments-of-the-new-testament-or-of-a-book/",
+      "snippet": null
+    },
+    {
+      "title": "wordpress.com",
+      "url": "https://reformedreader.wordpress.com/2023/05/03/1st-century-jewish-expectations-for-the-messiah-strauss/",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Messiah_in_Judaism",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/AskBibleScholars/comments/hap5of/what_kind_of_messiah_were_1st_century_jews/",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Second_Temple_Judaism",
+      "snippet": null
+    },
+    {
+      "title": "tabletalkmagazine.com",
+      "url": "https://tabletalkmagazine.com/article/2022/02/jewish-messianic-hope/",
+      "snippet": null
+    },
+    {
+      "title": "ufl.edu",
+      "url": "https://ufdcimages.uflib.ufl.edu/UF/00/09/15/23/00680/Kassabaum_final.pdf",
+      "snippet": null
+    },
+    {
+      "title": "byu.edu",
+      "url": "https://rsc.byu.edu/new-testament-history-culture-society/messianism-jewish-messiahs-new-testament-period",
+      "snippet": null
+    },
+    {
+      "title": "metmuseum.org",
+      "url": "https://www.metmuseum.org/essays/mystery-cults-in-the-greek-and-roman-world",
+      "snippet": null
+    },
+    {
+      "title": "eleusinianmysteries.org",
+      "url": "https://eleusinianmysteries.org/wp-content/uploads/2025/01/Salvation-Soteria-and-Ancient-Mystery-Cults.pdf",
+      "snippet": null
+    },
+    {
+      "title": "wordpress.com",
+      "url": "https://gregorysoderberg.wordpress.com/2018/04/11/mystery-religions-early-christianity/",
+      "snippet": null
+    },
+    {
+      "title": "equip.org",
+      "url": "https://www.equip.org/articles/was-the-new-testament-influenced-by-pagan-mystery-religions/",
+      "snippet": null
+    },
+    {
+      "title": "biblehub.com",
+      "url": "https://biblehub.com/topical/o/oral_tradition.htm",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Oral_Torah",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/AcademicBiblical/comments/11o6gvn/a_friend_of_mine_asked_a_question_that_i_didnt/",
+      "snippet": null
+    },
+    {
+      "title": "researchgate.net",
+      "url": "https://www.researchgate.net/publication/384595479_The_Concept_of_Logos_from_Heraclitus_Philo_of_Alexandria_and_the_Early_Christianity_of_the_First_Century_CE",
+      "snippet": null
+    },
+    {
+      "title": "ust.edu.ph",
+      "url": "https://philsacra.ust.edu.ph/admin/downloadarticle?id=7B233F3B9AF1E7868309DFF7347786C3",
+      "snippet": null
+    },
+    {
+      "title": "stackexchange.com",
+      "url": "https://christianity.stackexchange.com/questions/55244/what-is-the-relation-between-the-logos-of-greek-philosophy-and-the-logos-in-chri",
+      "snippet": null
+    },
+    {
+      "title": "apeironcentre.org",
+      "url": "https://apeironcentre.org/logos-in-philosophy-religion-and-science/",
+      "snippet": null
+    },
+    {
+      "title": "snsociety.org",
+      "url": "https://snsociety.org/wp-content/uploads/2012/11/Logos-in-Greek-Culture.pdf",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Apocalyptic_literature",
+      "snippet": null
+    },
+    {
+      "title": "pbs.org",
+      "url": "https://www.pbs.org/wgbh/pages/frontline/shows/apocalypse/primary/white.html",
+      "snippet": null
+    },
+    {
+      "title": "posenlibrary.com",
+      "url": "https://www.posenlibrary.com/guide/early-apocalyptic-literature",
+      "snippet": null
+    },
+    {
+      "title": "usf.edu",
+      "url": "https://digitalcommons.usf.edu/etd/836/",
+      "snippet": null
+    },
+    {
+      "title": "csusb.edu",
+      "url": "https://scholarworks.lib.csusb.edu/cgi/viewcontent.cgi?article=2702&context=etd",
+      "snippet": null
+    },
+    {
+      "title": "britannica.com",
+      "url": "https://www.britannica.com/topic/Qumran-community",
+      "snippet": null
+    },
+    {
+      "title": "thattheworldmayknow.com",
+      "url": "https://www.thattheworldmayknow.com/qumran",
+      "snippet": null
+    },
+    {
+      "title": "encountersinarchaeology.org",
+      "url": "https://encountersinarchaeology.org/the-kingdom-of-god-a-brief-history-of-qumran/",
+      "snippet": null
+    },
+    {
+      "title": "patheos.com",
+      "url": "https://www.patheos.com/blogs/anxiousbench/2015/04/messiahs-at-qumran/",
+      "snippet": null
+    },
+    {
+      "title": "wpmucdn.com",
+      "url": "https://cpb-us-w2.wpmucdn.com/sites.stedwards.edu/dist/9/186/files/2011/12/qumran-messiah-research-paper.pdf",
+      "snippet": null
+    },
+    {
+      "title": "wordpress.com",
+      "url": "https://allthingstheological.wordpress.com/2018/07/20/theios-aner-and-the-praiseworthy-woman/",
+      "snippet": null
+    },
+    {
+      "title": "etsjets.org",
+      "url": "https://etsjets.org/wp-content/uploads/2010/09/files_JETS-PDFs_16_16-4_16-4-pp195-205_JETS.pdf",
+      "snippet": null
+    },
+    {
+      "title": "wikipedia.org",
+      "url": "https://en.wikipedia.org/wiki/Hellenistic_religion",
+      "snippet": null
+    },
+    {
+      "title": "galaxie.com",
+      "url": "https://www.galaxie.com/article/jets16-4-01",
+      "snippet": null
+    },
+    {
+      "title": "gmu.edu",
+      "url": "https://olli.gmu.edu/docstore/600docs/1403-651-3-Zoroastrianism,%20Judaism,%20and%20Christianity.pdf",
+      "snippet": null
+    },
+    {
+      "title": "jewishencyclopedia.com",
+      "url": "https://www.jewishencyclopedia.com/articles/15283-zor",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/Zoroastrianism/comments/1d35m01/why_do_scholars_think_that_zoroastrianism/",
+      "snippet": null
+    },
+    {
+      "title": "zoroastrians.net",
+      "url": "https://zoroastrians.net/2026/03/14/how-the-ancient-persian-religion-of-zoroastrianism-shaped-early-judaism/",
+      "snippet": null
+    },
+    {
+      "title": "youtube.com",
+      "url": "https://www.youtube.com/watch?v=Yf5vIl4OPug",
+      "snippet": null
+    },
+    {
+      "title": "lancasterseminary.edu",
+      "url": "https://courses.lancasterseminary.edu/pluginfile.php/13758/mod_folder/content/0/Suffering%20Servant%20Levine%20Brettler.pdf",
+      "snippet": null
+    },
+    {
+      "title": "reddit.com",
+      "url": "https://www.reddit.com/r/AcademicBiblical/comments/3umd92/what_were_the_prechristian_interpretations_of_the/",
+      "snippet": null
+    },
+    {
+      "title": "jewsforjesus.org",
+      "url": "https://jewsforjesus.org/learn/is-isaiah-53-a-description-of-jesus-as-suffering-servant",
+      "snippet": null
+    },
+    {
+      "title": "outreachjudaism.org",
+      "url": "https://outreachjudaism.org/gods-suffering-servant-isaiah-53/",
+      "snippet": null
+    },
+    {
+      "title": "thirdwell.org",
+      "url": "https://www.thirdwell.org/What-Second-Temple-Judaism-Reveals-About-Jesus.html",
+      "snippet": null
+    },
+    {
+      "title": "israelbiblicalstudies.com",
+      "url": "https://israelbiblicalstudies.com/blog/category/jewish-studies/son-of-man-on-the-jewish-scene/",
+      "snippet": null
+    },
+    {
+      "title": "exaudi.org",
+      "url": "https://exaudi.org/the-son-of-man-and-his-three-meanings-in-jewish-tradition/",
+      "snippet": null
+    },
+    {
+      "title": "ancientfaith.com",
+      "url": "https://blogs.ancientfaith.com/wholecounsel/2018/05/30/the-son-of-man/",
+      "snippet": null
+    }
+  ],
+  "iterations": 3,
+  "duration_seconds": 390.39
+}
