@@ -50,6 +50,10 @@ class TTSConfig:
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
+    # StyleTTS2 expression knobs; None => engine/env defaults.
+    diffusion_steps: Optional[int] = None  # 1-20; fewer = faster
+    embedding_scale: Optional[float] = None  # 0.5-3.0; higher = more expressive
+
 
 class BatchConverter:
     def __init__(self, cfg: TTSConfig) -> None:
@@ -118,6 +122,8 @@ class BatchConverter:
                     speaker=self.cfg.speaker,
                     language=self.cfg.language,
                     ref_audio=self.cfg.ref_audio,
+                    diffusion_steps=self.cfg.diffusion_steps,
+                    embedding_scale=self.cfg.embedding_scale,
                 )
 
         tasks: List[asyncio.Task[None]] = []

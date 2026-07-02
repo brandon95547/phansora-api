@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 
 from phansora.shared.paths import runtime_root
 from phansora.shared.utils.email import send_email
-from phansora.products.spokenverse.txt_to_voice.adapters.backend import discover_voices
+from phansora.products.spokenverse.txt_to_voice.adapters.backend import discover_voices, get_synthesizer
 from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
 from phansora.products.spokenverse import voices as voice_store
@@ -80,6 +80,16 @@ if _cors_origins:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True}
+
+
+@app.on_event("startup")
+async def _sweep_stale_pending_voices() -> None:
+    # Clear pending voice clips abandoned before the last restart. Best-effort:
+    # never let cleanup failures block startup.
+    try:
+        voice_store.prune_all_pending()
+    except Exception:
+        pass
 
 
 # ----------------------------
@@ -356,6 +366,8 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
+    diffusion_steps: int = Form(10),  # 1-20; fewer = faster (maps from the Speed slider)
+    embedding_scale: float = Form(1.0),  # 0.5-3.0; higher = more expressive
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -395,6 +407,8 @@ async def txt_to_audio(
         language=language,
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
+        diffusion_steps=diffusion_steps,
+        embedding_scale=embedding_scale,
     )
 
     try:
@@ -436,6 +450,8 @@ async def txt_to_audio(
                 "chunk_chars": chunk_chars,
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
+                "diffusion_steps": diffusion_steps,
+                "embedding_scale": embedding_scale,
             },
         },
     )
@@ -546,17 +562,29 @@ async def tts_options() -> dict:
 # Custom voices (StyleTTS2 cloning)
 # ----------------------------
 
+# Spoken during the create-voice preview so the user hears the cloned voice, not
+# their own raw upload.
+VOICE_SAMPLE_TEXT = "This is a sample of your voice. Approve to save in your voices."
+
+
 @app.post("/voices/preview", response_model=None)
 async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
+    diffusion_steps: int = Form(10),  # 1-20; fewer = faster (maps from the Speed slider)
+    embedding_scale: float = Form(1.0),  # 0.5-3.0; higher = more expressive
 ) -> dict:
-    """Upload a reference clip; trim to <=90s and normalize to 24kHz mono WAV.
+    """Upload a reference clip, then synthesize a sample the user can preview.
 
-    Returns a token used to preview and then approve/discard. Nothing is saved as
-    a usable voice until it is approved.
+    The upload is trimmed to <=90s and normalized to a 24kHz mono WAV reference
+    clip, which is run through the engine to speak ``VOICE_SAMPLE_TEXT``. That
+    synthesized sample is what the user hears. Returns a token used to preview and
+    then approve/discard. Nothing is saved as a usable voice until it is approved.
     """
     safe_user = _safe_user_id(user_id)
+    # Opportunistically drop abandoned previews (uploaded but never approved or
+    # discarded) so pending clips don't accumulate on disk.
+    voice_store.prune_pending(safe_user)
     job_id = uuid.uuid4().hex
     ext = _safe_ext(file.filename or "") or ".bin"
     tmp_path = TMP_UPLOADS_DIR / f"voice_{job_id}{ext}"
@@ -567,24 +595,68 @@ async def voice_preview(
         raise HTTPException(status_code=400, detail=f"Could not process audio: {e}") from e
     finally:
         tmp_path.unlink(missing_ok=True)
+
+    token = result["token"]
+    ref_clip = voice_store.pending_path(safe_user, token)
+    if ref_clip is None:
+        raise HTTPException(status_code=400, detail="Could not process audio.")
+    try:
+        synthesize_to_file = get_synthesizer()
+        sample_out = voice_store.pending_sample_path(safe_user, token)
+        engine_call = {
+            "text": VOICE_SAMPLE_TEXT,
+            "out_path": str(sample_out),
+            "voice": str(ref_clip),
+            "use_gpu": False,
+            "rate": "+0%",
+            "volume": "+0%",
+            "diffusion_steps": diffusion_steps,
+            "embedding_scale": embedding_scale,
+            "alpha": 0.0,
+            "beta": 0.0,
+        }
+        # TESTING: log the exact call sent to the engine on create-voice generate.
+        print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
+        await synthesize_to_file(
+            text=VOICE_SAMPLE_TEXT,
+            out_path=sample_out,
+            voice=str(ref_clip),
+            use_gpu=False,
+            rate="+0%",
+            volume="+0%",
+            diffusion_steps=diffusion_steps,
+            embedding_scale=embedding_scale,
+            alpha=0.0,  # voice creation clones the reference as closely as possible
+            beta=0.0,
+        )
+    except Exception as e:
+        voice_store.discard_pending(safe_user, token)
+        raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
+    # Remember the knobs used for this sample so approval can persist them.
+    voice_store.save_pending_settings(safe_user, token, diffusion_steps, embedding_scale)
     return result
 
 
 @app.get("/voices/preview/{token}", response_model=None)
 async def voice_preview_audio(token: str, user_id: str) -> FileResponse:
-    p = voice_store.pending_path(_safe_user_id(user_id), token)
-    if p is None:
-        raise HTTPException(status_code=404, detail="Preview not found or expired.")
-    return FileResponse(path=str(p), media_type="audio/wav", filename=f"{token}.wav")
+    safe_user = _safe_user_id(user_id)
+    # Serve the synthesized sample (what the user approves on), not the raw upload.
+    sample = voice_store.pending_sample_path(safe_user, token)
+    if sample.exists():
+        return FileResponse(path=str(sample), media_type="audio/wav", filename=f"{token}.wav")
+    raise HTTPException(status_code=404, detail="Preview not found or expired.")
 
 
 @app.post("/voices/{token}/approve", response_model=None)
 async def voice_approve(
     token: str,
     user_id: str = Form(...),
-    name: str = Form("My Voice"),
+    name: str = Form(""),
 ) -> dict:
-    rec = voice_store.approve(_safe_user_id(user_id), token, name)
+    try:
+        rec = voice_store.approve(_safe_user_id(user_id), token, name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if rec is None:
         raise HTTPException(status_code=404, detail="Preview not found or expired.")
     return {"ok": True, "voice": rec}
@@ -603,7 +675,13 @@ async def voice_list(user_id: str) -> dict:
 
 @app.get("/voices/{voice_id}/audio", response_model=None)
 async def voice_audio(voice_id: str, user_id: str) -> FileResponse:
-    p = voice_store.voice_path(_safe_user_id(user_id), voice_id)
+    safe_user = _safe_user_id(user_id)
+    # Play back the synthesized sample (what the user approved). Fall back to the
+    # reference clip for voices saved before samples were stored.
+    sample = voice_store.voice_sample_path(safe_user, voice_id)
+    if sample.exists():
+        return FileResponse(path=str(sample), media_type="audio/wav", filename=f"{voice_id}.wav")
+    p = voice_store.voice_path(safe_user, voice_id)
     if p is None:
         raise HTTPException(status_code=404, detail="Voice not found.")
     return FileResponse(path=str(p), media_type="audio/wav", filename=f"{voice_id}.wav")

@@ -66,6 +66,8 @@ def _ensure_nltk_data() -> None:
 # StyleTTS2 (LibriTTS checkpoint) synthesizes at 24 kHz; the pipeline writes every
 # chunk at this rate so downstream ffmpeg concatenation stays sample-rate uniform.
 _SAMPLE_RATE = 24000
+# Fewest diffusion steps StyleTTS2 can run without its sampler producing NaN.
+_MIN_DIFFUSION_STEPS = 3
 
 # Audio suffixes we treat as "this voice argument is a reference clip to clone".
 _AUDIO_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus"}
@@ -131,10 +133,25 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
 def _get_model(use_gpu: bool):
     StyleTTS2 = _load_styletts2_class()
 
-    if use_gpu and not _cuda_available():
+    cuda = _cuda_available()
+    # Single global switch: STYLETTS2_USE_GPU=1 forces GPU for *every* TTS path
+    # (regular TTS, create-voice samples, Book Alchemy, CLI) without per-call edits.
+    # It only turns GPU on; a per-call use_gpu=True still works on its own. When the
+    # switch is set but no CUDA device is present, degrade to CPU instead of crashing.
+    if _env_bool("STYLETTS2_USE_GPU") and cuda:
+        use_gpu = True
+
+    if use_gpu and not cuda:
         raise RuntimeError(
             "GPU was requested for StyleTTS2, but torch.cuda.is_available() is False. "
             "Install CUDA-enabled PyTorch on an NVIDIA machine, or run on CPU."
@@ -159,7 +176,7 @@ def _get_model(use_gpu: bool):
 
         # Some builds pin the device internally via torch defaults; when we want
         # CPU on a CUDA box, hide the GPU for this process before construction.
-        if not use_gpu and _cuda_available():
+        if not use_gpu and cuda:
             os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
         model = StyleTTS2(**kwargs)
@@ -224,6 +241,10 @@ def _synthesize_sync(
     speaker: Optional[str],
     language: Optional[str],
     ref_audio: Optional[str],
+    diffusion_steps: Optional[int] = None,
+    embedding_scale: Optional[float] = None,
+    alpha: Optional[float] = None,
+    beta: Optional[float] = None,
 ) -> None:
     _ = (rate, volume, language)  # StyleTTS2 wrapper has no rate/volume/lang knob.
     text = (text or "").strip()
@@ -234,11 +255,19 @@ def _synthesize_sync(
     target_voice = _resolve_reference(voice, speaker, ref_audio)
     model = _get_model(use_gpu)
 
-    # Expression / quality knobs, tunable via env without touching code.
-    alpha = _env_float("STYLETTS2_ALPHA", 0.3)
-    beta = _env_float("STYLETTS2_BETA", 0.7)
-    diffusion_steps = _env_int("STYLETTS2_DIFFUSION_STEPS", 10)
-    embedding_scale = _env_float("STYLETTS2_EMBEDDING_SCALE", 1.0)
+    # Expression / quality knobs. Per-call values (from the UI / caller) take
+    # precedence over the env defaults; all are clamped to StyleTTS2's ranges.
+    alpha_val = alpha if alpha is not None else _env_float("STYLETTS2_ALPHA", 0.3)
+    beta_val = beta if beta is not None else _env_float("STYLETTS2_BETA", 0.7)
+    steps = diffusion_steps if diffusion_steps is not None else _env_int("STYLETTS2_DIFFUSION_STEPS", 10)
+    scale = embedding_scale if embedding_scale is not None else _env_float("STYLETTS2_EMBEDDING_SCALE", 1.0)
+    alpha = max(0.0, min(1.0, float(alpha_val)))
+    beta = max(0.0, min(1.0, float(beta_val)))
+    # StyleTTS2's diffusion sampler produces NaN at very low step counts (a 1-step
+    # schedule divides by steps-1 == 0), which later surfaces as "cannot convert
+    # float NaN to integer". Floor well above that even though the nominal min is 1.
+    diffusion_steps = max(_MIN_DIFFUSION_STEPS, min(20, int(steps)))
+    embedding_scale = max(0.5, min(3.0, float(scale)))
 
     kwargs = {
         "text": text,
@@ -270,6 +299,10 @@ async def synthesize_to_file(
     speaker: Optional[str] = None,  # optional alias; treated like voice
     language: Optional[str] = None,  # accepted for parity; ignored
     ref_audio: Optional[str] = None,  # explicit reference clip for cloning
+    diffusion_steps: Optional[int] = None,  # 1-20; fewer = faster. None => env default
+    embedding_scale: Optional[float] = None,  # 0.5-3.0; higher = more expressive
+    alpha: Optional[float] = None,  # 0-1; None => env default
+    beta: Optional[float] = None,  # 0-1; None => env default
 ) -> None:
     await asyncio.to_thread(
         _synthesize_sync,
@@ -282,6 +315,10 @@ async def synthesize_to_file(
         speaker,
         language,
         ref_audio,
+        diffusion_steps,
+        embedding_scale,
+        alpha,
+        beta,
     )
 
 

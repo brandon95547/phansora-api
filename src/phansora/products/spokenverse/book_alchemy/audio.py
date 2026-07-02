@@ -32,8 +32,10 @@ async def render_script_to_audio(
 
     import os
 
+    # GPU is controlled globally by the STYLETTS2_USE_GPU switch inside the engine;
+    # there's nothing to resolve per call here.
     if use_gpu is None:
-        use_gpu = os.getenv("BOOK_ALCHEMY_USE_GPU", "").strip().lower() in {"1", "true", "yes", "on"}
+        use_gpu = False
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
