@@ -7,7 +7,12 @@
 # compatible with sentence-transformers >=2.7. For a CPU-only host, swap the
 # index URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
 #
-# System packages required: ffmpeg, tesseract-ocr, espeak-ng
+# System packages required: ffmpeg, tesseract-ocr
+#
+# TTS engine: Chatterbox (Resemble AI) is installed SEPARATELY in prod — it pins
+# torch==2.6.0, so it's not listed here (and won't install on CPU/old-torch dev
+# machines). In the prod image/host: `pip install chatterbox-tts`. The API boots
+# fine without it; only actual TTS calls require it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 --extra-index-url https://download.pytorch.org/whl/cu124
@@ -40,7 +45,7 @@ pydantic>=2.6            # chrono_origin models
 pydantic-settings>=2.2   # chrono_origin settings
 
 # ── SpokenVerse: TTS + media ──
-styletts2==0.1.6
+# (Chatterbox TTS engine is a separate prod install — see header note.)
 numba<0.61; sys_platform == "darwin" and platform_machine == "x86_64"
 pymupdf
 pillow

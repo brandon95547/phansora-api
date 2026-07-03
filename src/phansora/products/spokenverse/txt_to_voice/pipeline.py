@@ -1,6 +1,6 @@
 # src/txt_to_voice/pipeline.py
 #
-# Batch TXT -> Audio pipeline (StyleTTS2 backend).
+# Batch TXT -> Audio pipeline (Chatterbox backend).
 # Supports chunk-level and file-level concurrency to speed up larger batches.
 
 from __future__ import annotations
@@ -25,24 +25,24 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "styletts2" (the only engine); honours TTS_ENGINE for validation.
+    # Resolves to "chatterbox" (the only engine); honours TTS_ENGINE for validation.
     return resolve_engine(None)
 
 
 @dataclass(frozen=True)
 class TTSConfig:
-    voice: str  # StyleTTS2 reference-clip path, or "default" for the built-in voice
+    voice: str  # Chatterbox reference-clip path, or "default" for the built-in voice
     use_gpu: bool  # whether to request CUDA in the TTS backend
-    rate: str  # accepted for compatibility; ignored by StyleTTS2
-    volume: str  # accepted for compatibility; ignored by StyleTTS2
+    rate: str  # accepted for compatibility; ignored by Chatterbox
+    volume: str  # accepted for compatibility; ignored by Chatterbox
     output_format: str  # "mp3" or "wav"
     chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
     language: Optional[str] = None
 
-    # TTS engine ("styletts2"); kept for forward-compatibility.
+    # TTS engine ("chatterbox"); kept for forward-compatibility.
     engine: str = field(default_factory=_default_engine)
-    # StyleTTS2 reference clip for voice cloning.
+    # Chatterbox reference clip for voice cloning.
     ref_audio: Optional[str] = None
 
     # NEW: how many chunks to synthesize in parallel per TXT file
@@ -50,9 +50,13 @@ class TTSConfig:
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
-    # StyleTTS2 expression knobs; None => engine/env defaults.
-    diffusion_steps: Optional[int] = None  # 1-20; fewer = faster
-    embedding_scale: Optional[float] = None  # 0.5-3.0; higher = more expressive
+    # Chatterbox generation knobs; None => engine/env defaults.
+    exaggeration: Optional[float] = None  # 0.25-2.0; emotion/intensity
+    cfg_weight: Optional[float] = None  # 0-1; lower = slower/steadier pacing
+    temperature: Optional[float] = None  # 0.05-5.0; sampling randomness
+    min_p: Optional[float] = None  # 0-1; min-p sampling floor
+    top_p: Optional[float] = None  # 0-1; nucleus sampling
+    repetition_penalty: Optional[float] = None  # 1-2; discourage repetition
 
 
 class BatchConverter:
@@ -122,8 +126,12 @@ class BatchConverter:
                     speaker=self.cfg.speaker,
                     language=self.cfg.language,
                     ref_audio=self.cfg.ref_audio,
-                    diffusion_steps=self.cfg.diffusion_steps,
-                    embedding_scale=self.cfg.embedding_scale,
+                    exaggeration=self.cfg.exaggeration,
+                    cfg_weight=self.cfg.cfg_weight,
+                    temperature=self.cfg.temperature,
+                    min_p=self.cfg.min_p,
+                    top_p=self.cfg.top_p,
+                    repetition_penalty=self.cfg.repetition_penalty,
                 )
 
         tasks: List[asyncio.Task[None]] = []

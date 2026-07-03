@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (StyleTTS2)
+#  - TXT -> Audio (Chatterbox)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -366,8 +366,12 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    diffusion_steps: int = Form(10),  # 1-20; fewer = faster (maps from the Speed slider)
-    embedding_scale: float = Form(1.0),  # 0.5-3.0; higher = more expressive
+    exaggeration: Optional[float] = Form(None),  # 0.25-2.0; emotion/intensity
+    cfg_weight: Optional[float] = Form(None),  # 0-1; lower = slower/steadier pacing
+    temperature: Optional[float] = Form(None),  # 0.05-5.0; sampling randomness
+    min_p: Optional[float] = Form(None),  # 0-1; min-p sampling floor
+    top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
+    repetition_penalty: Optional[float] = Form(None),  # 1-2; discourage repetition
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -389,7 +393,7 @@ async def txt_to_audio(
     user_audio_dir = _user_audio_dir(safe_user)
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve
-    # its id to the on-disk reference clip StyleTTS2 clones from.
+    # its id to the on-disk reference clip Chatterbox clones from.
     resolved_voice = voice
     if voice and voice != "default":
         clip = voice_store.voice_path(safe_user, voice)
@@ -407,8 +411,12 @@ async def txt_to_audio(
         language=language,
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
-        diffusion_steps=diffusion_steps,
-        embedding_scale=embedding_scale,
+        exaggeration=exaggeration,
+        cfg_weight=cfg_weight,
+        temperature=temperature,
+        min_p=min_p,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
     )
 
     try:
@@ -450,8 +458,12 @@ async def txt_to_audio(
                 "chunk_chars": chunk_chars,
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
-                "diffusion_steps": diffusion_steps,
-                "embedding_scale": embedding_scale,
+                "exaggeration": exaggeration,
+                "cfg_weight": cfg_weight,
+                "temperature": temperature,
+                "min_p": min_p,
+                "top_p": top_p,
+                "repetition_penalty": repetition_penalty,
             },
         },
     )
@@ -540,26 +552,42 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the StyleTTS2 backend.
+    Options currently available from the Chatterbox backend.
     """
+    from phansora.products.spokenverse.txt_to_voice.adapters import chatterbox_client as cb
+
     voices = discover_voices()
     return {
-        "backend": "styletts2",
+        "backend": "chatterbox",
         "voices": voices,
         "audio_formats": ["mp3", "wav"],
         "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker`",
         "controls_available": {
-            "speed": "not supported by StyleTTS2 backend (`rate` accepted but ignored)",
-            "voice_cloning": "supported via a reference audio clip",
-            "expression": "tunable via STYLETTS2_ALPHA / STYLETTS2_BETA / STYLETTS2_EMBEDDING_SCALE env vars",
-            "model_selection": "custom checkpoint via STYLETTS2_CHECKPOINT / STYLETTS2_CONFIG env vars",
-            "volume": "accepted for compatibility; currently ignored by backend",
+            "exaggeration": {"min": cb.EXAGGERATION_MIN, "max": cb.EXAGGERATION_MAX,
+                             "default": cb.EXAGGERATION_DEFAULT, "description": "emotion / intensity"},
+            "cfg_weight": {"min": cb.CFG_WEIGHT_MIN, "max": cb.CFG_WEIGHT_MAX,
+                           "default": cb.CFG_WEIGHT_DEFAULT, "description": "pacing; lower = slower/steadier"},
+            "temperature": {"min": cb.TEMPERATURE_MIN, "max": cb.TEMPERATURE_MAX,
+                            "default": cb.TEMPERATURE_DEFAULT, "description": "sampling randomness"},
+            "min_p": {"min": cb.MIN_P_MIN, "max": cb.MIN_P_MAX,
+                      "default": cb.MIN_P_DEFAULT, "description": "min-p sampling floor"},
+            "top_p": {"min": cb.TOP_P_MIN, "max": cb.TOP_P_MAX,
+                      "default": cb.TOP_P_DEFAULT, "description": "nucleus sampling"},
+            "repetition_penalty": {"min": cb.REPETITION_PENALTY_MIN, "max": cb.REPETITION_PENALTY_MAX,
+                                   "default": cb.REPETITION_PENALTY_DEFAULT, "description": "discourage repetition"},
+            "speed": "no direct speed knob; use cfg_weight (lower = slower) or post-process",
+            "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
+        "env_overrides": [
+            "CHATTERBOX_USE_GPU", "CHATTERBOX_DEVICE", "CHATTERBOX_REF_AUDIO",
+            "CHATTERBOX_EXAGGERATION", "CHATTERBOX_CFG_WEIGHT", "CHATTERBOX_TEMPERATURE",
+            "CHATTERBOX_MIN_P", "CHATTERBOX_TOP_P", "CHATTERBOX_REPETITION_PENALTY",
+        ],
     }
 
 
 # ----------------------------
-# Custom voices (StyleTTS2 cloning)
+# Custom voices (Chatterbox cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not
@@ -571,8 +599,12 @@ VOICE_SAMPLE_TEXT = "This is a sample of your voice. Approve to save in your voi
 async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
-    diffusion_steps: int = Form(10),  # 1-20; fewer = faster (maps from the Speed slider)
-    embedding_scale: float = Form(1.0),  # 0.5-3.0; higher = more expressive
+    exaggeration: Optional[float] = Form(None),  # 0.25-2.0; emotion/intensity
+    cfg_weight: Optional[float] = Form(None),  # 0-1; lower = slower/steadier pacing
+    temperature: Optional[float] = Form(None),  # 0.05-5.0; sampling randomness
+    min_p: Optional[float] = Form(None),  # 0-1; min-p sampling floor
+    top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
+    repetition_penalty: Optional[float] = Form(None),  # 1-2; discourage repetition
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
@@ -603,6 +635,11 @@ async def voice_preview(
     try:
         synthesize_to_file = get_synthesizer()
         sample_out = voice_store.pending_sample_path(safe_user, token)
+        # Clamp the Chatterbox knobs to supported ranges before touching the engine.
+        knobs = voice_store.clamp_settings(
+            exaggeration=exaggeration, cfg_weight=cfg_weight, temperature=temperature,
+            min_p=min_p, top_p=top_p, repetition_penalty=repetition_penalty,
+        )
         engine_call = {
             "text": VOICE_SAMPLE_TEXT,
             "out_path": str(sample_out),
@@ -610,10 +647,7 @@ async def voice_preview(
             "use_gpu": False,
             "rate": "+0%",
             "volume": "+0%",
-            "diffusion_steps": diffusion_steps,
-            "embedding_scale": embedding_scale,
-            "alpha": 0.0,
-            "beta": 0.0,
+            **knobs,
         }
         # TESTING: log the exact call sent to the engine on create-voice generate.
         print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
@@ -624,16 +658,13 @@ async def voice_preview(
             use_gpu=False,
             rate="+0%",
             volume="+0%",
-            diffusion_steps=diffusion_steps,
-            embedding_scale=embedding_scale,
-            alpha=0.0,  # voice creation clones the reference as closely as possible
-            beta=0.0,
+            **knobs,
         )
     except Exception as e:
         voice_store.discard_pending(safe_user, token)
         raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
     # Remember the knobs used for this sample so approval can persist them.
-    voice_store.save_pending_settings(safe_user, token, diffusion_steps, embedding_scale)
+    voice_store.save_pending_settings(safe_user, token, **knobs)
     return result
 
 
