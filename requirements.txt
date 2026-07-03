@@ -1,24 +1,24 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
-# Torch reconciliation: SpokenVerse (StyleTTS2) needs the GPU build
-# torch==2.5.1+cu124; Dossier Nova (sentence-transformers/faiss) previously
-# pinned CPU torch==2.2.2. We standardize on the cu124 build — 2.5.x is
-# compatible with sentence-transformers >=2.7. For a CPU-only host, swap the
+# Torch baseline: aligned to the Chatterbox TTS engine, which pins torch==2.6.0 /
+# torchaudio==2.6.0 / transformers==5.2.0. We standardize the whole stack on that
+# so `pip install chatterbox-tts` (prod) adds nothing that conflicts. torchvision
+# 0.21.0 is the matching release for torch 2.6.0. For a CPU-only host, swap the
 # index URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
 #
 # System packages required: ffmpeg, tesseract-ocr
 #
-# TTS engine: Chatterbox (Resemble AI) is installed SEPARATELY in prod — it pins
-# torch==2.6.0, so it's not listed here (and won't install on CPU/old-torch dev
-# machines). In the prod image/host: `pip install chatterbox-tts`. The API boots
-# fine without it; only actual TTS calls require it.
+# TTS engine: Chatterbox (Resemble AI) is still installed SEPARATELY in prod
+# (`pip install chatterbox-tts`) — it isn't on PyPI-friendly terms for CPU dev
+# machines. The API boots fine without it; only actual TTS calls require it. With
+# the pins below, that install adds only the chatterbox package + its light deps.
 # ─────────────────────────────────────────────────────────────────────────────
 
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
-torchaudio==2.5.1+cu124
+torch==2.6.0+cu124
+torchvision==0.21.0+cu124
+torchaudio==2.6.0+cu124
 
 # Shared numeric / runtime pins
 numpy<2
@@ -63,6 +63,8 @@ markdown
 mobi
 
 # ── Dossier Nova: local embeddings ──
+# transformers must allow Chatterbox's pinned 5.2.0; sentence-transformers 5.x is
+# the line that supports transformers 5 (>=4.41,<6.0).
 faiss-cpu>=1.7.4
-transformers>=4.40,<5.0
-sentence-transformers>=2.7,<3.0
+transformers>=4.41,<6.0
+sentence-transformers>=5.0
