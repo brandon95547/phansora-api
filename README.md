@@ -1,93 +1,90 @@
 # Phansora API
 
-The unified Python backend for [phansora.com](https://phansora.com) — a platform
-that hosts multiple AI products behind a single FastAPI application. It
-consolidates three formerly separate services:
+Unified Python (FastAPI) backend for [phansora.com](https://phansora.com). One app
+serves all products, each under a path prefix:
 
-| Product | Path prefix | What it does |
+| Product | Prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | PDF→text (render + OCR + AI cleanup), text→audio (GPT-SoVITS voice cloning), audio→text (faster-whisper), and **Book Alchemy** (durable, Postgres-backed book→audio-course pipeline) |
-| **Chrono-Origin** | `/chrono` | Traces the earliest known origin of a story/myth/event and maps its evolution, using Claude's grounded web search |
-| **Dossier Nova** | `/dossier` | AI research & dossier generation — multi-source ingest → cleanup → profiling → TOC → organized, source-attributed dossier (local embeddings + DeepSeek) |
+| **SpokenVerse** | `/spokenverse` | text→audio (GPT-SoVITS voice cloning), PDF→text, audio→text, Book Alchemy |
+| **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (Claude web search) |
+| **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 
-## Layout
+System packages: `ffmpeg`, `tesseract-ocr`.
 
-```
-phansora-api/
-├── src/phansora/
-│   ├── main.py                 # unified FastAPI app — mounts each product
-│   ├── config.py               # platform-level settings
-│   ├── cli.py                  # `phansora serve|tts|dossier`
-│   ├── shared/                 # cross-cutting infra (product -> shared only)
-│   │   ├── ai/                 #   anthropic + deepseek clients
-│   │   ├── auth/  billing/     #   platform scaffolds (Square credit system)
-│   │   ├── database/           #   generic asyncpg pool
-│   │   ├── storage/  queue/    #   scaffolds
-│   │   └── utils/              #   chunking, ffmpeg, naming, email
-│   └── products/
-│       ├── spokenverse/        # services/, txt_to_voice/, book_alchemy/, worker.py
-│       ├── chrono_origin/      # pipeline/, services/, models.py
-│       ├── dossier_nova/       # embeddings, organizer, toc, validation, ...
-│       ├── image_tools/        # planned product (scaffold)
-│       └── future_products/    # namespace for what's next
-├── tests/  docs/  scripts/  examples/  assets/  data/
-├── requirements.txt  pyproject.toml  Makefile
-├── Dockerfile  docker-compose.yml
-├── .env.example  .gitignore  README.md  LICENSE
-```
-
-**Design rule:** each product owns its API routes, business logic, prompts,
-models and config. Reusable infrastructure lives in `shared/`. Nothing under
-`shared/` may import from `products/` — the dependency direction is always
-product → shared. A smoke test enforces this.
-
-## Quick start
+## Install
 
 ```bash
-cp .env.example .env          # fill in API keys / DB creds
-make install                  # venv + pip install -r requirements.txt + pip install -e .
-make dev                      # uvicorn phansora.main:app --reload
+cp .env.example .env      # fill in DB creds / API keys
+make install              # venv + deps (CUDA torch 2.5.1+cu124) + editable install
 ```
 
-System packages required: `ffmpeg`, `tesseract-ocr`.
+CPU-only host: swap the `--extra-index-url` in `requirements.txt` to the CPU wheel
+index and drop the `+cu124` suffixes.
 
-Then:
+### TTS engine — GPT-SoVITS (prod)
 
-- `GET /` — platform info + which products mounted
-- `GET /health` — health + mounted prefixes
-- `…/spokenverse/*`, `…/chrono/*`, `…/dossier/*` — each product's own routes
-
-### Resilient boot
-
-Products are mounted only if they import cleanly. A host missing one product's
-heavy optional deps (torch, faiss, gptsovits, asyncpg…) still serves the rest.
-Restrict what's mounted with `PHANSORA_ENABLED_PRODUCTS=spokenverse,chrono_origin`.
-
-### Book Alchemy worker
-
-Book Alchemy runs long jobs in a separate durable process:
+The engine is a git checkout, not a pip package. Install it into the **same venv**:
 
 ```bash
-make worker        # python -m phansora.products.spokenverse.worker
+# 1. clone + its deps
+git clone https://github.com/RVC-Boss/GPT-SoVITS.git /var/www/GPT-SoVITS
+.venv/bin/pip install -r /var/www/GPT-SoVITS/requirements.txt
+
+# 2. re-pin cu124 torch (step 1 pulls a cu13x build that breaks CUDA 12.4 drivers)
+.venv/bin/pip install "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1" \
+  --index-url https://download.pytorch.org/whl/cu124
+.venv/bin/pip install "transformers>=4.43,<4.51" "sentence-transformers>=5.0"
+.venv/bin/pip check       # must be clean
+
+# 3. v2 model checkpoints (~1 GB)
+.venv/bin/pip install "huggingface_hub[cli]"
+.venv/bin/python - <<'PY'
+from huggingface_hub import snapshot_download
+snapshot_download("lj1995/GPT-SoVITS", local_dir="/var/www/GPT-SoVITS/GPT_SoVITS/pretrained_models",
+  allow_patterns=["chinese-hubert-base/*","chinese-roberta-wwm-ext-large/*",
+                  "gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
+                  "gsv-v2final-pretrained/s2G2333k.pth"])
+PY
+
+# 4. NLTK data (English g2p)
+.venv/bin/python -c "import nltk; [nltk.download(r) for r in ('averaged_perceptron_tagger_eng','cmudict','punkt','punkt_tab')]"
 ```
 
-### CLI
+Then set in `.env` and restart the service:
 
 ```bash
-phansora serve                 # run the API
-phansora tts   --help          # SpokenVerse batch TTS / PDF->TXT
-phansora dossier --help        # Dossier Nova pipeline
+TTS_ENGINE=gptsovits
+GPTSOVITS_REPO=/var/www/GPT-SoVITS
+GPTSOVITS_USE_GPU=1
+GPTSOVITS_IS_HALF=0                 # fp16 can produce silent output on some GPUs
+# "Default" voice needs a reference clip (GPT-SoVITS always clones from one):
+# GPTSOVITS_DEFAULT_REF=/path/to/ref.wav
+# GPTSOVITS_DEFAULT_REF_TEXT=what that clip says
 ```
 
-## Dependencies note
+The API boots without the engine; only TTS calls need it.
 
-SpokenVerse (GPT-SoVITS) and Dossier Nova (sentence-transformers) both need
-PyTorch but historically pinned different builds. This repo standardizes on the
-CUDA `torch==2.5.1+cu124` build. For a CPU-only host, edit the
-`--extra-index-url` line in `requirements.txt` to the CPU wheel index and drop
-the `+cu124` suffixes.
+## Run
 
-## Provenance
+```bash
+make dev      # dev: uvicorn --reload
+make run      # prod-ish: uvicorn --workers 1  (GPU model = 1 worker)
+make worker   # Book Alchemy job runner — a SEPARATE process, required for Book Alchemy
+```
 
-Merged from three repositories (each retains its own history as a backup):
-`spokenverse` (base), `tomeweaver` → `dossier_nova`, `chrono-origin` → `chrono_origin`.
+Prod runs `phansora-api` (and `phansora-worker`) under systemd. Put the API behind
+nginx with `proxy_read_timeout 300s` — the first TTS request loads the model and
+otherwise times out.
+
+## Endpoints
+
+- `GET /health` — health + mounted products
+- `GET /spokenverse/tts-options` — TTS backend + available settings
+- `…/spokenverse/*`, `…/chrono/*`, `…/dossier/*` — each product's routes
+
+## CLI
+
+```bash
+phansora tts --help        # batch TTS / PDF→TXT
+phansora dossier --help    # Dossier Nova pipeline
+```
