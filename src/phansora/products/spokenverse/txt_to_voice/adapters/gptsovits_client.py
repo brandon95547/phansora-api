@@ -121,32 +121,44 @@ def _load_tts(use_gpu: bool):
         if _TTS is not None:
             return _TTS
         repo = _repo()
-        # GPT-SoVITS is a repo, not a package — make its modules importable.
-        for p in (str(repo), str(repo / "GPT_SoVITS")):
+        # GPT-SoVITS is a repo, not a package. It also does bare imports like
+        # `from ERes2NetV2 import ...` after `sys.path.append(os.getcwd()/...)`, i.e.
+        # it assumes CWD == repo root. Add its subdirs to sys.path AND load with the
+        # CWD set to the repo so those getcwd()-relative appends resolve.
+        for p in (
+            str(repo),
+            str(repo / "GPT_SoVITS"),
+            str(repo / "GPT_SoVITS" / "eres2net"),
+            str(repo / "GPT_SoVITS" / "text"),
+        ):
             if p not in sys.path:
                 sys.path.insert(0, p)
+        old_cwd = os.getcwd()
         try:
+            os.chdir(str(repo))
             from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config  # type: ignore
+
+            mp = _model_paths(repo)
+            device = _resolve_device(use_gpu)
+            # is_half=False by default: fp16 can produce silent/NaN output on some GPUs.
+            is_half = _env_bool("GPTSOVITS_IS_HALF", False) and device == "cuda"
+            _TTS = TTS(TTS_Config({"custom": {
+                "device": device,
+                "is_half": is_half,
+                "version": _env("GPTSOVITS_VERSION", "v2"),
+                "t2s_weights_path": mp["t2s"],
+                "vits_weights_path": mp["vits"],
+                "bert_base_path": mp["bert"],
+                "cnhuhbert_base_path": mp["hubert"],
+            }}))
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
-                "Could not import GPT-SoVITS TTS_infer_pack from "
+                "Could not import/load GPT-SoVITS TTS_infer_pack from "
                 f"{repo} — check GPTSOVITS_REPO and that its requirements are "
                 f"installed.\nOriginal error: {type(e).__name__}: {e}"
             ) from e
-
-        mp = _model_paths(repo)
-        device = _resolve_device(use_gpu)
-        # is_half=False by default: fp16 can produce silent/NaN output on some GPUs.
-        is_half = _env_bool("GPTSOVITS_IS_HALF", False) and device == "cuda"
-        _TTS = TTS(TTS_Config({"custom": {
-            "device": device,
-            "is_half": is_half,
-            "version": _env("GPTSOVITS_VERSION", "v2"),
-            "t2s_weights_path": mp["t2s"],
-            "vits_weights_path": mp["vits"],
-            "bert_base_path": mp["bert"],
-            "cnhuhbert_base_path": mp["hubert"],
-        }}))
+        finally:
+            os.chdir(old_cwd)
         return _TTS
 
 
@@ -247,8 +259,15 @@ def _synthesize_sync(
 
     sr, chunks = None, []
     with _INFER_LOCK:
-        for sr, audio in tts.run(inputs):
-            chunks.append(audio)
+        # GPT-SoVITS loads some resources relative to CWD on first use; run from
+        # the repo root (serialized by the lock, restored right after).
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(_repo()))
+            for sr, audio in tts.run(inputs):
+                chunks.append(audio)
+        finally:
+            os.chdir(old_cwd)
     if not chunks:
         raise RuntimeError("GPT-SoVITS synthesis produced no audio.")
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
