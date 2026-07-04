@@ -29,8 +29,10 @@ from typing import List, Optional
 
 from phansora.shared.paths import runtime_dir
 
-# Uploads longer than this are trimmed from the END before processing.
-MAX_SECONDS = 90
+# GPT-SoVITS requires a 3-10 second reference clip (longer errors out). We keep
+# the first 9s (safely inside the range) — this clip is what it clones from, and
+# it's also what gets auto-transcribed, so the two stay in sync.
+MAX_SECONDS = 9
 # GPT-SoVITS reference clips: 24 kHz mono.
 _SAMPLE_RATE = 24000
 # Pending clips (uploaded but never approved or discarded) are pruned after this

@@ -26,7 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import sys
+import tempfile
+import uuid
 import wave
 from pathlib import Path
 from threading import Lock
@@ -162,6 +165,41 @@ def _load_tts(use_gpu: bool):
         return _TTS
 
 
+# GPT-SoVITS hard-requires a 3-10 second reference clip.
+_REF_MAX_SECONDS = 10.0
+_REF_TRIM_SECONDS = 9.0
+
+
+def _probe_seconds(path: str) -> float:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nokey=1:noprint_wrappers=1", str(path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return float((out.stdout or "0").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def _ensure_ref_length(ref_clip: str) -> tuple[str, Optional[str]]:
+    """GPT-SoVITS needs a 3-10s reference. If ``ref_clip`` is longer, trim the first
+    ``_REF_TRIM_SECONDS`` into a temp WAV. Returns (path_to_use, temp_to_delete_or_None).
+    Covers every reference source (cloned voices, the default ref, direct paths)."""
+    if _probe_seconds(ref_clip) <= _REF_MAX_SECONDS:
+        return ref_clip, None
+    tmp = str(Path(tempfile.gettempdir()) / f"gsvref_{uuid.uuid4().hex}.wav")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(ref_clip), "-t", str(_REF_TRIM_SECONDS),
+             "-ac", "1", "-ar", "32000", tmp],
+            check=True, capture_output=True, timeout=60,
+        )
+        return tmp, tmp
+    except Exception:
+        return ref_clip, None  # best-effort; let the engine surface any error
+
+
 def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[str]) -> Optional[str]:
     for candidate in (ref_audio, speaker, voice, os.getenv("GPTSOVITS_REF_AUDIO")):
         if not candidate:
@@ -230,6 +268,8 @@ def _synthesize_sync(
             "GPT-SoVITS needs a reference clip. Select a cloned voice, or set "
             "GPTSOVITS_DEFAULT_REF (+ GPTSOVITS_DEFAULT_REF_TEXT) for the default voice."
         )
+    # Any reference (cloned voice, default ref, direct path) must be <=10s.
+    ref_clip, _ref_tmp = _ensure_ref_length(ref_clip)
 
     # Clamp knobs to supported ranges; None => env/default.
     speed = max(SPEED_MIN, min(SPEED_MAX, float(speed if speed is not None else _env_float("GPTSOVITS_SPEED", SPEED_DEFAULT))))
@@ -258,16 +298,20 @@ def _synthesize_sync(
     }
 
     sr, chunks = None, []
-    with _INFER_LOCK:
-        # GPT-SoVITS loads some resources relative to CWD on first use; run from
-        # the repo root (serialized by the lock, restored right after).
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(str(_repo()))
-            for sr, audio in tts.run(inputs):
-                chunks.append(audio)
-        finally:
-            os.chdir(old_cwd)
+    try:
+        with _INFER_LOCK:
+            # GPT-SoVITS loads some resources relative to CWD on first use; run from
+            # the repo root (serialized by the lock, restored right after).
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(str(_repo()))
+                for sr, audio in tts.run(inputs):
+                    chunks.append(audio)
+            finally:
+                os.chdir(old_cwd)
+    finally:
+        if _ref_tmp:
+            Path(_ref_tmp).unlink(missing_ok=True)
     if not chunks:
         raise RuntimeError("GPT-SoVITS synthesis produced no audio.")
     audio = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]

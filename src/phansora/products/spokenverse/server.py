@@ -683,6 +683,9 @@ async def voice_preview(
             repetition_penalty=knobs["repetition_penalty"],
         )
     except Exception as e:
+        import traceback
+        print("[create-voice] synthesis failed:", flush=True)
+        traceback.print_exc()
         voice_store.discard_pending(safe_user, token)
         raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
     # Remember the knobs + reference transcript so approval can persist them.
