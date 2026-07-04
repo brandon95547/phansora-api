@@ -12,9 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# TTS engine (Chatterbox) — installed separately from requirements.txt because it
-# pins torch==2.6.0. Uncomment to bake it into the image (it will bump torch):
-#   RUN pip install --no-cache-dir chatterbox-tts
+# TTS engine (GPT-SoVITS) — a git checkout, installed separately (not a pip pkg).
+# In the image: clone it, `pip install -r GPT-SoVITS/requirements.txt` into the
+# venv, add the v2 checkpoints, and set GPTSOVITS_REPO. Keep the cu124 torch pinned.
 
 WORKDIR /app
 

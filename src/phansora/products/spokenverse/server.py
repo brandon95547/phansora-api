@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (Chatterbox)
+#  - TXT -> Audio (GPT-SoVITS)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -366,12 +366,11 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    exaggeration: Optional[float] = Form(None),  # 0.25-2.0; emotion/intensity
-    cfg_weight: Optional[float] = Form(None),  # 0-1; lower = slower/steadier pacing
-    temperature: Optional[float] = Form(None),  # 0.05-5.0; sampling randomness
-    min_p: Optional[float] = Form(None),  # 0-1; min-p sampling floor
+    speed: Optional[float] = Form(None),  # 0.6-1.65; speed_factor
+    top_k: Optional[int] = Form(None),  # 1-100; GPT sampling
     top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
-    repetition_penalty: Optional[float] = Form(None),  # 1-2; discourage repetition
+    temperature: Optional[float] = Form(None),  # 0.01-1.0
+    repetition_penalty: Optional[float] = Form(None),  # 0-2
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -393,12 +392,19 @@ async def txt_to_audio(
     user_audio_dir = _user_audio_dir(safe_user)
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve
-    # its id to the on-disk reference clip Chatterbox clones from.
+    # its id to the on-disk reference clip GPT-SoVITS clones from, plus its stored
+    # reference transcript (prompt_text) for higher-quality cloning.
     resolved_voice = voice
+    prompt_text = ""
     if voice and voice != "default":
         clip = voice_store.voice_path(safe_user, voice)
         if clip is not None:
             resolved_voice = str(clip)
+        rec = next((v for v in voice_store.list_voices(safe_user) if v.get("id") == voice), None)
+        if rec:
+            prompt_text = rec.get("ref_text") or ""
+            if not language:
+                language = rec.get("language")
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -411,11 +417,11 @@ async def txt_to_audio(
         language=language,
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
-        exaggeration=exaggeration,
-        cfg_weight=cfg_weight,
-        temperature=temperature,
-        min_p=min_p,
+        prompt_text=prompt_text,
+        speed=speed,
+        top_k=top_k,
         top_p=top_p,
+        temperature=temperature,
         repetition_penalty=repetition_penalty,
     )
 
@@ -458,11 +464,10 @@ async def txt_to_audio(
                 "chunk_chars": chunk_chars,
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
-                "exaggeration": exaggeration,
-                "cfg_weight": cfg_weight,
-                "temperature": temperature,
-                "min_p": min_p,
+                "speed": speed,
+                "top_k": top_k,
                 "top_p": top_p,
+                "temperature": temperature,
                 "repetition_penalty": repetition_penalty,
             },
         },
@@ -552,42 +557,42 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the Chatterbox backend.
+    Options currently available from the GPT-SoVITS backend.
     """
-    from phansora.products.spokenverse.txt_to_voice.adapters import chatterbox_client as cb
+    from phansora.products.spokenverse.txt_to_voice.adapters import gptsovits_client as gsv
 
     voices = discover_voices()
     return {
-        "backend": "chatterbox",
+        "backend": "gptsovits",
         "voices": voices,
+        "languages": gsv.LANGUAGES,
         "audio_formats": ["mp3", "wav"],
-        "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker`",
+        "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker` (transcript auto-detected on create)",
         "controls_available": {
-            "exaggeration": {"min": cb.EXAGGERATION_MIN, "max": cb.EXAGGERATION_MAX,
-                             "default": cb.EXAGGERATION_DEFAULT, "description": "emotion / intensity"},
-            "cfg_weight": {"min": cb.CFG_WEIGHT_MIN, "max": cb.CFG_WEIGHT_MAX,
-                           "default": cb.CFG_WEIGHT_DEFAULT, "description": "pacing; lower = slower/steadier"},
-            "temperature": {"min": cb.TEMPERATURE_MIN, "max": cb.TEMPERATURE_MAX,
-                            "default": cb.TEMPERATURE_DEFAULT, "description": "sampling randomness"},
-            "min_p": {"min": cb.MIN_P_MIN, "max": cb.MIN_P_MAX,
-                      "default": cb.MIN_P_DEFAULT, "description": "min-p sampling floor"},
-            "top_p": {"min": cb.TOP_P_MIN, "max": cb.TOP_P_MAX,
-                      "default": cb.TOP_P_DEFAULT, "description": "nucleus sampling"},
-            "repetition_penalty": {"min": cb.REPETITION_PENALTY_MIN, "max": cb.REPETITION_PENALTY_MAX,
-                                   "default": cb.REPETITION_PENALTY_DEFAULT, "description": "discourage repetition"},
-            "speed": "no direct speed knob; use cfg_weight (lower = slower) or post-process",
+            "language": {"values": gsv.LANGUAGES, "default": gsv.LANGUAGE_DEFAULT,
+                         "description": "language of the synthesized text"},
+            "speed": {"min": gsv.SPEED_MIN, "max": gsv.SPEED_MAX,
+                      "default": gsv.SPEED_DEFAULT, "description": "speed_factor (playback pace)"},
+            "top_k": {"min": gsv.TOP_K_MIN, "max": gsv.TOP_K_MAX,
+                      "default": gsv.TOP_K_DEFAULT, "description": "GPT top-k sampling"},
+            "top_p": {"min": gsv.TOP_P_MIN, "max": gsv.TOP_P_MAX,
+                      "default": gsv.TOP_P_DEFAULT, "description": "nucleus sampling"},
+            "temperature": {"min": gsv.TEMPERATURE_MIN, "max": gsv.TEMPERATURE_MAX,
+                            "default": gsv.TEMPERATURE_DEFAULT, "description": "sampling randomness"},
+            "repetition_penalty": {"min": gsv.REPETITION_PENALTY_MIN, "max": gsv.REPETITION_PENALTY_MAX,
+                                   "default": gsv.REPETITION_PENALTY_DEFAULT, "description": "discourage repetition"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
-            "CHATTERBOX_USE_GPU", "CHATTERBOX_DEVICE", "CHATTERBOX_REF_AUDIO",
-            "CHATTERBOX_EXAGGERATION", "CHATTERBOX_CFG_WEIGHT", "CHATTERBOX_TEMPERATURE",
-            "CHATTERBOX_MIN_P", "CHATTERBOX_TOP_P", "CHATTERBOX_REPETITION_PENALTY",
+            "GPTSOVITS_REPO", "GPTSOVITS_USE_GPU", "GPTSOVITS_DEVICE", "GPTSOVITS_IS_HALF",
+            "GPTSOVITS_T2S", "GPTSOVITS_VITS", "GPTSOVITS_BERT", "GPTSOVITS_HUBERT",
+            "GPTSOVITS_DEFAULT_REF", "GPTSOVITS_DEFAULT_REF_TEXT", "GPTSOVITS_LANGUAGE",
         ],
     }
 
 
 # ----------------------------
-# Custom voices (Chatterbox cloning)
+# Custom voices (GPT-SoVITS cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not
@@ -599,17 +604,19 @@ VOICE_SAMPLE_TEXT = "This is a sample of your voice. Approve to save in your voi
 async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
-    exaggeration: Optional[float] = Form(None),  # 0.25-2.0; emotion/intensity
-    cfg_weight: Optional[float] = Form(None),  # 0-1; lower = slower/steadier pacing
-    temperature: Optional[float] = Form(None),  # 0.05-5.0; sampling randomness
-    min_p: Optional[float] = Form(None),  # 0-1; min-p sampling floor
+    language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
+    speed: Optional[float] = Form(None),  # 0.6-1.65; speed_factor
+    top_k: Optional[int] = Form(None),  # 1-100; GPT sampling
     top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
-    repetition_penalty: Optional[float] = Form(None),  # 1-2; discourage repetition
+    temperature: Optional[float] = Form(None),  # 0.01-1.0
+    repetition_penalty: Optional[float] = Form(None),  # 0-2
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
     The upload is trimmed to <=90s and normalized to a 24kHz mono WAV reference
-    clip, which is run through the engine to speak ``VOICE_SAMPLE_TEXT``. That
+    clip. GPT-SoVITS clones best when it knows the reference transcript, so we
+    auto-transcribe the clip (whisper) and use + store that as ``ref_text``. The
+    clip is then run through the engine to speak ``VOICE_SAMPLE_TEXT``; that
     synthesized sample is what the user hears. Returns a token used to preview and
     then approve/discard. Nothing is saved as a usable voice until it is approved.
     """
@@ -632,22 +639,31 @@ async def voice_preview(
     ref_clip = voice_store.pending_path(safe_user, token)
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
+
+    knobs = voice_store.clamp_settings(
+        language=language, speed=speed, top_k=top_k, top_p=top_p,
+        temperature=temperature, repetition_penalty=repetition_penalty,
+    )
+
+    # Auto-transcribe the reference clip so GPT-SoVITS can clone with the prompt
+    # text (better quality). Best-effort: if it fails, fall back to reference-free.
+    ref_text = ""
+    try:
+        model = os.getenv("WHISPER_MODEL", "base")
+        # Let whisper auto-detect the reference clip's language (None = auto).
+        wlang = knobs["language"] if knobs["language"] in ("en", "zh", "ja", "ko") else None
+        ref_text = (await asyncio.to_thread(
+            _transcribe_audio_to_text_sync, ref_clip, model, wlang
+        )).strip()
+    except Exception as tr_err:  # noqa: BLE001
+        print(f"[create-voice] ref transcription skipped: {tr_err}", flush=True)
+
     try:
         synthesize_to_file = get_synthesizer()
         sample_out = voice_store.pending_sample_path(safe_user, token)
-        # Clamp the Chatterbox knobs to supported ranges before touching the engine.
-        knobs = voice_store.clamp_settings(
-            exaggeration=exaggeration, cfg_weight=cfg_weight, temperature=temperature,
-            min_p=min_p, top_p=top_p, repetition_penalty=repetition_penalty,
-        )
         engine_call = {
-            "text": VOICE_SAMPLE_TEXT,
-            "out_path": str(sample_out),
-            "voice": str(ref_clip),
-            "use_gpu": False,
-            "rate": "+0%",
-            "volume": "+0%",
-            **knobs,
+            "text": VOICE_SAMPLE_TEXT, "out_path": str(sample_out), "voice": str(ref_clip),
+            "prompt_text": ref_text, **knobs,
         }
         # TESTING: log the exact call sent to the engine on create-voice generate.
         print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
@@ -658,13 +674,19 @@ async def voice_preview(
             use_gpu=False,
             rate="+0%",
             volume="+0%",
-            **knobs,
+            prompt_text=ref_text,
+            language=knobs["language"],
+            speed=knobs["speed"],
+            top_k=knobs["top_k"],
+            top_p=knobs["top_p"],
+            temperature=knobs["temperature"],
+            repetition_penalty=knobs["repetition_penalty"],
         )
     except Exception as e:
         voice_store.discard_pending(safe_user, token)
         raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
-    # Remember the knobs used for this sample so approval can persist them.
-    voice_store.save_pending_settings(safe_user, token, **knobs)
+    # Remember the knobs + reference transcript so approval can persist them.
+    voice_store.save_pending_settings(safe_user, token, ref_text=ref_text, **knobs)
     return result
 
 

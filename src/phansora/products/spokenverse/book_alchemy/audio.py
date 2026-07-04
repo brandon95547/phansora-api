@@ -1,4 +1,4 @@
-"""Render a session script to a single audio file via the Chatterbox TTS engine.
+"""Render a session script to a single audio file via the GPT-SoVITS TTS engine.
 
 We reuse ``BatchConverter`` (which already handles chunking, concatenation and
 transcoding) by writing the script to a temporary input folder and collecting
@@ -32,7 +32,7 @@ async def render_script_to_audio(
 
     import os
 
-    # GPU is controlled globally by the CHATTERBOX_USE_GPU switch inside the engine;
+    # GPU is controlled globally by the GPTSOVITS_USE_GPU switch inside the engine;
     # there's nothing to resolve per call here.
     if use_gpu is None:
         use_gpu = False

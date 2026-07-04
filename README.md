@@ -6,7 +6,7 @@ consolidates three formerly separate services:
 
 | Product | Path prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | PDF→text (render + OCR + AI cleanup), text→audio (Chatterbox voice cloning), audio→text (faster-whisper), and **Book Alchemy** (durable, Postgres-backed book→audio-course pipeline) |
+| **SpokenVerse** | `/spokenverse` | PDF→text (render + OCR + AI cleanup), text→audio (GPT-SoVITS voice cloning), audio→text (faster-whisper), and **Book Alchemy** (durable, Postgres-backed book→audio-course pipeline) |
 | **Chrono-Origin** | `/chrono` | Traces the earliest known origin of a story/myth/event and maps its evolution, using Claude's grounded web search |
 | **Dossier Nova** | `/dossier` | AI research & dossier generation — multi-source ingest → cleanup → profiling → TOC → organized, source-attributed dossier (local embeddings + DeepSeek) |
 
@@ -49,7 +49,7 @@ make install                  # venv + pip install -r requirements.txt + pip ins
 make dev                      # uvicorn phansora.main:app --reload
 ```
 
-System packages required: `ffmpeg`, `tesseract-ocr`, `espeak-ng`.
+System packages required: `ffmpeg`, `tesseract-ocr`.
 
 Then:
 
@@ -60,7 +60,7 @@ Then:
 ### Resilient boot
 
 Products are mounted only if they import cleanly. A host missing one product's
-heavy optional deps (torch, faiss, chatterbox, asyncpg…) still serves the rest.
+heavy optional deps (torch, faiss, gptsovits, asyncpg…) still serves the rest.
 Restrict what's mounted with `PHANSORA_ENABLED_PRODUCTS=spokenverse,chrono_origin`.
 
 ### Book Alchemy worker
@@ -81,7 +81,7 @@ phansora dossier --help        # Dossier Nova pipeline
 
 ## Dependencies note
 
-SpokenVerse (Chatterbox) and Dossier Nova (sentence-transformers) both need
+SpokenVerse (GPT-SoVITS) and Dossier Nova (sentence-transformers) both need
 PyTorch but historically pinned different builds. This repo standardizes on the
 CUDA `torch==2.5.1+cu124` build. For a CPU-only host, edit the
 `--extra-index-url` line in `requirements.txt` to the CPU wheel index and drop

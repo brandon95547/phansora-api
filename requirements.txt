@@ -1,24 +1,25 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
-# Torch baseline: aligned to the Chatterbox TTS engine, which pins torch==2.6.0 /
-# torchaudio==2.6.0 / transformers==5.2.0. We standardize the whole stack on that
-# so `pip install chatterbox-tts` (prod) adds nothing that conflicts. torchvision
-# 0.21.0 is the matching release for torch 2.6.0. For a CPU-only host, swap the
-# index URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
+# Torch baseline: aligned to the GPT-SoVITS TTS engine (tested on torch 2.5.1+cu124,
+# CUDA 12.4). torchvision 0.20.1 / torchaudio 2.5.1 are the matching releases. The
+# `+cu124` build matches the prod GPU driver; for a CPU-only host, swap the index
+# URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
 #
 # System packages required: ffmpeg, tesseract-ocr
 #
-# TTS engine: Chatterbox (Resemble AI) is still installed SEPARATELY in prod
-# (`pip install chatterbox-tts`) — it isn't on PyPI-friendly terms for CPU dev
-# machines. The API boots fine without it; only actual TTS calls require it. With
-# the pins below, that install adds only the chatterbox package + its light deps.
+# TTS engine: GPT-SoVITS is a git checkout (NOT a pip package), run in-process. In
+# prod: clone it, `pip install -r GPT-SoVITS/requirements.txt` INTO this venv, grab
+# the v2 checkpoints, and set GPTSOVITS_REPO. Its deps (transformers 4.4x, numba,
+# pytorch-lightning…) are compatible with the pins below. The API boots without it;
+# only TTS calls require it.  ⚠ Don't let GPT-SoVITS's `pip install -r` pull the
+# default torch — it grabs a cu13x build; keep the cu124 torch pinned here.
 # ─────────────────────────────────────────────────────────────────────────────
 
 --extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.6.0+cu124
-torchvision==0.21.0+cu124
-torchaudio==2.6.0+cu124
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124
+torchaudio==2.5.1+cu124
 
 # Shared numeric / runtime pins
 numpy<2
@@ -45,7 +46,7 @@ pydantic>=2.6            # chrono_origin models
 pydantic-settings>=2.2   # chrono_origin settings
 
 # ── SpokenVerse: TTS + media ──
-# (Chatterbox TTS engine is a separate prod install — see header note.)
+# (GPT-SoVITS TTS engine is a separate git+requirements prod install — see header note.)
 numba<0.61; sys_platform == "darwin" and platform_machine == "x86_64"
 pymupdf
 pillow
@@ -63,8 +64,8 @@ markdown
 mobi
 
 # ── Dossier Nova: local embeddings ──
-# transformers must allow Chatterbox's pinned 5.2.0; sentence-transformers 5.x is
-# the line that supports transformers 5 (>=4.41,<6.0).
+# transformers must satisfy GPT-SoVITS (4.4x) AND sentence-transformers 5.x
+# (>=4.41,<6.0). 4.43-4.50 is the overlap.
 faiss-cpu>=1.7.4
-transformers>=4.41,<6.0
+transformers>=4.43,<4.51
 sentence-transformers>=5.0

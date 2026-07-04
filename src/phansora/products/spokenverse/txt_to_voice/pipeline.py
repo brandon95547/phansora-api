@@ -1,6 +1,6 @@
 # src/txt_to_voice/pipeline.py
 #
-# Batch TXT -> Audio pipeline (Chatterbox backend).
+# Batch TXT -> Audio pipeline (GPT-SoVITS backend).
 # Supports chunk-level and file-level concurrency to speed up larger batches.
 
 from __future__ import annotations
@@ -25,24 +25,24 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "chatterbox" (the only engine); honours TTS_ENGINE for validation.
+    # Resolves to "gptsovits" (the only engine); honours TTS_ENGINE for validation.
     return resolve_engine(None)
 
 
 @dataclass(frozen=True)
 class TTSConfig:
-    voice: str  # Chatterbox reference-clip path, or "default" for the built-in voice
+    voice: str  # GPT-SoVITS reference-clip path, or "default" for the built-in voice
     use_gpu: bool  # whether to request CUDA in the TTS backend
-    rate: str  # accepted for compatibility; ignored by Chatterbox
-    volume: str  # accepted for compatibility; ignored by Chatterbox
+    rate: str  # accepted for compatibility; ignored by GPT-SoVITS
+    volume: str  # accepted for compatibility; ignored by GPT-SoVITS
     output_format: str  # "mp3" or "wav"
     chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
-    language: Optional[str] = None
+    language: Optional[str] = None  # en/zh/ja/ko/yue/auto
 
-    # TTS engine ("chatterbox"); kept for forward-compatibility.
+    # TTS engine ("gptsovits"); kept for forward-compatibility.
     engine: str = field(default_factory=_default_engine)
-    # Chatterbox reference clip for voice cloning.
+    # GPT-SoVITS reference clip for voice cloning.
     ref_audio: Optional[str] = None
 
     # NEW: how many chunks to synthesize in parallel per TXT file
@@ -50,13 +50,13 @@ class TTSConfig:
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
-    # Chatterbox generation knobs; None => engine/env defaults.
-    exaggeration: Optional[float] = None  # 0.25-2.0; emotion/intensity
-    cfg_weight: Optional[float] = None  # 0-1; lower = slower/steadier pacing
-    temperature: Optional[float] = None  # 0.05-5.0; sampling randomness
-    min_p: Optional[float] = None  # 0-1; min-p sampling floor
+    # GPT-SoVITS knobs; None => engine/env defaults.
+    prompt_text: Optional[str] = None  # reference transcript (better quality; None => ref-free)
+    speed: Optional[float] = None  # 0.6-1.65; speed_factor
+    top_k: Optional[int] = None  # 1-100; GPT sampling
     top_p: Optional[float] = None  # 0-1; nucleus sampling
-    repetition_penalty: Optional[float] = None  # 1-2; discourage repetition
+    temperature: Optional[float] = None  # 0.01-1.0
+    repetition_penalty: Optional[float] = None  # 0-2
 
 
 class BatchConverter:
@@ -126,11 +126,11 @@ class BatchConverter:
                     speaker=self.cfg.speaker,
                     language=self.cfg.language,
                     ref_audio=self.cfg.ref_audio,
-                    exaggeration=self.cfg.exaggeration,
-                    cfg_weight=self.cfg.cfg_weight,
-                    temperature=self.cfg.temperature,
-                    min_p=self.cfg.min_p,
+                    prompt_text=self.cfg.prompt_text,
+                    speed=self.cfg.speed,
+                    top_k=self.cfg.top_k,
                     top_p=self.cfg.top_p,
+                    temperature=self.cfg.temperature,
                     repetition_penalty=self.cfg.repetition_penalty,
                 )
 
