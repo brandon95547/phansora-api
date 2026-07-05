@@ -1,6 +1,6 @@
 # src/txt_to_voice/pipeline.py
 #
-# Batch TXT -> Audio pipeline (GPT-SoVITS backend).
+# Batch TXT -> Audio pipeline (CosyVoice 2 backend).
 # Supports chunk-level and file-level concurrency to speed up larger batches.
 
 from __future__ import annotations
@@ -25,24 +25,24 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "gptsovits" (the only engine); honours TTS_ENGINE for validation.
+    # Resolves to "cosyvoice" (the only engine); honours TTS_ENGINE for validation.
     return resolve_engine(None)
 
 
 @dataclass(frozen=True)
 class TTSConfig:
-    voice: str  # GPT-SoVITS reference-clip path, or "default" for the built-in voice
+    voice: str  # CosyVoice reference-clip path, or "default" for the built-in voice
     use_gpu: bool  # whether to request CUDA in the TTS backend
-    rate: str  # accepted for compatibility; ignored by GPT-SoVITS
-    volume: str  # accepted for compatibility; ignored by GPT-SoVITS
+    rate: str  # accepted for compatibility; ignored by CosyVoice
+    volume: str  # accepted for compatibility; ignored by CosyVoice
     output_format: str  # "mp3" or "wav"
     chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
     language: Optional[str] = None  # en/zh/ja/ko/yue/auto
 
-    # TTS engine ("gptsovits"); kept for forward-compatibility.
+    # TTS engine ("cosyvoice"); kept for forward-compatibility.
     engine: str = field(default_factory=_default_engine)
-    # GPT-SoVITS reference clip for voice cloning.
+    # CosyVoice reference clip for voice cloning.
     ref_audio: Optional[str] = None
 
     # NEW: how many chunks to synthesize in parallel per TXT file
@@ -50,13 +50,10 @@ class TTSConfig:
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
-    # GPT-SoVITS knobs; None => engine/env defaults.
+    # CosyVoice knobs; None => engine/env defaults.
     prompt_text: Optional[str] = None  # reference transcript (better quality; None => ref-free)
-    speed: Optional[float] = None  # 0.6-1.65; speed_factor
-    top_k: Optional[int] = None  # 1-100; GPT sampling
-    top_p: Optional[float] = None  # 0-1; nucleus sampling
-    temperature: Optional[float] = None  # 0.01-1.0
-    repetition_penalty: Optional[float] = None  # 0-2
+    speed: Optional[float] = None  # 0.5-2.0
+    style: Optional[str] = None  # natural-language style prompt (instruct mode)
 
 
 class BatchConverter:
@@ -128,10 +125,7 @@ class BatchConverter:
                     ref_audio=self.cfg.ref_audio,
                     prompt_text=self.cfg.prompt_text,
                     speed=self.cfg.speed,
-                    top_k=self.cfg.top_k,
-                    top_p=self.cfg.top_p,
-                    temperature=self.cfg.temperature,
-                    repetition_penalty=self.cfg.repetition_penalty,
+                    style=self.cfg.style,
                 )
 
         tasks: List[asyncio.Task[None]] = []

@@ -32,7 +32,7 @@ async def render_script_to_audio(
 
     import os
 
-    # GPU is controlled globally by the GPTSOVITS_USE_GPU switch inside the engine;
+    # GPU is controlled globally by the COSYVOICE_USE_GPU switch inside the engine;
     # there's nothing to resolve per call here.
     if use_gpu is None:
         use_gpu = False

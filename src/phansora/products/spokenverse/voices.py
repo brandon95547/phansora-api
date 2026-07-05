@@ -39,48 +39,30 @@ _SAMPLE_RATE = 24000
 # long, so abandoned previews don't accumulate on disk forever.
 PENDING_TTL_SECONDS = 6 * 3600
 
-# Per-voice generation knobs, mirroring the options GPT-SoVITS supports. These are
+# Per-voice generation knobs, mirroring the options CosyVoice 2 supports. These are
 # captured at approval and reapplied when the voice is later used for TTS. The
-# reference transcript (``ref_text``) is stored alongside them — GPT-SoVITS clones
+# reference transcript (``ref_text``) is stored alongside them — CosyVoice clones
 # best when it knows what the reference clip says.
-from phansora.products.spokenverse.txt_to_voice.adapters.gptsovits_client import (
+from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice_client import (
     LANGUAGES, LANGUAGE_DEFAULT,
     SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
-    TOP_K_MIN, TOP_K_MAX, TOP_K_DEFAULT,
-    TOP_P_MIN, TOP_P_MAX, TOP_P_DEFAULT,
-    TEMPERATURE_MIN, TEMPERATURE_MAX, TEMPERATURE_DEFAULT,
-    REPETITION_PENALTY_MIN, REPETITION_PENALTY_MAX, REPETITION_PENALTY_DEFAULT,
+    STYLE_MAX_LEN,
 )
 
 # All persisted setting keys (used to backfill/read from the manifest + pending JSON).
-SETTING_KEYS = ("language", "speed", "top_k", "top_p", "temperature", "repetition_penalty")
-
-_FLOAT_KNOBS = (
-    ("speed", SPEED_MIN, SPEED_MAX, SPEED_DEFAULT),
-    ("top_p", TOP_P_MIN, TOP_P_MAX, TOP_P_DEFAULT),
-    ("temperature", TEMPERATURE_MIN, TEMPERATURE_MAX, TEMPERATURE_DEFAULT),
-    ("repetition_penalty", REPETITION_PENALTY_MIN, REPETITION_PENALTY_MAX, REPETITION_PENALTY_DEFAULT),
-)
+SETTING_KEYS = ("language", "speed", "style")
 
 
-def clamp_settings(
-    language=None, speed=None, top_k=None, top_p=None, temperature=None, repetition_penalty=None,
-) -> dict:
-    """Coerce/clamp GPT-SoVITS generation knobs to supported ranges, filling defaults."""
+def clamp_settings(language=None, speed=None, style=None) -> dict:
+    """Coerce/clamp CosyVoice generation knobs to supported ranges, filling defaults."""
     lang = (str(language).strip().lower() if language else "")
     out = {"language": lang if lang in LANGUAGES else LANGUAGE_DEFAULT}
     try:
-        tk = int(top_k) if top_k is not None else TOP_K_DEFAULT
+        sp = float(speed) if speed is not None else SPEED_DEFAULT
     except (TypeError, ValueError):
-        tk = TOP_K_DEFAULT
-    out["top_k"] = max(TOP_K_MIN, min(TOP_K_MAX, tk))
-    given = {"speed": speed, "top_p": top_p, "temperature": temperature, "repetition_penalty": repetition_penalty}
-    for name, lo, hi, default in _FLOAT_KNOBS:
-        try:
-            v = float(given[name]) if given[name] is not None else default
-        except (TypeError, ValueError):
-            v = default
-        out[name] = max(lo, min(hi, round(v, 3)))
+        sp = SPEED_DEFAULT
+    out["speed"] = max(SPEED_MIN, min(SPEED_MAX, round(sp, 3)))
+    out["style"] = (str(style).strip()[:STYLE_MAX_LEN] if style else "")
     return out
 
 
@@ -213,7 +195,8 @@ def approve(user_id: str, token: str, name: str) -> Optional[dict]:
     Saves two files: ``<id>.wav`` (the normalized upload, which TTS clones from)
     and ``<id>.sample.wav`` (the synthesized sample, played back in My Voices).
     Returns the record, or None if the pending clip is gone. Raises ``ValueError``
-    if ``name`` is blank -- a voice name is required.
+    if ``name`` is blank or already taken by another of this user's voices -- names
+    must be unique (case-insensitively).
     """
     clean_name = (name or "").strip()[:80]
     if not clean_name:
@@ -222,6 +205,11 @@ def approve(user_id: str, token: str, name: str) -> Optional[dict]:
     pending = _pending_dir(user_id) / f"{tok}.wav"
     if not pending.exists():
         return None
+    # Names must be unique per user (case-insensitive). Check before moving any
+    # files so a rejected approval leaves the pending clip intact for a retry.
+    items = _load_manifest(user_id)
+    if any((v.get("name") or "").strip().casefold() == clean_name.casefold() for v in items):
+        raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
     dst = _user_dir(user_id) / f"{tok}.wav"
     shutil.move(str(pending), str(dst))
     # Keep the synthesized sample as the playback clip; the reference clip above is
@@ -237,8 +225,7 @@ def approve(user_id: str, token: str, name: str) -> Optional[dict]:
         **_read_pending_settings(user_id, token),
     }
     pending_settings_path(user_id, token).unlink(missing_ok=True)
-    items = _load_manifest(user_id)
-    items.append(record)
+    items.append(record)  # already loaded above for the duplicate-name check
     _save_manifest(user_id, items)
     return record
 

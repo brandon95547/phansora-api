@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (GPT-SoVITS)
+#  - TXT -> Audio (CosyVoice 2)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -366,11 +366,8 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    speed: Optional[float] = Form(None),  # 0.6-1.65; speed_factor
-    top_k: Optional[int] = Form(None),  # 1-100; GPT sampling
-    top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
-    temperature: Optional[float] = Form(None),  # 0.01-1.0
-    repetition_penalty: Optional[float] = Form(None),  # 0-2
+    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed
+    style: Optional[str] = Form(None),  # natural-language style/instruct prompt
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -392,8 +389,8 @@ async def txt_to_audio(
     user_audio_dir = _user_audio_dir(safe_user)
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve
-    # its id to the on-disk reference clip GPT-SoVITS clones from, plus its stored
-    # reference transcript (prompt_text) for higher-quality cloning.
+    # its id to the on-disk reference clip CosyVoice clones from, plus its stored
+    # reference transcript (prompt_text) and approved style for higher-quality cloning.
     resolved_voice = voice
     prompt_text = ""
     if voice and voice != "default":
@@ -405,6 +402,8 @@ async def txt_to_audio(
             prompt_text = rec.get("ref_text") or ""
             if not language:
                 language = rec.get("language")
+            if style is None:
+                style = rec.get("style") or None
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -419,10 +418,7 @@ async def txt_to_audio(
         file_concurrency=file_concurrency,
         prompt_text=prompt_text,
         speed=speed,
-        top_k=top_k,
-        top_p=top_p,
-        temperature=temperature,
-        repetition_penalty=repetition_penalty,
+        style=style,
     )
 
     try:
@@ -465,10 +461,7 @@ async def txt_to_audio(
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
                 "speed": speed,
-                "top_k": top_k,
-                "top_p": top_p,
-                "temperature": temperature,
-                "repetition_penalty": repetition_penalty,
+                "style": style,
             },
         },
     )
@@ -557,42 +550,36 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the GPT-SoVITS backend.
+    Options currently available from the CosyVoice 2 backend.
     """
-    from phansora.products.spokenverse.txt_to_voice.adapters import gptsovits_client as gsv
+    from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice_client as cv
 
     voices = discover_voices()
     return {
-        "backend": "gptsovits",
+        "backend": "cosyvoice",
         "voices": voices,
-        "languages": gsv.LANGUAGES,
+        "languages": cv.LANGUAGES,
         "audio_formats": ["mp3", "wav"],
         "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker` (transcript auto-detected on create)",
         "controls_available": {
-            "language": {"values": gsv.LANGUAGES, "default": gsv.LANGUAGE_DEFAULT,
+            "language": {"values": cv.LANGUAGES, "default": cv.LANGUAGE_DEFAULT,
                          "description": "language of the synthesized text"},
-            "speed": {"min": gsv.SPEED_MIN, "max": gsv.SPEED_MAX,
-                      "default": gsv.SPEED_DEFAULT, "description": "speed_factor (playback pace)"},
-            "top_k": {"min": gsv.TOP_K_MIN, "max": gsv.TOP_K_MAX,
-                      "default": gsv.TOP_K_DEFAULT, "description": "GPT top-k sampling"},
-            "top_p": {"min": gsv.TOP_P_MIN, "max": gsv.TOP_P_MAX,
-                      "default": gsv.TOP_P_DEFAULT, "description": "nucleus sampling"},
-            "temperature": {"min": gsv.TEMPERATURE_MIN, "max": gsv.TEMPERATURE_MAX,
-                            "default": gsv.TEMPERATURE_DEFAULT, "description": "sampling randomness"},
-            "repetition_penalty": {"min": gsv.REPETITION_PENALTY_MIN, "max": gsv.REPETITION_PENALTY_MAX,
-                                   "default": gsv.REPETITION_PENALTY_DEFAULT, "description": "discourage repetition"},
+            "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
+                      "default": cv.SPEED_DEFAULT, "description": "playback speed"},
+            "style": {"max_length": cv.STYLE_MAX_LEN,
+                      "description": 'natural-language style/instruct prompt, e.g. "speak cheerfully"'},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
-            "GPTSOVITS_REPO", "GPTSOVITS_USE_GPU", "GPTSOVITS_DEVICE", "GPTSOVITS_IS_HALF",
-            "GPTSOVITS_T2S", "GPTSOVITS_VITS", "GPTSOVITS_BERT", "GPTSOVITS_HUBERT",
-            "GPTSOVITS_DEFAULT_REF", "GPTSOVITS_DEFAULT_REF_TEXT", "GPTSOVITS_LANGUAGE",
+            "COSYVOICE_REPO", "COSYVOICE_MODEL_DIR", "COSYVOICE_USE_GPU", "COSYVOICE_FP16",
+            "COSYVOICE_TEXT_FRONTEND", "COSYVOICE_DEFAULT_REF", "COSYVOICE_DEFAULT_REF_TEXT",
+            "COSYVOICE_LANGUAGE", "COSYVOICE_SPEED",
         ],
     }
 
 
 # ----------------------------
-# Custom voices (GPT-SoVITS cloning)
+# Custom voices (CosyVoice 2 cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not
@@ -605,16 +592,13 @@ async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
-    speed: Optional[float] = Form(None),  # 0.6-1.65; speed_factor
-    top_k: Optional[int] = Form(None),  # 1-100; GPT sampling
-    top_p: Optional[float] = Form(None),  # 0-1; nucleus sampling
-    temperature: Optional[float] = Form(None),  # 0.01-1.0
-    repetition_penalty: Optional[float] = Form(None),  # 0-2
+    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed
+    style: Optional[str] = Form(None),  # natural-language style/instruct prompt
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
-    The upload is trimmed to <=90s and normalized to a 24kHz mono WAV reference
-    clip. GPT-SoVITS clones best when it knows the reference transcript, so we
+    The upload is trimmed and normalized to a 24kHz mono WAV reference clip.
+    CosyVoice clones best when it knows the reference transcript, so we
     auto-transcribe the clip (whisper) and use + store that as ``ref_text``. The
     clip is then run through the engine to speak ``VOICE_SAMPLE_TEXT``; that
     synthesized sample is what the user hears. Returns a token used to preview and
@@ -640,12 +624,9 @@ async def voice_preview(
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
 
-    knobs = voice_store.clamp_settings(
-        language=language, speed=speed, top_k=top_k, top_p=top_p,
-        temperature=temperature, repetition_penalty=repetition_penalty,
-    )
+    knobs = voice_store.clamp_settings(language=language, speed=speed, style=style)
 
-    # Auto-transcribe the reference clip so GPT-SoVITS can clone with the prompt
+    # Auto-transcribe the reference clip so CosyVoice can clone with the prompt
     # text (better quality). Best-effort: if it fails, fall back to reference-free.
     ref_text = ""
     try:
@@ -677,10 +658,7 @@ async def voice_preview(
             prompt_text=ref_text,
             language=knobs["language"],
             speed=knobs["speed"],
-            top_k=knobs["top_k"],
-            top_p=knobs["top_p"],
-            temperature=knobs["temperature"],
-            repetition_penalty=knobs["repetition_penalty"],
+            style=knobs["style"],
         )
     except Exception as e:
         import traceback

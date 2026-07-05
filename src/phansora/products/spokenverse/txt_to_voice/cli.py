@@ -26,7 +26,7 @@ def setup_logging(verbose: bool) -> None:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert .txt files to audio (GPT-SoVITS) OR convert PDFs to .txt."
+        description="Convert .txt files to audio (CosyVoice 2) OR convert PDFs to .txt."
     )
 
     # --- PDF -> TXT mode ---
@@ -49,13 +49,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--engine",
         default=None,
-        choices=["gptsovits"],
-        help="TTS engine to use (GPT-SoVITS is the only engine)",
+        choices=["cosyvoice"],
+        help="TTS engine to use (CosyVoice 2 is the only engine)",
     )
     parser.add_argument(
         "--voice",
         default="default",
-        help="GPT-SoVITS: 'default' for the built-in voice, or a path to a reference clip to clone from",
+        help="CosyVoice: 'default' for the built-in voice, or a path to a reference clip to clone from",
     )
     parser.add_argument(
         "--ref-audio",
@@ -64,20 +64,17 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path to a reference clip to clone the voice from (takes priority over --voice)",
     )
     parser.add_argument("--gpu", action="store_true", help="Use CUDA/GPU for inference (NVIDIA + CUDA PyTorch required)")
-    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by GPT-SoVITS")
-    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by GPT-SoVITS")
+    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
+    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
     parser.add_argument("--speaker", default=None, help="Optional alias for --voice (reference-clip path)")
     parser.add_argument("--language", default=None, help="Text language: en/zh/ja/ko/yue/auto (default en)")
     parser.add_argument("--format", dest="output_format", default="mp3", choices=["mp3", "wav"])
     parser.add_argument("--chunk-chars", type=int, default=2500)
 
-    # --- GPT-SoVITS generation knobs ---
+    # --- CosyVoice generation knobs ---
     parser.add_argument("--prompt-text", dest="prompt_text", default=None, help="Transcript of the reference clip (better quality; omit for reference-free)")
-    parser.add_argument("--speed", type=float, default=None, help="0.6-1.65; speed_factor (default 1.0)")
-    parser.add_argument("--top-k", dest="top_k", type=int, default=None, help="1-100; GPT top-k sampling (default 5)")
-    parser.add_argument("--top-p", dest="top_p", type=float, default=None, help="0-1; nucleus sampling (default 1.0)")
-    parser.add_argument("--temperature", type=float, default=None, help="0.01-1.0; sampling randomness (default 1.0)")
-    parser.add_argument("--repetition-penalty", dest="repetition_penalty", type=float, default=None, help="0-2; discourage repetition (default 1.35)")
+    parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; playback speed (default 1.0)")
+    parser.add_argument("--style", default=None, help='Natural-language style/instruct prompt, e.g. "speak cheerfully"')
 
     # NEW: concurrency
     parser.add_argument(
@@ -155,10 +152,7 @@ async def main_async(argv: Optional[Sequence[str]] = None) -> int:
         file_concurrency=args.file_concurrency,
         prompt_text=args.prompt_text,
         speed=args.speed,
-        top_k=args.top_k,
-        top_p=args.top_p,
-        temperature=args.temperature,
-        repetition_penalty=args.repetition_penalty,
+        style=args.style,
     )
 
     converter = BatchConverter(cfg)
