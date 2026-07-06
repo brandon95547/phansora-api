@@ -1,6 +1,6 @@
 """TTS engine selection.
 
-CosyVoice 2 is the sole engine. The selector is kept as a thin indirection so the
+IndexTTS2 is the sole engine. The selector is kept as a thin indirection so the
 rest of the pipeline stays engine-agnostic (and a second engine could be added
 later), but there is only one implementation today.
 
@@ -16,10 +16,11 @@ from typing import Awaitable, Callable
 
 LOG = logging.getLogger("txt_to_voice")
 
-_COSYVOICE_ALIASES = {"cosyvoice", "cosyvoice2", "cosy-voice", "cosy_voice", "cosy", "default", ""}
+_INDEXTTS2_ALIASES = {"indextts2", "indextts", "index-tts2", "index_tts2", "index-tts", "indextts-2", "default", ""}
 # Engines that used to exist here; a leftover TTS_ENGINE / --engine pointing at one
-# degrades to CosyVoice with a warning rather than crashing every request.
+# degrades to IndexTTS2 with a warning rather than crashing every request.
 _RETIRED_ALIASES = {
+    "cosyvoice", "cosyvoice2", "cosy-voice", "cosy_voice", "cosy",
     "gptsovits", "gpt-sovits", "gpt_sovits", "sovits", "gsv",
     "styletts2", "styletts-2", "style", "stts2", "st2",
     "kokoro", "openvoice", "chatterbox", "xtts",
@@ -33,19 +34,19 @@ def resolve_engine(engine: str | None = None) -> str:
     if name in _RETIRED_ALIASES:
         if name not in _warned_retired:
             LOG.warning(
-                "TTS engine '%s' has been removed; using CosyVoice. "
-                "Update TTS_ENGINE / --engine to 'cosyvoice' to silence this.",
+                "TTS engine '%s' has been removed; using IndexTTS2. "
+                "Update TTS_ENGINE / --engine to 'indextts2' to silence this.",
                 name,
             )
             _warned_retired.add(name)
-        return "cosyvoice"
-    # Everything else (cosyvoice aliases, unknown values) resolves to the only engine.
-    return "cosyvoice"
+        return "indextts2"
+    # Everything else (indextts2 aliases, unknown values) resolves to the only engine.
+    return "indextts2"
 
 
 def _module(engine: str | None):
     resolve_engine(engine)  # validate (warns on retired engines)
-    from . import cosyvoice_client as mod  # type: ignore
+    from . import indextts2_client as mod  # type: ignore
     return mod
 
 

@@ -18,18 +18,18 @@ cp .env.example .env      # fill in DB creds / API keys
 make install              # venv + deps (CUDA torch 2.8.x) + editable install
 ```
 
-CPU-only host: `requirements.txt` pins the three torch wheels as direct
-`download.pytorch.org/whl/cu128/…` CloudFront URLs (the CUDA *index* links to
-Cloudflare R2, which the prod network can't reach over TLS). Swap those filenames to
-the `whl/cpu` build and drop the `+cu128` suffixes. The CUDA build (`cu126` vs `cu128`)
-must match the prod GPU driver — check `nvidia-smi` and pin accordingly.
+CPU-only host: `requirements.txt` pins the three torch wheels (torch 2.8.0) as direct
+`download.pytorch.org/whl/cu126/…` CloudFront URLs, cp310 / `manylinux_2_28_x86_64`
+(the CUDA *index* links to Cloudflare R2, which the prod network can't reach over TLS).
+Swap those filenames to the `whl/cpu` build and drop the `+cu126` suffixes. The prod
+driver is R550 / CUDA 12.4, and `+cu126` runs on it via CUDA minor-version compatibility.
 
 ### Local dev on Mac
 
 `make install` pins CUDA torch, which won't install on macOS. Use:
 
 ```bash
-make install-mac    # venv + arm64 CPU/MPS torch + deps (skips the +cu124 pins)
+make install-mac    # venv + arm64 CPU/MPS torch + deps (skips the +cu126 pins)
 make dev            # API runs on http://localhost:8000
 ```
 
@@ -70,9 +70,9 @@ into the **same venv**:
 git clone https://github.com/index-tts/index-tts.git /var/www/index-tts
 
 # 2. install IndexTTS2's deps into this venv. It pins torch==2.8.* / transformers==4.52.1,
-#    which make install already satisfied, so pip leaves the cu128 torch alone (no
+#    which make install already satisfied, so pip leaves the cu126 torch alone (no
 #    re-download). If you install this BEFORE make install, pip would pull a plain-PyPI
-#    torch 2.8 instead of our cu128 build — always run make install first.
+#    torch 2.8 instead of our cu126 build — always run make install first.
 .venv/bin/pip install -e /var/www/index-tts
 
 # 3. pynini/WeTextProcessing need OpenFst — install via conda into this env

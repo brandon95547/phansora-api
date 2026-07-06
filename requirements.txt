@@ -1,10 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
-# Torch baseline: aligned to the IndexTTS2 TTS engine (torch 2.8.0, CUDA 12.8).
-# torchvision 0.23.0 / torchaudio 2.8.0 are the matching releases. The `+cu128` build
-# assumes the prod GPU driver supports CUDA 12.8 (else use cu126); for a CPU-only host,
-# swap the index URL to https://download.pytorch.org/whl/cpu and drop the +cu128 suffixes.
+# Torch baseline: aligned to the IndexTTS2 TTS engine (torch 2.8.0, CUDA 12.6).
+# torchvision 0.23.0 / torchaudio 2.8.0 are the matching releases. The `+cu126` build
+# runs on the prod driver (R550 / CUDA 12.4) via CUDA minor-version compatibility; for a
+# CPU-only host, swap the index URL to https://download.pytorch.org/whl/cpu and drop +cu126.
 #
 # System packages required: ffmpeg, tesseract-ocr
 #
@@ -18,17 +18,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Torch wheels are pinned as DIRECT CloudFront URLs (download.pytorch.org) rather than
-# via `--extra-index-url .../whl/cu128`. The CUDA index now hands out
+# via `--extra-index-url .../whl/cu126`. The CUDA index now hands out
 # download-r2.pytorch.org (Cloudflare R2) links, and the prod network cannot complete a
 # TLS handshake to Cloudflare (SSLV3_ALERT_HANDSHAKE_FAILURE / alert 40, IPv4 + IPv6).
 # The download.pytorch.org path serves the same wheels from Amazon CloudFront, which is
-# reachable. These URLs are pinned to cp310 / linux_x86_64 — the prod image. For a
-# different Python/arch or a CPU-only host, swap the filenames (whl/cpu, drop +cu128).
-# torch 2.8.x is required by IndexTTS2. CUDA build cu128 assumes the driver supports
-# CUDA 12.8 (`nvidia-smi`); if it reports 12.6, swap the three cu128 tags below to cu126.
-torch @ https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-linux_x86_64.whl
-torchvision @ https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-linux_x86_64.whl
-torchaudio @ https://download.pytorch.org/whl/cu128/torchaudio-2.8.0%2Bcu128-cp310-cp310-linux_x86_64.whl
+# reachable. These URLs are pinned to cp310 / manylinux_2_28_x86_64 — the prod image
+# (torch >= 2.7 uses the manylinux_2_28 tag, NOT the old linux_x86_64). For a different
+# Python/arch or a CPU-only host, swap the filenames (whl/cpu, drop +cu126).
+torch @ https://download.pytorch.org/whl/cu126/torch-2.8.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
+torchvision @ https://download.pytorch.org/whl/cu126/torchvision-0.23.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
+torchaudio @ https://download.pytorch.org/whl/cu126/torchaudio-2.8.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
 
 # Shared numeric / runtime pins
 numpy<2
