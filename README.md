@@ -61,17 +61,19 @@ install it via conda (`conda install -c conda-forge pynini==2.1.6`) into the sam
 > deployment is covered before shipping.
 
 IndexTTS2 is a git checkout, not a published pip package, run in-process. It needs
-**torch 2.8.x** and `transformers==4.52.1` (already pinned in `requirements.txt` /
-`constraints-torch.txt`). Install it into the **same venv**:
+**torch 2.8.x** and `transformers==4.52.1`, both already pinned in `requirements.txt`
+and installed by `make install` — so run `make install` FIRST, then install IndexTTS2
+into the **same venv**:
 
 ```bash
 # 1. clone
 git clone https://github.com/index-tts/index-tts.git /var/www/index-tts
 
-# 2. install IndexTTS2's deps into this venv WITHOUT letting them swap the torch build.
-#    IndexTTS2 pins torch==2.8.* / transformers==4.52.1; passing constraints-torch.txt
-#    forces our exact CUDA build (e.g. +cu128) so pip can't pull a mismatched wheel.
-.venv/bin/pip install -c constraints-torch.txt -e /var/www/index-tts
+# 2. install IndexTTS2's deps into this venv. It pins torch==2.8.* / transformers==4.52.1,
+#    which make install already satisfied, so pip leaves the cu128 torch alone (no
+#    re-download). If you install this BEFORE make install, pip would pull a plain-PyPI
+#    torch 2.8 instead of our cu128 build — always run make install first.
+.venv/bin/pip install -e /var/www/index-tts
 
 # 3. pynini/WeTextProcessing need OpenFst — install via conda into this env
 #    (pip install pynini usually fails to build on CentOS):

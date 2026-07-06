@@ -1,33 +1,34 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
-# Torch baseline: aligned to the CosyVoice 2 TTS engine (tested on torch 2.5.1+cu124,
-# CUDA 12.4). torchvision 0.20.1 / torchaudio 2.5.1 are the matching releases. The
-# `+cu124` build matches the prod GPU driver; for a CPU-only host, swap the index
-# URL to https://download.pytorch.org/whl/cpu and drop the +cu124 suffixes.
+# Torch baseline: aligned to the IndexTTS2 TTS engine (torch 2.8.0, CUDA 12.8).
+# torchvision 0.23.0 / torchaudio 2.8.0 are the matching releases. The `+cu128` build
+# assumes the prod GPU driver supports CUDA 12.8 (else use cu126); for a CPU-only host,
+# swap the index URL to https://download.pytorch.org/whl/cpu and drop the +cu128 suffixes.
 #
 # System packages required: ffmpeg, tesseract-ocr
 #
-# TTS engine: CosyVoice 2 is a git checkout (NOT a pip package), run in-process. In
-# prod: clone it, install its deps INTO this venv, install pynini via conda
-# (`conda install -c conda-forge pynini==2.1.6`), download the CosyVoice2-0.5B
-# checkpoints, and set COSYVOICE_REPO. The API boots without it; only TTS calls
-# require it.  ⚠ CosyVoice's own requirements pin `torch==2.3.1` (cu121) and would
-# downgrade the cu124 torch below. The README installs CosyVoice with those torch /
-# transformers lines stripped + a constraints file (constraints-torch.txt), so the
-# cu124 torch pinned here is installed ONCE and never overridden — no re-pin needed.
+# TTS engine: IndexTTS2 is a git checkout (NOT a published pip package), run in-process.
+# In prod: run `make install` (installs the torch/transformers pins below), then clone it
+# and `pip install -e /var/www/index-tts` INTO this venv, install pynini via conda
+# (`conda install -c conda-forge pynini==2.1.6`), download the IndexTeam/IndexTTS-2
+# checkpoints, and set INDEXTTS2_REPO. The API boots without it; only TTS calls require
+# it.  ⚠ IndexTTS2 pins `torch==2.8.*` / `transformers==4.52.1`, both satisfied by the
+# pins below — so install IndexTTS2 AFTER make install and pip leaves torch untouched.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Torch wheels are pinned as DIRECT CloudFront URLs (download.pytorch.org) rather than
-# via `--extra-index-url .../whl/cu124`. The cu124 index now hands out
+# via `--extra-index-url .../whl/cu128`. The CUDA index now hands out
 # download-r2.pytorch.org (Cloudflare R2) links, and the prod network cannot complete a
 # TLS handshake to Cloudflare (SSLV3_ALERT_HANDSHAKE_FAILURE / alert 40, IPv4 + IPv6).
 # The download.pytorch.org path serves the same wheels from Amazon CloudFront, which is
 # reachable. These URLs are pinned to cp310 / linux_x86_64 — the prod image. For a
-# different Python/arch or a CPU-only host, swap the filenames (whl/cpu, drop +cu124).
-torch @ https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
-torchvision @ https://download.pytorch.org/whl/cu124/torchvision-0.20.1%2Bcu124-cp310-cp310-linux_x86_64.whl
-torchaudio @ https://download.pytorch.org/whl/cu124/torchaudio-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
+# different Python/arch or a CPU-only host, swap the filenames (whl/cpu, drop +cu128).
+# torch 2.8.x is required by IndexTTS2. CUDA build cu128 assumes the driver supports
+# CUDA 12.8 (`nvidia-smi`); if it reports 12.6, swap the three cu128 tags below to cu126.
+torch @ https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp310-cp310-linux_x86_64.whl
+torchvision @ https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp310-cp310-linux_x86_64.whl
+torchaudio @ https://download.pytorch.org/whl/cu128/torchaudio-2.8.0%2Bcu128-cp310-cp310-linux_x86_64.whl
 
 # Shared numeric / runtime pins
 numpy<2
@@ -72,8 +73,8 @@ markdown
 mobi
 
 # ── Dossier Nova: local embeddings ──
-# transformers must satisfy CosyVoice AND sentence-transformers 5.x
-# (>=4.41,<6.0). 4.43-4.50 is the overlap.
+# transformers pinned to 4.52.1 — required by IndexTTS2 and compatible with
+# sentence-transformers 5.x (needs >=4.41).
 faiss-cpu>=1.7.4
-transformers>=4.43,<4.51
+transformers==4.52.1
 sentence-transformers>=5.0
