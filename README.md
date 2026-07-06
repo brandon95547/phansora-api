@@ -60,25 +60,25 @@ CosyVoice 2 is Apache-2.0 (commercial-OK). The engine is a git checkout, not a p
 package. Install it into the **same venv**:
 
 ```bash
-# 1. clone (with the vendored Matcha-TTS submodule) + its deps
+# 1. clone (with the vendored Matcha-TTS submodule)
 git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/CosyVoice
-.venv/bin/pip install -r /var/www/CosyVoice/requirements.txt
 
-# 2. pynini/WeTextProcessing need OpenFst — install via conda into this env
+# 2. install CosyVoice's deps WITHOUT letting them touch the torch stack. Upstream
+#    pins `torch==2.3.1` on a cu121 --extra-index-url, which would downgrade/swap the
+#    cu124 torch already installed by `make install` (leaving torchvision incompatible
+#    — the classic "torch downloaded twice, then broken" failure). So: strip the
+#    torch/torchvision/torchaudio/transformers lines and CosyVoice's index-url, and
+#    pass constraints-torch.txt so nothing transitive can swap the build either. torch
+#    stays the single 2.5.1+cu124 build — no re-download, no re-pin dance.
+grep -vE '^\s*(--extra-index-url|--index-url|torch|torchvision|torchaudio|transformers)([=<>!~@[:space:]]|$)' \
+  /var/www/CosyVoice/requirements.txt > /tmp/cosy-req-notorch.txt
+.venv/bin/pip install -c constraints-torch.txt -r /tmp/cosy-req-notorch.txt
+
+# 3. pynini/WeTextProcessing need OpenFst — install via conda into this env
 #    (pip install pynini usually fails to build on CentOS):
 conda install -y -c conda-forge pynini==2.1.6
 .venv/bin/pip install WeTextProcessing
-
-# 3. re-pin cu124 torch (step 1 may pull a different build). Use the direct
-#    CloudFront wheel URLs, NOT --index-url .../whl/cu124: that index links to
-#    download-r2.pytorch.org (Cloudflare R2), which the prod network can't reach
-#    over TLS (SSLV3_ALERT_HANDSHAKE_FAILURE). See requirements.txt for the same note.
-.venv/bin/pip install \
-  https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl \
-  https://download.pytorch.org/whl/cu124/torchvision-0.20.1%2Bcu124-cp310-cp310-linux_x86_64.whl \
-  https://download.pytorch.org/whl/cu124/torchaudio-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
-.venv/bin/pip install "transformers>=4.43,<4.51" "sentence-transformers>=5.0"
-.venv/bin/pip check       # must be clean
+.venv/bin/pip check       # must be clean — torch should still be 2.5.1+cu124
 
 # 4. CosyVoice2-0.5B checkpoints (~2 GB) via ModelScope
 .venv/bin/pip install modelscope

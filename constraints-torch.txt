@@ -1,0 +1,17 @@
+# pip constraints — pin the torch stack (+ transformers overlap) so that installing
+# CosyVoice 2's requirements INTO this venv can never downgrade or swap the build.
+#
+# Used as `pip install -c constraints-torch.txt -r <cosyvoice-reqs-with-torch-stripped>`
+# (see README "TTS engine — CosyVoice 2"). name==version form only — pip constraints
+# files reject `@ URL` pins, so these must NOT carry the CloudFront wheel URLs. The
+# matching cu124 wheels are already installed by `make install` (requirements.txt),
+# so pip won't re-download them; these lines only forbid any package from changing them.
+#
+# Keep in lockstep with the torch pins in requirements.txt.
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124
+torchaudio==2.5.1+cu124
+# transformers: the >=4.43,<4.51 overlap that satisfies CosyVoice AND
+# sentence-transformers 5.x (see requirements.txt). Constrained here so CosyVoice's
+# own transformers pin can't override it.
+transformers>=4.43,<4.51

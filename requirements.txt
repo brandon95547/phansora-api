@@ -9,11 +9,13 @@
 # System packages required: ffmpeg, tesseract-ocr
 #
 # TTS engine: CosyVoice 2 is a git checkout (NOT a pip package), run in-process. In
-# prod: clone it, `pip install -r CosyVoice/requirements.txt` INTO this venv, install
-# pynini via conda (`conda install -c conda-forge pynini==2.1.6`), download the
-# CosyVoice2-0.5B checkpoints, and set COSYVOICE_REPO. The API boots without it; only
-# TTS calls require it.  ⚠ Don't let CosyVoice's `pip install -r` override the torch
-# pinned here — keep the cu124 build below.
+# prod: clone it, install its deps INTO this venv, install pynini via conda
+# (`conda install -c conda-forge pynini==2.1.6`), download the CosyVoice2-0.5B
+# checkpoints, and set COSYVOICE_REPO. The API boots without it; only TTS calls
+# require it.  ⚠ CosyVoice's own requirements pin `torch==2.3.1` (cu121) and would
+# downgrade the cu124 torch below. The README installs CosyVoice with those torch /
+# transformers lines stripped + a constraints file (constraints-torch.txt), so the
+# cu124 torch pinned here is installed ONCE and never overridden — no re-pin needed.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Torch wheels are pinned as DIRECT CloudFront URLs (download.pytorch.org) rather than
