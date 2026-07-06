@@ -18,8 +18,10 @@ cp .env.example .env      # fill in DB creds / API keys
 make install              # venv + deps (CUDA torch 2.5.1+cu124) + editable install
 ```
 
-CPU-only host: swap the `--extra-index-url` in `requirements.txt` to the CPU wheel
-index and drop the `+cu124` suffixes.
+CPU-only host: `requirements.txt` pins the three torch wheels as direct
+`download.pytorch.org/whl/cu124/…` CloudFront URLs (the cu124 *index* links to
+Cloudflare R2, which the prod network can't reach over TLS). Swap those filenames to
+the `whl/cpu` build and drop the `+cu124` suffixes.
 
 ### Local dev on Mac
 
@@ -67,9 +69,14 @@ git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/Cosy
 conda install -y -c conda-forge pynini==2.1.6
 .venv/bin/pip install WeTextProcessing
 
-# 3. re-pin cu124 torch (step 1 may pull a different build)
-.venv/bin/pip install "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1" \
-  --index-url https://download.pytorch.org/whl/cu124
+# 3. re-pin cu124 torch (step 1 may pull a different build). Use the direct
+#    CloudFront wheel URLs, NOT --index-url .../whl/cu124: that index links to
+#    download-r2.pytorch.org (Cloudflare R2), which the prod network can't reach
+#    over TLS (SSLV3_ALERT_HANDSHAKE_FAILURE). See requirements.txt for the same note.
+.venv/bin/pip install \
+  https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl \
+  https://download.pytorch.org/whl/cu124/torchvision-0.20.1%2Bcu124-cp310-cp310-linux_x86_64.whl \
+  https://download.pytorch.org/whl/cu124/torchaudio-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
 .venv/bin/pip install "transformers>=4.43,<4.51" "sentence-transformers>=5.0"
 .venv/bin/pip check       # must be clean
 

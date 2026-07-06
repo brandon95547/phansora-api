@@ -16,10 +16,16 @@
 # pinned here — keep the cu124 build below.
 # ─────────────────────────────────────────────────────────────────────────────
 
---extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
-torchaudio==2.5.1+cu124
+# Torch wheels are pinned as DIRECT CloudFront URLs (download.pytorch.org) rather than
+# via `--extra-index-url .../whl/cu124`. The cu124 index now hands out
+# download-r2.pytorch.org (Cloudflare R2) links, and the prod network cannot complete a
+# TLS handshake to Cloudflare (SSLV3_ALERT_HANDSHAKE_FAILURE / alert 40, IPv4 + IPv6).
+# The download.pytorch.org path serves the same wheels from Amazon CloudFront, which is
+# reachable. These URLs are pinned to cp310 / linux_x86_64 — the prod image. For a
+# different Python/arch or a CPU-only host, swap the filenames (whl/cpu, drop +cu124).
+torch @ https://download.pytorch.org/whl/cu124/torch-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
+torchvision @ https://download.pytorch.org/whl/cu124/torchvision-0.20.1%2Bcu124-cp310-cp310-linux_x86_64.whl
+torchaudio @ https://download.pytorch.org/whl/cu124/torchaudio-2.5.1%2Bcu124-cp310-cp310-linux_x86_64.whl
 
 # Shared numeric / runtime pins
 numpy<2
