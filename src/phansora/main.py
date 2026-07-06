@@ -8,7 +8,7 @@ This module composes them into one process, mounting each under a path prefix:
     /dossier/*       -> Dossier Nova (AI research & dossier generation)
 
 A product is mounted only if it imports cleanly, so a host that is missing one
-product's optional heavy dependencies (torch, cosyvoice, asyncpg, ...)
+product's optional heavy dependencies (torch, indextts2, asyncpg, ...)
 still serves the others instead of failing to boot. Each mounted sub-app keeps
 its own middleware and startup/shutdown lifespan — we propagate those from the
 parent lifespan below.

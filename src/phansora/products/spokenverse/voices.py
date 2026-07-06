@@ -1,6 +1,6 @@
-"""Per-user custom voices for GPT-SoVITS voice cloning.
+"""Per-user custom voices for IndexTTS2 voice cloning.
 
-A "voice" is a short reference audio clip the user uploads; GPT-SoVITS clones it
+A "voice" is a short reference audio clip the user uploads; IndexTTS2 clones it
 at synthesis time (the clip path is passed as the reference). Uploads are trimmed
 to at most ``MAX_SECONDS`` and normalized to 24 kHz mono WAV. Clips and a small
 per-user JSON manifest live under the runtime data root:
@@ -29,32 +29,45 @@ from typing import List, Optional
 
 from phansora.shared.paths import runtime_dir
 
-# GPT-SoVITS requires a 3-10 second reference clip (longer errors out). We keep
+# IndexTTS2 requires a 3-10 second reference clip (longer errors out). We keep
 # the first 9s (safely inside the range) — this clip is what it clones from, and
 # it's also what gets auto-transcribed, so the two stay in sync.
 MAX_SECONDS = 9
-# GPT-SoVITS reference clips: 24 kHz mono.
+# IndexTTS2 reference clips: 24 kHz mono.
 _SAMPLE_RATE = 24000
 # Pending clips (uploaded but never approved or discarded) are pruned after this
 # long, so abandoned previews don't accumulate on disk forever.
 PENDING_TTL_SECONDS = 6 * 3600
 
-# Per-voice generation knobs, mirroring the options CosyVoice 2 supports. These are
+# Per-voice generation knobs, mirroring the options IndexTTS2 supports. These are
 # captured at approval and reapplied when the voice is later used for TTS. The
-# reference transcript (``ref_text``) is stored alongside them — CosyVoice clones
-# best when it knows what the reference clip says.
-from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice_client import (
+# reference transcript (``ref_text``) is still stored alongside them (harmless;
+# IndexTTS2 clones from the clip alone and does not need a transcript).
+from phansora.products.spokenverse.txt_to_voice.adapters.indextts2_client import (
     LANGUAGES, LANGUAGE_DEFAULT,
     SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
-    STYLE_MAX_LEN,
+    EMO_LABELS, EMO_VECTOR_LEN,
+    EMO_ALPHA_MIN, EMO_ALPHA_MAX, EMO_ALPHA_DEFAULT,
 )
 
 # All persisted setting keys (used to backfill/read from the manifest + pending JSON).
-SETTING_KEYS = ("language", "speed", "style")
+SETTING_KEYS = ("language", "speed", "emo_alpha", "emo_vector")
 
 
-def clamp_settings(language=None, speed=None, style=None) -> dict:
-    """Coerce/clamp CosyVoice generation knobs to supported ranges, filling defaults."""
+def _clamp_emo_vector(vec) -> list:
+    """Clamp to 8 floats in [0,1] (EMO_LABELS order). Returns [] if absent/all-zero."""
+    if not vec:
+        return []
+    try:
+        vals = [max(0.0, min(1.0, round(float(x), 3))) for x in vec]
+    except (TypeError, ValueError):
+        return []
+    vals = (vals + [0.0] * EMO_VECTOR_LEN)[:EMO_VECTOR_LEN]
+    return vals if sum(vals) > 0 else []
+
+
+def clamp_settings(language=None, speed=None, emo_alpha=None, emo_vector=None) -> dict:
+    """Coerce/clamp IndexTTS2 generation knobs to supported ranges, filling defaults."""
     lang = (str(language).strip().lower() if language else "")
     out = {"language": lang if lang in LANGUAGES else LANGUAGE_DEFAULT}
     try:
@@ -62,7 +75,12 @@ def clamp_settings(language=None, speed=None, style=None) -> dict:
     except (TypeError, ValueError):
         sp = SPEED_DEFAULT
     out["speed"] = max(SPEED_MIN, min(SPEED_MAX, round(sp, 3)))
-    out["style"] = (str(style).strip()[:STYLE_MAX_LEN] if style else "")
+    try:
+        al = float(emo_alpha) if emo_alpha is not None else EMO_ALPHA_DEFAULT
+    except (TypeError, ValueError):
+        al = EMO_ALPHA_DEFAULT
+    out["emo_alpha"] = max(EMO_ALPHA_MIN, min(EMO_ALPHA_MAX, round(al, 3)))
+    out["emo_vector"] = _clamp_emo_vector(emo_vector)
     return out
 
 
@@ -146,7 +164,7 @@ def create_pending(user_id: str, upload_path: Path) -> dict:
 
 
 def pending_path(user_id: str, token: str) -> Optional[Path]:
-    """The pending reference clip (what GPT-SoVITS clones from)."""
+    """The pending reference clip (what IndexTTS2 clones from)."""
     p = _pending_dir(user_id) / f"{_safe_token(token)}.wav"
     return p if p.exists() else None
 

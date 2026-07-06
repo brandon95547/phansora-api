@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (CosyVoice 2)
+#  - TXT -> Audio (IndexTTS2)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -352,6 +352,26 @@ async def pdf_to_txt(
 # TXT -> Audio
 # ----------------------------
 
+def _parse_emo_vector(raw: Optional[str]) -> Optional[list]:
+    """Parse an emotion vector from a form field: JSON array or comma-separated floats.
+    Returns a list of floats, or None if absent/unparseable."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    try:
+        data = json.loads(s)
+        if isinstance(data, list):
+            return [float(x) for x in data]
+    except (ValueError, TypeError):
+        pass
+    try:
+        return [float(x) for x in s.split(",") if x.strip() != ""]
+    except ValueError:
+        return None
+
+
 @app.post("/txt-to-audio", response_model=None)
 async def txt_to_audio(
     file: UploadFile = File(...),
@@ -366,8 +386,9 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed
-    style: Optional[str] = Form(None),  # natural-language style/instruct prompt
+    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed (ffmpeg atempo)
+    emo_alpha: Optional[float] = Form(None),  # expressiveness weight 0-1
+    emo_vector: Optional[str] = Form(None),  # 8 comma/JSON floats (EMO_LABELS order)
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -389,21 +410,22 @@ async def txt_to_audio(
     user_audio_dir = _user_audio_dir(safe_user)
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve
-    # its id to the on-disk reference clip CosyVoice clones from, plus its stored
-    # reference transcript (prompt_text) and approved style for higher-quality cloning.
+    # its id to the on-disk reference clip IndexTTS2 clones from, and fall back to the
+    # voice's approved emotion settings when the request doesn't override them.
     resolved_voice = voice
-    prompt_text = ""
+    emo_vec = _parse_emo_vector(emo_vector)
     if voice and voice != "default":
         clip = voice_store.voice_path(safe_user, voice)
         if clip is not None:
             resolved_voice = str(clip)
         rec = next((v for v in voice_store.list_voices(safe_user) if v.get("id") == voice), None)
         if rec:
-            prompt_text = rec.get("ref_text") or ""
             if not language:
                 language = rec.get("language")
-            if style is None:
-                style = rec.get("style") or None
+            if emo_alpha is None and rec.get("emo_alpha") is not None:
+                emo_alpha = rec.get("emo_alpha")
+            if emo_vec is None and rec.get("emo_vector"):
+                emo_vec = rec.get("emo_vector")
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -416,9 +438,9 @@ async def txt_to_audio(
         language=language,
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
-        prompt_text=prompt_text,
         speed=speed,
-        style=style,
+        emo_alpha=emo_alpha,
+        emo_vector=emo_vec,
     )
 
     try:
@@ -461,7 +483,8 @@ async def txt_to_audio(
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
                 "speed": speed,
-                "style": style,
+                "emo_alpha": emo_alpha,
+                "emo_vector": emo_vec,
             },
         },
     )
@@ -550,36 +573,38 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the CosyVoice 2 backend.
+    Options currently available from the IndexTTS2 backend.
     """
-    from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice_client as cv
+    from phansora.products.spokenverse.txt_to_voice.adapters import indextts2_client as ix
 
     voices = discover_voices()
     return {
-        "backend": "cosyvoice",
+        "backend": "indextts2",
         "voices": voices,
-        "languages": cv.LANGUAGES,
+        "languages": ix.LANGUAGES,
         "audio_formats": ["mp3", "wav"],
-        "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker` (transcript auto-detected on create)",
+        "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker`",
         "controls_available": {
-            "language": {"values": cv.LANGUAGES, "default": cv.LANGUAGE_DEFAULT,
+            "language": {"values": ix.LANGUAGES, "default": ix.LANGUAGE_DEFAULT,
                          "description": "language of the synthesized text"},
-            "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
-                      "default": cv.SPEED_DEFAULT, "description": "playback speed"},
-            "style": {"max_length": cv.STYLE_MAX_LEN,
-                      "description": 'natural-language style/instruct prompt, e.g. "speak cheerfully"'},
+            "speed": {"min": ix.SPEED_MIN, "max": ix.SPEED_MAX,
+                      "default": ix.SPEED_DEFAULT, "description": "playback speed (ffmpeg atempo)"},
+            "emo_alpha": {"min": ix.EMO_ALPHA_MIN, "max": ix.EMO_ALPHA_MAX,
+                          "default": ix.EMO_ALPHA_DEFAULT, "description": "expressiveness weight"},
+            "emo_vector": {"labels": ix.EMO_LABELS, "length": ix.EMO_VECTOR_LEN, "each": [0.0, 1.0],
+                           "description": "per-emotion mix (8 weights 0-1); all-zero => inherent emotion"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
-            "COSYVOICE_REPO", "COSYVOICE_MODEL_DIR", "COSYVOICE_USE_GPU", "COSYVOICE_FP16",
-            "COSYVOICE_TEXT_FRONTEND", "COSYVOICE_DEFAULT_REF", "COSYVOICE_DEFAULT_REF_TEXT",
-            "COSYVOICE_LANGUAGE", "COSYVOICE_SPEED",
+            "INDEXTTS2_REPO", "INDEXTTS2_MODEL_DIR", "INDEXTTS2_CONFIG", "INDEXTTS2_FP16",
+            "INDEXTTS2_USE_CUDA_KERNEL", "INDEXTTS2_USE_DEEPSPEED", "INDEXTTS2_DEFAULT_REF",
+            "INDEXTTS2_LANGUAGE", "INDEXTTS2_SPEED", "INDEXTTS2_EMO_ALPHA",
         ],
     }
 
 
 # ----------------------------
-# Custom voices (CosyVoice 2 cloning)
+# Custom voices (IndexTTS2 cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not
@@ -592,17 +617,18 @@ async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
-    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed
-    style: Optional[str] = Form(None),  # natural-language style/instruct prompt
+    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed (ffmpeg atempo)
+    emo_alpha: Optional[float] = Form(None),  # expressiveness weight 0-1
+    emo_vector: Optional[str] = Form(None),  # 8 comma/JSON floats (EMO_LABELS order)
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
     The upload is trimmed and normalized to a 24kHz mono WAV reference clip.
-    CosyVoice clones best when it knows the reference transcript, so we
-    auto-transcribe the clip (whisper) and use + store that as ``ref_text``. The
-    clip is then run through the engine to speak ``VOICE_SAMPLE_TEXT``; that
-    synthesized sample is what the user hears. Returns a token used to preview and
-    then approve/discard. Nothing is saved as a usable voice until it is approved.
+    IndexTTS2 clones from the clip; we still auto-transcribe it (whisper) and store
+    the text as ``ref_text`` for reference, then run the engine to speak
+    ``VOICE_SAMPLE_TEXT`` with the chosen emotion. That synthesized sample is what
+    the user hears. Returns a token used to preview and then approve/discard.
+    Nothing is saved as a usable voice until it is approved.
     """
     safe_user = _safe_user_id(user_id)
     # Opportunistically drop abandoned previews (uploaded but never approved or
@@ -624,10 +650,13 @@ async def voice_preview(
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
 
-    knobs = voice_store.clamp_settings(language=language, speed=speed, style=style)
+    knobs = voice_store.clamp_settings(
+        language=language, speed=speed, emo_alpha=emo_alpha,
+        emo_vector=_parse_emo_vector(emo_vector),
+    )
 
-    # Auto-transcribe the reference clip so CosyVoice can clone with the prompt
-    # text (better quality). Best-effort: if it fails, fall back to reference-free.
+    # Auto-transcribe the reference clip and store it as ref_text (informational;
+    # IndexTTS2 clones from the clip alone). Best-effort: skipped on failure.
     ref_text = ""
     try:
         model = os.getenv("WHISPER_MODEL", "base")
@@ -644,7 +673,7 @@ async def voice_preview(
         sample_out = voice_store.pending_sample_path(safe_user, token)
         engine_call = {
             "text": VOICE_SAMPLE_TEXT, "out_path": str(sample_out), "voice": str(ref_clip),
-            "prompt_text": ref_text, **knobs,
+            **knobs,
         }
         # TESTING: log the exact call sent to the engine on create-voice generate.
         print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
@@ -655,10 +684,10 @@ async def voice_preview(
             use_gpu=False,
             rate="+0%",
             volume="+0%",
-            prompt_text=ref_text,
             language=knobs["language"],
             speed=knobs["speed"],
-            style=knobs["style"],
+            emo_alpha=knobs["emo_alpha"],
+            emo_vector=knobs["emo_vector"],
         )
     except Exception as e:
         import traceback

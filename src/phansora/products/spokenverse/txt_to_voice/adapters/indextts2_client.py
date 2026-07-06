@@ -129,7 +129,10 @@ def _load_tts(use_gpu: bool):
 
             model_dir = _model_dir(repo)
             cfg_path = _env("INDEXTTS2_CONFIG", str(Path(model_dir) / "config.yaml"))
-            fp16 = _env_bool("INDEXTTS2_FP16", False) and (use_gpu and _cuda_available())
+            # IndexTTS2 auto-selects CUDA whenever it's available, independent of the
+            # per-request `use_gpu` flag — so gate fp16 on CUDA availability + the env
+            # toggle, NOT on use_gpu. fp16 roughly halves model VRAM (critical on small GPUs).
+            fp16 = _env_bool("INDEXTTS2_FP16", False) and _cuda_available()
             _TTS = IndexTTS2(
                 cfg_path=cfg_path,
                 model_dir=model_dir,

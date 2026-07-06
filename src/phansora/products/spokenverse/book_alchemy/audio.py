@@ -1,4 +1,4 @@
-"""Render a session script to a single audio file via the GPT-SoVITS TTS engine.
+"""Render a session script to a single audio file via the IndexTTS2 TTS engine.
 
 We reuse ``BatchConverter`` (which already handles chunking, concatenation and
 transcoding) by writing the script to a temporary input folder and collecting
@@ -32,8 +32,8 @@ async def render_script_to_audio(
 
     import os
 
-    # GPU is controlled globally by the COSYVOICE_USE_GPU switch inside the engine;
-    # there's nothing to resolve per call here.
+    # IndexTTS2 uses CUDA automatically when available; there's nothing to resolve
+    # per call here.
     if use_gpu is None:
         use_gpu = False
 

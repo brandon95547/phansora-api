@@ -24,9 +24,19 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
+def _parse_emo_vector(raw: Optional[str]) -> Optional[list]:
+    """Parse a comma-separated '--emo-vector' string into a list of floats (or None)."""
+    if not raw:
+        return None
+    try:
+        return [float(x) for x in str(raw).split(",") if x.strip() != ""]
+    except ValueError:
+        return None
+
+
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert .txt files to audio (CosyVoice 2) OR convert PDFs to .txt."
+        description="Convert .txt files to audio (IndexTTS2) OR convert PDFs to .txt."
     )
 
     # --- PDF -> TXT mode ---
@@ -49,13 +59,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--engine",
         default=None,
-        choices=["cosyvoice"],
-        help="TTS engine to use (CosyVoice 2 is the only engine)",
+        choices=["indextts2"],
+        help="TTS engine to use (IndexTTS2 is the only engine)",
     )
     parser.add_argument(
         "--voice",
         default="default",
-        help="CosyVoice: 'default' for the built-in voice, or a path to a reference clip to clone from",
+        help="IndexTTS2: 'default' for the built-in voice, or a path to a reference clip to clone from",
     )
     parser.add_argument(
         "--ref-audio",
@@ -64,17 +74,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path to a reference clip to clone the voice from (takes priority over --voice)",
     )
     parser.add_argument("--gpu", action="store_true", help="Use CUDA/GPU for inference (NVIDIA + CUDA PyTorch required)")
-    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
-    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
+    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by IndexTTS2")
+    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by IndexTTS2")
     parser.add_argument("--speaker", default=None, help="Optional alias for --voice (reference-clip path)")
     parser.add_argument("--language", default=None, help="Text language: en/zh/ja/ko/yue/auto (default en)")
     parser.add_argument("--format", dest="output_format", default="mp3", choices=["mp3", "wav"])
     parser.add_argument("--chunk-chars", type=int, default=2500)
 
-    # --- CosyVoice generation knobs ---
-    parser.add_argument("--prompt-text", dest="prompt_text", default=None, help="Transcript of the reference clip (better quality; omit for reference-free)")
-    parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; playback speed (default 1.0)")
-    parser.add_argument("--style", default=None, help='Natural-language style/instruct prompt, e.g. "speak cheerfully"')
+    # --- IndexTTS2 generation knobs ---
+    parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; playback speed via ffmpeg atempo (default 1.0)")
+    parser.add_argument("--emo-alpha", dest="emo_alpha", type=float, default=None, help="Expressiveness weight 0-1 (default 1.0)")
+    parser.add_argument("--emo-vector", dest="emo_vector", default=None,
+                        help="8 comma-separated 0-1 emotion weights: happy,angry,sad,afraid,disgusted,melancholic,surprised,calm")
 
     # NEW: concurrency
     parser.add_argument(
@@ -150,9 +161,9 @@ async def main_async(argv: Optional[Sequence[str]] = None) -> int:
         ref_audio=args.ref_audio,
         max_concurrency=args.max_concurrency,  # NEW
         file_concurrency=args.file_concurrency,
-        prompt_text=args.prompt_text,
         speed=args.speed,
-        style=args.style,
+        emo_alpha=args.emo_alpha,
+        emo_vector=_parse_emo_vector(args.emo_vector),
     )
 
     converter = BatchConverter(cfg)
