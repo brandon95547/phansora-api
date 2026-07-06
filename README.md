@@ -5,7 +5,7 @@ serves all products, each under a path prefix:
 
 | Product | Prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice 2 voice cloning), PDF→text, audio→text, Book Alchemy |
+| **SpokenVerse** | `/spokenverse` | text→audio (IndexTTS2 voice cloning + emotion control), PDF→text, audio→text, Book Alchemy |
 | **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (Claude web search) |
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 
@@ -15,13 +15,14 @@ System packages: `ffmpeg`, `tesseract-ocr`.
 
 ```bash
 cp .env.example .env      # fill in DB creds / API keys
-make install              # venv + deps (CUDA torch 2.5.1+cu124) + editable install
+make install              # venv + deps (CUDA torch 2.8.x) + editable install
 ```
 
 CPU-only host: `requirements.txt` pins the three torch wheels as direct
-`download.pytorch.org/whl/cu124/…` CloudFront URLs (the cu124 *index* links to
+`download.pytorch.org/whl/cu128/…` CloudFront URLs (the CUDA *index* links to
 Cloudflare R2, which the prod network can't reach over TLS). Swap those filenames to
-the `whl/cpu` build and drop the `+cu124` suffixes.
+the `whl/cpu` build and drop the `+cu128` suffixes. The CUDA build (`cu126` vs `cu128`)
+must match the prod GPU driver — check `nvidia-smi` and pin accordingly.
 
 ### Local dev on Mac
 
@@ -33,75 +34,71 @@ make dev            # API runs on http://localhost:8000
 ```
 
 The API boots **without** the TTS engine — every non-TTS route works immediately;
-only a voice-generation call needs CosyVoice, and without it you get a clean
+only a voice-generation call needs IndexTTS2, and without it you get a clean
 "engine not configured" error instead of a crash.
 
-To generate audio locally too (runs on CPU — slower than the prod GPU, but works),
-follow the *TTS engine* steps below but clone to `~/CosyVoice`, install the Mac torch
+To generate audio locally too (runs on CPU/MPS — slower than the prod GPU, but works),
+follow the *TTS engine* steps below but clone to `~/index-tts`, install the Mac torch
 build (`.venv/bin/pip install torch torchaudio`), and set in `.env`:
 
 ```bash
-TTS_ENGINE=cosyvoice
-COSYVOICE_REPO=/Users/<you>/CosyVoice
-COSYVOICE_USE_GPU=0        # no CUDA on Mac → runs on CPU
-COSYVOICE_FP16=0
+TTS_ENGINE=indextts2
+INDEXTTS2_REPO=/Users/<you>/index-tts
+INDEXTTS2_USE_GPU=0        # no CUDA on Mac → runs on CPU/MPS
+INDEXTTS2_FP16=0
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
-CosyVoice uses CUDA automatically when available and falls back to CPU otherwise.
-The `pynini` dependency is the tricky part on macOS — install it via conda
-(`conda install -c conda-forge pynini==2.1.6`) into the same env, or set
-`COSYVOICE_TEXT_FRONTEND=0` to skip text normalization.
+IndexTTS2 uses CUDA automatically when available and falls back to CPU otherwise.
+The `pynini` dependency (pulled in by WeTextProcessing) is the tricky part on macOS —
+install it via conda (`conda install -c conda-forge pynini==2.1.6`) into the same env.
 
-### TTS engine — CosyVoice 2 (prod)
+### TTS engine — IndexTTS2 (prod)
 
-CosyVoice 2 is Apache-2.0 (commercial-OK). The engine is a git checkout, not a pip
-package. Install it into the **same venv**:
+> **License:** IndexTTS2 is released under a **non-commercial** license; commercial use
+> requires a separate license from Bilibili (`indexspeech@bilibili.com`). Ensure the
+> deployment is covered before shipping.
+
+IndexTTS2 is a git checkout, not a published pip package, run in-process. It needs
+**torch 2.8.x** and `transformers==4.52.1` (already pinned in `requirements.txt` /
+`constraints-torch.txt`). Install it into the **same venv**:
 
 ```bash
-# 1. clone (with the vendored Matcha-TTS submodule)
-git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/CosyVoice
+# 1. clone
+git clone https://github.com/index-tts/index-tts.git /var/www/index-tts
 
-# 2. install CosyVoice's deps WITHOUT letting them touch the torch stack. Upstream
-#    pins `torch==2.3.1` on a cu121 --extra-index-url, which would downgrade/swap the
-#    cu124 torch already installed by `make install` (leaving torchvision incompatible
-#    — the classic "torch downloaded twice, then broken" failure). So: strip the
-#    torch/torchvision/torchaudio/transformers lines and CosyVoice's index-url, and
-#    pass constraints-torch.txt so nothing transitive can swap the build either. torch
-#    stays the single 2.5.1+cu124 build — no re-download, no re-pin dance.
-grep -vE '^\s*(--extra-index-url|--index-url|torch|torchvision|torchaudio|transformers)([=<>!~@[:space:]]|$)' \
-  /var/www/CosyVoice/requirements.txt > /tmp/cosy-req-notorch.txt
-.venv/bin/pip install -c constraints-torch.txt -r /tmp/cosy-req-notorch.txt
+# 2. install IndexTTS2's deps into this venv WITHOUT letting them swap the torch build.
+#    IndexTTS2 pins torch==2.8.* / transformers==4.52.1; passing constraints-torch.txt
+#    forces our exact CUDA build (e.g. +cu128) so pip can't pull a mismatched wheel.
+.venv/bin/pip install -c constraints-torch.txt -e /var/www/index-tts
 
 # 3. pynini/WeTextProcessing need OpenFst — install via conda into this env
 #    (pip install pynini usually fails to build on CentOS):
 conda install -y -c conda-forge pynini==2.1.6
 .venv/bin/pip install WeTextProcessing
-.venv/bin/pip check       # must be clean — torch should still be 2.5.1+cu124
+.venv/bin/pip check       # must be clean — torch should still be 2.8.x
 
-# 4. CosyVoice2-0.5B checkpoints (~2 GB) via ModelScope
-.venv/bin/pip install modelscope
-.venv/bin/python - <<'PY'
-from modelscope import snapshot_download
-snapshot_download('iic/CosyVoice2-0.5B',
-  local_dir='/var/www/CosyVoice/pretrained_models/CosyVoice2-0.5B')
-PY
+# 4. IndexTTS-2 checkpoints (several GB) via Hugging Face
+.venv/bin/pip install "huggingface_hub[cli]"
+.venv/bin/hf download IndexTeam/IndexTTS-2 --local-dir /var/www/index-tts/checkpoints
 ```
 
 Then set in `.env` and restart the service:
 
 ```bash
-TTS_ENGINE=cosyvoice
-COSYVOICE_REPO=/var/www/CosyVoice
-COSYVOICE_USE_GPU=1
-COSYVOICE_FP16=0                   # 1 for faster GPU inference once verified
-# "Default" voice needs a reference clip (CosyVoice always clones from one):
-# COSYVOICE_DEFAULT_REF=/path/to/ref.wav
-# COSYVOICE_DEFAULT_REF_TEXT=what that clip says
+TTS_ENGINE=indextts2
+INDEXTTS2_REPO=/var/www/index-tts
+INDEXTTS2_MODEL_DIR=/var/www/index-tts/checkpoints   # holds config.yaml + *.pth
+INDEXTTS2_USE_GPU=1
+INDEXTTS2_FP16=0                   # 1 for faster GPU inference once verified
+# "Default" voice needs a reference clip (IndexTTS2 always clones from a speaker prompt):
+# INDEXTTS2_DEFAULT_REF=/path/to/ref.wav
 ```
 
-The API boots without the engine; only TTS calls need it.
+The API boots without the engine; only TTS calls need it. Emotion control (an
+expressiveness weight + the 8-way emotion vector) and speed are per-request options —
+see `GET /spokenverse/tts-options`.
 
 ## Environment (`.env`)
 
@@ -114,16 +111,17 @@ both.
 |---|---|---|
 | `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | your real site origin(s) |
 | `PHANSORA_DATA_DIR` | *unset* → uses cwd | `/var/lib/phansora` (voices/audio/db live here) |
-| `COSYVOICE_REPO` | `~/CosyVoice` | `/var/www/CosyVoice` |
-| `COSYVOICE_USE_GPU` | `0` (no CUDA → CPU) | `1` (CUDA) |
-| `COSYVOICE_FP16` | `0` | `0` (set `1` for faster GPU once verified) |
+| `INDEXTTS2_REPO` | `~/index-tts` | `/var/www/index-tts` |
+| `INDEXTTS2_USE_GPU` | `0` (no CUDA → CPU) | `1` (CUDA) |
+| `INDEXTTS2_FP16` | `0` | `0` (set `1` for faster GPU once verified) |
 | `WHISPER_DEVICE` | `cpu` | `cuda` if supported, else `cpu` |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` (cuda) / `int8` (cpu) |
 | `DB_HOST` / `DB_PORT` | your local Postgres | `127.0.0.1` / the shared Postgres port |
 
 Notes:
 - **Torch build differs at install time, not via `.env`:** `make install` pins CUDA
-  `+cu124` (prod); `make install-mac` uses the arm64 CPU/MPS wheel (dev). See above.
+  torch 2.8.x (prod, CUDA build matched to the driver); `make install-mac` uses the
+  arm64 CPU/MPS wheel (dev). See above.
 - **DB is shared:** this API and the Node site talk to the **same** Postgres —
   `DB_PORT` must match that server (they are not two databases).
 - **`.env` format — keep comments on their own lines.** Both python-dotenv and
