@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -320,7 +321,10 @@ def _synthesize_sync(
         if abs(speed - 1.0) > 1e-3:
             _atempo(tmp_wav, out_path, speed)
         else:
-            Path(tmp_wav).replace(out_path)
+            # shutil.move (not Path.replace/os.rename) so this works when the temp
+            # dir and out_path are on different mounts — e.g. /tmp is tmpfs but the
+            # audio output lives on a data volume (EXDEV otherwise).
+            shutil.move(tmp_wav, str(out_path))
     finally:
         if _ref_tmp:
             Path(_ref_tmp).unlink(missing_ok=True)
