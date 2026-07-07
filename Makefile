@@ -11,7 +11,7 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-install: ## Create venv and install dependencies (CPU-only torch — prod / Linux)
+install: ## Create venv and install dependencies (CUDA torch — prod / Linux GPU)
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
