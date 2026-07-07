@@ -19,7 +19,7 @@ install: ## Create Python 3.10 venv and install deps (CUDA torch — prod / Linu
 	rm -rf $(VENV)
 	@if command -v uv >/dev/null 2>&1; then \
 		echo "==> creating $(VENV) with uv (Python 3.10)"; \
-		uv venv --python 3.10 $(VENV); \
+		uv venv --python 3.10 --seed $(VENV); \
 	elif command -v $(PYTHON) >/dev/null 2>&1; then \
 		echo "==> creating $(VENV) with $(PYTHON)"; \
 		$(PYTHON) -m venv $(VENV); \
