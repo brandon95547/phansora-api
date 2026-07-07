@@ -26,8 +26,8 @@ logger = logging.getLogger("chrono-origin")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    if not settings.gemini_api_key:
-        logger.warning("GEMINI_API_KEY is not set. /trace will fail until configured.")
+    if not settings.anthropic_api_key:
+        logger.warning("ANTHROPIC_API_KEY is not set. /trace will fail until configured.")
     app.state.executor = ThreadPoolExecutor(max_workers=4)
     app.state.orchestrator = TraceOrchestrator()
     app.state.job_manager = JobManager(app.state.orchestrator, app.state.executor)
@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Chrono-Origin API",
-    description="Trace the earliest known origin of a story, myth, or event using Gemini grounded search.",
+    description="Trace the earliest known origin of a story, myth, or event using Claude grounded search.",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -59,12 +59,12 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "gemini_configured": bool(get_settings().gemini_api_key)}
+    return {"status": "ok", "anthropic_configured": bool(get_settings().anthropic_api_key)}
 
 
 def _ensure_configured() -> None:
-    if not get_settings().gemini_api_key:
-        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured.")
+    if not get_settings().anthropic_api_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
 
 
 @app.post("/trace", response_model=TraceResponse)
