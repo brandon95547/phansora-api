@@ -1,69 +1,79 @@
-"""Render a session script to a single audio file via the IndexTTS2 TTS engine.
+"""Render a session script to a single audio file via the shared TTS service.
 
-We reuse ``BatchConverter`` (which already handles chunking, concatenation and
-transcoding) by writing the script to a temporary input folder and collecting
-the single produced file — the same pattern server.py uses for /txt-to-audio.
+The IndexTTS2 model is a per-process singleton with no unload path, so a second
+resident copy does not fit alongside the API's copy on a 16 GB GPU. Instead of
+loading its own model, the worker POSTs the script to the API's existing
+``POST /spokenverse/txt-to-audio`` endpoint (the same one the frontend uses) and
+saves the returned audio. That keeps a single, warmed model in the API process
+and funnels all synthesis through it (the GPU serializes inference anyway).
+
+The endpoint resolves a cloned-voice *id* -> its reference clip and applies the
+voice's saved emotion defaults, so we pass the raw voice id (not a file path).
 """
 from __future__ import annotations
 
-import asyncio
-import shutil
+import os
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
-from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
+import aiohttp
+
+# Base URL of the FastAPI app that owns the resident TTS model. Co-located with
+# the worker in prod, so localhost by default.
+_API_BASE = os.getenv("PHANSORA_API_BASE", "http://127.0.0.1:8000").rstrip("/")
+# A single session can synthesize for minutes; the endpoint runs the whole job
+# server-side before streaming the file back, so this must cover full synthesis.
+_HTTP_TIMEOUT_S = float(os.getenv("BOOK_ALCHEMY_TTS_HTTP_TIMEOUT_S", "3600"))
 
 
 async def render_script_to_audio(
     *,
     script: str,
     out_path: Path,
+    user_id,
     voice: str = "default",
-    use_gpu: Optional[bool] = None,
-    rate: str = "+0%",
     output_format: str = "mp3",
+    emo_alpha: Optional[float] = None,
+    emo_vector: Optional[Sequence[float]] = None,
+    speed: Optional[float] = None,
 ) -> int:
-    """Synthesize ``script`` to ``out_path``. Returns duration in whole seconds."""
+    """Synthesize ``script`` to ``out_path`` via the shared TTS endpoint.
+
+    Returns duration in whole seconds."""
     script = (script or "").strip()
     if not script:
         raise ValueError("Empty script; nothing to synthesize.")
 
-    import os
+    url = f"{_API_BASE}/spokenverse/txt-to-audio"
 
-    # IndexTTS2 uses CUDA automatically when available; there's nothing to resolve
-    # per call here.
-    if use_gpu is None:
-        use_gpu = False
+    form = aiohttp.FormData()
+    # The endpoint keys the output filename off the uploaded stem and requires .txt.
+    form.add_field("file", script.encode("utf-8"),
+                   filename="session.txt", content_type="text/plain")
+    form.add_field("user_id", str(user_id))
+    form.add_field("voice", str(voice or "default"))
+    form.add_field("output_format", output_format)
+    if emo_alpha is not None:
+        form.add_field("emo_alpha", str(emo_alpha))
+    if emo_vector:
+        form.add_field("emo_vector", ",".join(str(x) for x in emo_vector))
+    if speed is not None:
+        form.add_field("speed", str(speed))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(url, data=form) as resp:
+            if resp.status >= 400:
+                body = await resp.text()
+                raise RuntimeError(f"txt-to-audio HTTP {resp.status}: {body[:800]}")
+            with open(out_path, "wb") as fh:
+                async for chunk in resp.content.iter_chunked(1 << 16):
+                    fh.write(chunk)
 
-    with tempfile.TemporaryDirectory(prefix="ba_tts_") as tmp:
-        tmp_in = Path(tmp) / "in"
-        tmp_out = Path(tmp) / "out"
-        tmp_in.mkdir(parents=True, exist_ok=True)
-        tmp_out.mkdir(parents=True, exist_ok=True)
-        (tmp_in / "session.txt").write_text(script, encoding="utf-8")
-
-        cfg = TTSConfig(
-            voice=voice,
-            use_gpu=bool(use_gpu),
-            rate=rate,
-            volume="+0%",
-            output_format=output_format,
-            speaker=voice,
-            max_concurrency=int(os.getenv("BOOK_ALCHEMY_TTS_CONCURRENCY", "4")),
-            file_concurrency=1,
-        )
-        rc = await BatchConverter(cfg).convert_folder(tmp_in, tmp_out)
-        if rc != 0:
-            raise RuntimeError(f"TTS conversion failed (rc={rc}).")
-
-        produced = next((p for p in tmp_out.rglob(f"*.{output_format}") if p.is_file()), None)
-        if produced is None:
-            raise RuntimeError("TTS produced no audio file.")
-        shutil.move(str(produced), str(out_path))
+    if not out_path.is_file() or out_path.stat().st_size == 0:
+        raise RuntimeError("TTS endpoint returned no audio.")
 
     return _probe_duration_seconds(out_path)
 
@@ -81,8 +91,3 @@ def _probe_duration_seconds(path: Path) -> int:
         return int(float((out.stdout or "0").strip() or 0))
     except Exception:  # noqa: BLE001
         return 0
-
-
-# Convenience for callers that are already inside a running loop vs. not.
-def render_sync(**kwargs) -> int:
-    return asyncio.run(render_script_to_audio(**kwargs))
