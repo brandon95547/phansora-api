@@ -34,6 +34,7 @@ reference clip too — set INDEXTTS2_DEFAULT_REF, else only cloned voices work.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import sys
@@ -147,6 +148,42 @@ def _load_tts(use_gpu: bool):
                 f"deps are installed.\nOriginal error: {type(e).__name__}: {e}"
             ) from e
         return _TTS
+
+
+logger = logging.getLogger(__name__)
+
+
+def preload() -> None:
+    """Warm the engine so the first real request is fast. Two stages:
+      1. Load the model weights (~30–60s cold start) — the critical win.
+      2. Run a throwaway synthesis with the default voice to warm the CUDA
+         kernels, so the first user request skips that one-time cost too.
+    Lock-guarded and cached; safe from a background thread (a racing request
+    just waits on the same load). Every failure is logged, never raised —
+    stage 2 needs INDEXTTS2_DEFAULT_REF; if it's unset, weights are still
+    loaded (the big win) and only the kernel warmup is skipped."""
+    try:
+        _load_tts(use_gpu=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("IndexTTS2 preload skipped (model load failed): %s: %s", type(e).__name__, e)
+        return
+    try:
+        warm_out = Path(tempfile.gettempdir()) / f"idx2_warmup_{uuid.uuid4().hex}.wav"
+        _synthesize_sync(
+            text="Ready.",
+            out_path=warm_out,
+            voice="default",
+            use_gpu=True,
+            rate="+0%",
+            volume="+0%",
+            speaker=None,
+            language=None,
+            ref_audio=None,
+        )
+        warm_out.unlink(missing_ok=True)
+        logger.info("IndexTTS2 preloaded + kernel-warmed (first request will be fast)")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("IndexTTS2 weights loaded, kernel warmup skipped: %s: %s", type(e).__name__, e)
 
 
 # IndexTTS2 works best with a short prompt clip; trim over-long references defensively

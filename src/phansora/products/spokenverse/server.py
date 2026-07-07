@@ -92,6 +92,21 @@ async def _sweep_stale_pending_voices() -> None:
         pass
 
 
+@app.on_event("startup")
+async def _preload_tts_model() -> None:
+    # Warm the TTS engine in the background so the first generation doesn't pay
+    # the one-time weight load (~30–60s cold start). Off-thread so startup and
+    # /health stay responsive; the load is lock-guarded, so a request that races
+    # the warmup just waits on the same load instead of starting a second one.
+    import threading
+
+    from phansora.products.spokenverse.txt_to_voice.adapters import indextts2_client
+
+    threading.Thread(
+        target=indextts2_client.preload, name="indextts2-preload", daemon=True
+    ).start()
+
+
 # ----------------------------
 # Contact email
 # ----------------------------
