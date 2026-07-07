@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from .. import voices as voice_store
 from . import db, prompts
 from .audio import render_script_to_audio
 from .chunking import build_chunks
@@ -339,6 +340,13 @@ async def _phase_audio(project: dict) -> None:
 
     options = _as_dict(project.get("options"))
     voice = str(options.get("voice") or "default")
+    # A saved cloned voice is stored per-user; the engine clones from a file path,
+    # so resolve the voice id -> its reference clip (a bare id would silently fall
+    # back to the default voice). Mirrors the txt-to-audio server's resolution.
+    if voice and voice != "default":
+        clip = voice_store.voice_path(str(project["user_id"]), voice)
+        if clip is not None:
+            voice = str(clip)
     out_path: Path = session_audio_path(project["user_id"], pid, sess["ordinal"], "mp3")
     seconds = await render_script_to_audio(script=sess["script"], out_path=out_path, voice=voice)
 
