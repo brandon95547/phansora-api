@@ -13,10 +13,27 @@ System packages: `ffmpeg`, `tesseract-ocr`.
 
 ## Install
 
+**Prerequisite — Python 3.10 via [uv](https://astral.sh/uv).** The torch wheels are
+`cp310`, so the venv MUST be Python 3.10. CentOS Stream 8's system `python3` is 3.6
+(and it ships no 3.10), so `make install` builds the venv with uv, which fetches a
+real 3.10. Install uv first:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"      # persist in ~/.bashrc
+```
+
+Then:
+
 ```bash
 cp .env.example .env      # fill in DB creds / API keys
-make install              # venv + deps (CUDA torch 2.8.x) + editable install
+make install              # uv → Python 3.10 venv (seeded w/ pip) + deps (CUDA torch 2.8.x) + editable install
 ```
+
+`make install` wipes any existing `.venv` and rebuilds it with uv (`uv venv --python
+3.10 --seed`). If uv isn't on PATH it falls back to a system `python3.10`, and errors
+with instructions if neither is found — so **don't** run a bare `python3 -m venv`
+(that gives a 3.6 venv and the torch wheel fails with "not a supported wheel").
 
 `requirements.txt` pins the `+cu126` torch 2.8.0 wheels as direct
 `download.pytorch.org/whl/cu126/…` CloudFront URLs, cp310 / `manylinux_2_28_x86_64`
