@@ -113,14 +113,26 @@ INDEXTTS2_REPO=/var/www/index-tts
 INDEXTTS2_MODEL_DIR=/var/www/index-tts/checkpoints   # holds config.yaml + *.pth
 INDEXTTS2_USE_GPU=1
 INDEXTTS2_FP16=1                   # fp16 on GPU — faster, lower VRAM
-# "Default" voice needs a reference clip (IndexTTS2 always clones from a speaker prompt):
-# INDEXTTS2_DEFAULT_REF=/path/to/ref.wav
+INDEXTTS2_USE_DEEPSPEED=1          # kernel-inject the GPT/AR stage — needs the CUDA toolkit (see below)
+INDEXTTS2_USE_CUDA_KERNEL=1        # BigVGAN fused vocoder kernel — needs the CUDA toolkit (see below)
+# "Default" voice needs a reference clip (IndexTTS2 always clones from a speaker prompt);
+# set it so warmup also kernel-warms and the FIRST request skips the one-time JIT compile:
+INDEXTTS2_DEFAULT_REF=/path/to/ref.wav
 ```
 
 > **Runs on GPU (RTX A4000, 16 GB).** IndexTTS2 loads (~5 GB) with headroom and
 > synthesizes in seconds. Requires a real GPU with ~8 GB+ VRAM — a 4 GB card OOMs on
 > load, and CPU falls back to minutes/generation. First request after a restart pays a
 > one-time model load (~10–30 s); keep nginx `proxy_read_timeout` at a few minutes.
+
+> **CUDA toolkit (for DeepSpeed / BigVGAN kernel).** `INDEXTTS2_USE_DEEPSPEED` and
+> `INDEXTTS2_USE_CUDA_KERNEL` JIT-compile fused CUDA ops at model-load time, so the box
+> needs `nvcc` — the CUDA **toolkit**, separate from the driver. Install it once (RHEL
+> prod, toolkit only, driver untouched) with `scripts/install-cuda-toolkit.sh`, then make
+> it visible to the service by copying `deploy/phansora-api.service.d/cuda-env.conf` to
+> `/etc/systemd/system/phansora-api.service.d/` and `systemctl daemon-reload`. Without the
+> toolkit, leave both flags at `0`: DeepSpeed's `init_inference` is not fault-tolerant and
+> would fail the model load. `deepspeed` itself is pinned in `requirements.txt`.
 
 The API boots without the engine; only TTS calls need it. Emotion control (an
 expressiveness weight + the 8-way emotion vector) and speed are per-request options —
@@ -140,6 +152,8 @@ both.
 | `INDEXTTS2_REPO` | `~/index-tts` | `/var/www/index-tts` |
 | `INDEXTTS2_USE_GPU` | `0` (no CUDA → CPU) | `1` (RTX A4000, 16 GB) |
 | `INDEXTTS2_FP16` | `0` | `1` (fp16 on GPU — faster, lower VRAM) |
+| `INDEXTTS2_USE_DEEPSPEED` | `0` | `1` (needs CUDA toolkit — see GPU section) |
+| `INDEXTTS2_USE_CUDA_KERNEL` | `0` | `1` (needs CUDA toolkit — see GPU section) |
 | `WHISPER_DEVICE` | `cpu` | `cuda` |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` |
 | `DB_HOST` / `DB_PORT` | your local Postgres | `127.0.0.1` / the shared Postgres port |
