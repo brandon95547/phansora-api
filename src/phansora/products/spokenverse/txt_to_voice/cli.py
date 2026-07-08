@@ -79,7 +79,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--speaker", default=None, help="Optional alias for --voice (reference-clip path)")
     parser.add_argument("--language", default=None, help="Text language: en/zh/ja/ko/yue/auto (default en)")
     parser.add_argument("--format", dest="output_format", default="mp3", choices=["mp3", "wav"])
-    parser.add_argument("--chunk-chars", type=int, default=300)
+    parser.add_argument("--chunk-chars", type=int, default=2500)
 
     # --- IndexTTS2 generation knobs ---
     parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; playback speed via ffmpeg atempo (default 1.0)")

@@ -68,6 +68,16 @@ EMO_LABELS = ["happy", "angry", "sad", "afraid", "disgusted", "melancholic", "su
 EMO_VECTOR_LEN = len(EMO_LABELS)
 EMO_ALPHA_MIN, EMO_ALPHA_MAX, EMO_ALPHA_DEFAULT = 0.0, 1.0, 1.0
 
+# Emotion-vector normalization, ported verbatim from IndexTTS2.normalize_emo_vec
+# (indextts/infer_v2.py). IndexTTS2's web UI applies this before every infer() call,
+# but infer() itself does NOT — so a direct caller must do it or the model breaks.
+# Per-slot bias de-emphasizes emotions that destabilize generation, and the total is
+# capped at 0.8. Without the cap, a vector summing > 1 makes the (1 - sum(weight))
+# term inside infer() negative, corrupting the emotion embedding and crashing the CUDA
+# context with "illegal instruction" (runaway generation into max_mel_tokens).
+EMO_BIAS = [0.9375, 0.875, 1.0, 1.0, 0.9375, 0.9375, 0.6875, 0.5625]
+EMO_SUM_CAP = 0.8
+
 
 def _env(name: str, default: str = "") -> str:
     return os.getenv(name, "").strip() or default
@@ -236,7 +246,12 @@ def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[s
 
 
 def _normalize_emo_vector(emo_vector: Optional[Sequence[float]]) -> Optional[list[float]]:
-    """Clamp to 8 floats in [0,1]. Returns None if absent or all-zero (=> inherent emotion)."""
+    """Clamp to 8 floats in [0,1], then apply IndexTTS2's bias + 0.8 sum-cap.
+
+    Returns None if absent or all-zero (=> inherent emotion). The bias/cap mirror
+    IndexTTS2.normalize_emo_vec; skipping them lets an over-strong vector (e.g. a saved
+    voice's stored emotion summing > 1) crash the CUDA context — see EMO_BIAS above.
+    """
     if not emo_vector:
         return None
     try:
@@ -246,6 +261,12 @@ def _normalize_emo_vector(emo_vector: Optional[Sequence[float]]) -> Optional[lis
     vals = (vals + [0.0] * EMO_VECTOR_LEN)[:EMO_VECTOR_LEN]
     if sum(vals) <= 0.0:
         return None
+    # De-emphasize destabilizing emotions, then cap the total to 0.8 (IndexTTS2 contract).
+    vals = [v * b for v, b in zip(vals, EMO_BIAS)]
+    total = sum(vals)
+    if total > EMO_SUM_CAP:
+        scale = EMO_SUM_CAP / total
+        vals = [v * scale for v in vals]
     return vals
 
 

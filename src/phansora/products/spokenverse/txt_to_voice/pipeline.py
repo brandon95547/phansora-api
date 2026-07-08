@@ -36,11 +36,7 @@ class TTSConfig:
     rate: str  # accepted for compatibility; ignored by IndexTTS2
     volume: str  # accepted for compatibility; ignored by IndexTTS2
     output_format: str  # "mp3" or "wav"
-    # Keep chunks well under IndexTTS2's per-inference sequence limit: a single
-    # long chunk (~1000+ chars) overflows the GPT positional embeddings and
-    # crashes the CUDA context with "illegal instruction". Each chunk is a
-    # separate infer() call, then stitched, so smaller is safe (just more seams).
-    chunk_chars: int = 300
+    chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
     language: Optional[str] = None  # en/zh/ja/ko/yue/auto
 
