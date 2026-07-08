@@ -398,7 +398,7 @@ async def txt_to_audio(
     speaker: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     output_format: Literal["mp3", "wav"] = Form("mp3"),
-    chunk_chars: int = Form(2500),
+    chunk_chars: int = Form(300),  # see TTSConfig.chunk_chars: larger chunks overflow IndexTTS2 and crash CUDA
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
     speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed (ffmpeg atempo)
