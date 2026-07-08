@@ -38,6 +38,17 @@ dnf config-manager --add-repo "${repo_url}"
 # Toolkit only — NOT the driver.
 dnf install -y cuda-toolkit-12-6
 
+# torch 2.8 needs GCC >= 9 to compile its C++/CUDA extensions; RHEL8's default is 8.5.
+# Install gcc-toolset-12 (used ONLY to build the DeepSpeed / BigVGAN kernels — the CUDA_HOME
+# drop-in points CC/CXX at it). Skipped automatically when the system gcc is already >= 9.
+if gcc -dumpversion 2>/dev/null | awk -F. '{exit ($1>=9)?0:1}'; then
+  echo "==> System GCC $(gcc -dumpversion) is >= 9; skipping gcc-toolset."
+else
+  echo "==> System GCC $(gcc -dumpversion 2>/dev/null || echo '?') < 9; installing gcc-toolset-12."
+  dnf install -y gcc-toolset-12
+  /opt/rh/gcc-toolset-12/root/usr/bin/gcc --version | head -1
+fi
+
 echo "==> Installed. nvcc:"
 /usr/local/cuda-12.6/bin/nvcc --version
 
