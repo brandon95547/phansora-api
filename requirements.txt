@@ -35,7 +35,13 @@ torchaudio @ https://download.pytorch.org/whl/cu126/torchaudio-2.8.0%2Bcu126-cp3
 # model-load time, so it needs the CUDA *toolkit* (nvcc) present — NOT installable via
 # pip. On the prod GPU box run `scripts/install-cuda-toolkit.sh` once, then set CUDA_HOME
 # for the service (deploy/phansora-api.service.d/cuda-env.conf). CPU-only hosts can omit.
-deepspeed==0.19.2
+#
+# Pin MUST match IndexTTS2's own pin (index-tts pyproject: deepspeed==0.17.1). 0.19.x
+# reworked the kernel-inject inference path; on Ampere (RTX A4000, sm_86) its cuBLAS GEMM
+# wrappers fail with EXECUTION_FAILED once the GPT sequence exceeds ~1024 tokens (long
+# text + emotion vector), corrupting the CUDA context -> "illegal instruction". 0.17.1 is
+# the version validated by upstream / the HF Space and does not exhibit this.
+deepspeed==0.17.1
 
 # Shared numeric / runtime pins
 numpy<2
