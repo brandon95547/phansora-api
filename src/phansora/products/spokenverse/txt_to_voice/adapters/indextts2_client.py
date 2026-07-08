@@ -362,7 +362,13 @@ def _synthesize_sync(
         speed if speed is not None else _env_float("INDEXTTS2_SPEED", SPEED_DEFAULT))))
     alpha = max(EMO_ALPHA_MIN, min(EMO_ALPHA_MAX, float(
         emo_alpha if emo_alpha is not None else _env_float("INDEXTTS2_EMO_ALPHA", EMO_ALPHA_DEFAULT))))
-    vec = _normalize_emo_vector(emo_vector)
+    # Emotion vector is DISABLED. IndexTTS2 + DeepSpeed is unstable with an emo_vector on
+    # non-trivial text (crash pre-fix, then garbled/collapsed generation after — see the
+    # "Known issues / what not to do" notes in README.md). We never pass one to infer(); the
+    # voice's natural/inherent emotion is used instead. To re-enable, restore:
+    #     vec = _normalize_emo_vector(emo_vector)
+    # (Note: emo_alpha is a no-op without a vector — IndexTTS2 internally forces it to 1.0.)
+    vec = None
 
     tts = _load_tts(use_gpu)
 

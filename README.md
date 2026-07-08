@@ -206,3 +206,41 @@ make run      # the prod-ish command systemd wraps: uvicorn --workers 1
 phansora tts --help        # batch TTS / PDF→TXT
 phansora dossier --help    # Dossier Nova pipeline
 ```
+
+## Known issues / what not to do (SpokenVerse + IndexTTS2 + DeepSpeed)
+
+Hard-won notes from debugging the IndexTTS2 + DeepSpeed GPU setup. **Read before touching
+TTS engine / DeepSpeed / emotion config** — several of these cost real time.
+
+1. **Pin `deepspeed==0.17.1` — do NOT use 0.19.x.** IndexTTS2 pins 0.17.1 upstream. 0.19.x
+   reworked the kernel-inject path and its cuBLAS GEMM wrappers fail on Ampere (RTX A4000,
+   sm_86) with `!!!! kernel execution error … error: 13/14`, corrupting the CUDA context.
+   *Fix:* `requirements.txt` pins `deepspeed==0.17.1`. (Version, not GPU-arch — the arch is fine.)
+
+2. **DeepSpeed kernel-inject caps total tokens at `max_out_tokens=1024`, and IndexTTS2 never
+   sets it.** When (voice-clip conditioning + emotion tokens + text + generated audio) crosses
+   1024, the injected kernels overrun their buffer → `CUDA error: an illegal instruction was
+   encountered`. Unresolved **upstream** bug (index-tts #294, #336); architecture-independent.
+   *Workaround:* `_load_tts()` monkeypatches `deepspeed.init_inference` to inject
+   `max_out_tokens=4096` (override `INDEXTTS2_MAX_OUT_TOKENS`). Don't call `init_inference`
+   without raising this.
+
+3. **The emotion vector (`emo_vector`) is DISABLED — don't re-enable it lightly.** Even after
+   the crash fix (#2), IndexTTS2 + DeepSpeed yields garbled / collapsed / word-skipping speech
+   and retry-hangs with an emotion vector on real text. Off in `_synthesize_sync` (`vec = None`)
+   and removed from the frontend; the voice's natural/inherent emotion is used instead.
+   *Note:* `emo_alpha` ("intensity") is a **no-op without a vector** (IndexTTS2 forces it to 1.0),
+   so it was removed from the UI too — don't expose it alone.
+
+4. **`infer()` does NOT normalize the emotion vector — only IndexTTS2's webui does.** The webui
+   calls `normalize_emo_vec` (per-emotion bias, then cap the sum at 0.8) *before* `infer()`. A
+   raw/over-strong vector makes `(1 - sum(weights))` go negative inside `infer()` → runaway
+   generation. If you ever re-enable emotion, normalize first — we keep `_normalize_emo_vector`
+   (mirrors the webui) dormant for that.
+
+5. **Chunking / text length was a red herring for the crash.** The crash is the 1024-token cap
+   (#2), not chunk size. Don't chase `chunk_chars` to fix an `illegal instruction`.
+
+6. **One large TTS model saturates the 16 GB A4000.** IndexTTS2 (+DeepSpeed) sits ~10.5 GB
+   resident, so a second big model (e.g. a NeuTTS/CosyVoice bench) OOMs on the same GPU unless
+   you free VRAM first (`systemctl stop phansora-api`).
