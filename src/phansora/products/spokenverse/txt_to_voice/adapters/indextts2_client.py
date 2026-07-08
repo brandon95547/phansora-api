@@ -127,6 +127,46 @@ def _model_dir(repo: Path) -> str:
     return _env("INDEXTTS2_MODEL_DIR", str(repo / "checkpoints"))
 
 
+_DS_PATCHED = False
+
+
+def _raise_deepspeed_max_out_tokens() -> None:
+    """Lift DeepSpeed's kernel-inject token cap before IndexTTS2 builds the GPT engine.
+
+    IndexTTS2 (indextts/gpt/model_v2.py) calls
+    ``deepspeed.init_inference(replace_with_kernel_inject=True)`` WITHOUT ``max_out_tokens``,
+    so it defaults to 1024 *total* tokens. Once conditioning (voice clip) + emotion-vector
+    tokens + text + generated mel tokens crosses 1024, the injected cuBLAS/attention kernels
+    overrun their fixed workspace -> CUBLAS EXECUTION_FAILED -> CUDA "illegal instruction".
+    This is an unresolved upstream bug (index-tts #294, #336) and is why enabling an emotion
+    vector on longer text crashes while short/no-emotion inference is fine.
+
+    We fix it WITHOUT editing index-tts: wrap ``deepspeed.init_inference`` so every call
+    gets a larger ``max_out_tokens`` (default 4096, override via INDEXTTS2_MAX_OUT_TOKENS).
+    ``setdefault`` means we never clobber an explicit value if upstream ever adds one.
+    """
+    global _DS_PATCHED
+    if _DS_PATCHED:
+        return
+    try:
+        import deepspeed  # type: ignore
+    except Exception:  # noqa: BLE001 — CPU-only host / deepspeed absent: nothing to patch
+        return
+    try:
+        cap = int(_env("INDEXTTS2_MAX_OUT_TOKENS", "4096"))
+    except ValueError:
+        cap = 4096
+    _orig_init_inference = deepspeed.init_inference
+
+    def _init_inference(*args, **kwargs):
+        kwargs.setdefault("max_out_tokens", cap)
+        return _orig_init_inference(*args, **kwargs)
+
+    deepspeed.init_inference = _init_inference
+    _DS_PATCHED = True
+    logger.info("Patched deepspeed.init_inference max_out_tokens=%d (index-tts #294/#336)", cap)
+
+
 def _load_tts(use_gpu: bool):
     global _TTS
     with _MODEL_LOCK:
@@ -145,12 +185,16 @@ def _load_tts(use_gpu: bool):
             # per-request `use_gpu` flag — so gate fp16 on CUDA availability + the env
             # toggle, NOT on use_gpu. fp16 roughly halves model VRAM (critical on small GPUs).
             fp16 = _env_bool("INDEXTTS2_FP16", False) and _cuda_available()
+            use_deepspeed = _env_bool("INDEXTTS2_USE_DEEPSPEED", False)
+            if use_deepspeed:
+                # Must run BEFORE IndexTTS2() — it calls deepspeed.init_inference at construct time.
+                _raise_deepspeed_max_out_tokens()
             _TTS = IndexTTS2(
                 cfg_path=cfg_path,
                 model_dir=model_dir,
                 use_fp16=fp16,
                 use_cuda_kernel=_env_bool("INDEXTTS2_USE_CUDA_KERNEL", False),
-                use_deepspeed=_env_bool("INDEXTTS2_USE_DEEPSPEED", False),
+                use_deepspeed=use_deepspeed,
             )
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
