@@ -42,11 +42,13 @@ torchaudio @ https://download.pytorch.org/whl/cu126/torchaudio-2.7.0%2Bcu126-cp3
 # no nvcc/CUDA-toolkit needed at runtime (unlike the old DeepSpeed path).
 vllm==0.9.0
 
-# Shared numeric / runtime pins
+# Shared numeric / runtime pins. filelock/networkx upper caps were for the old torch-2.8
+# stack; the CosyVoice2 vLLM stack needs newer: vLLM 0.9.0 requires filelock>=3.16.1, and
+# CosyVoice's own requirements pin networkx==3.1 (so allow 3.x or `make install-tts` fails).
 numpy<2
 typing-extensions>=4.14.1
-filelock>=3.12.4,<3.13
-networkx>=2.8.8,<3.0.0
+filelock>=3.16.1
+networkx>=3.1,<4
 
 # ── Web framework (all products) ──
 fastapi
