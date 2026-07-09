@@ -5,7 +5,7 @@ serves all products, each under a path prefix:
 
 | Product | Prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | text→audio (IndexTTS2 voice cloning + emotion control), PDF→text, audio→text, Book Alchemy |
+| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice2 voice cloning), PDF→text, audio→text, Book Alchemy |
 | **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (Claude web search) |
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 
@@ -35,13 +35,13 @@ make install              # uv → Python 3.10 venv (seeded w/ pip) + deps (CUDA
 with instructions if neither is found — so **don't** run a bare `python3 -m venv`
 (that gives a 3.6 venv and the torch wheel fails with "not a supported wheel").
 
-`requirements.txt` pins the `+cu126` torch 2.8.0 wheels as direct
+`requirements.txt` pins the `+cu126` torch 2.7.0 wheels as direct
 `download.pytorch.org/whl/cu126/…` CloudFront URLs, cp310 / `manylinux_2_28_x86_64`
 (the index links to Cloudflare R2, which the prod network can't reach over TLS). Prod
-runs on an **RTX A4000 (16 GB, Ampere)** — plenty for IndexTTS2 (~5 GB); `+cu126` runs
-on any recent driver via CUDA minor-version compatibility. Note: IndexTTS2 needs a real
-GPU (~8 GB+); a 4 GB card OOMs, and CPU synthesis is minutes/generation. For a CPU-only
-host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`.
+runs on an **RTX A4000 (16 GB, Ampere)** — plenty for CosyVoice2 (~3 GB fp16); `+cu126`
+runs on any recent driver via CUDA minor-version compatibility. Note: the vLLM/TensorRT
+acceleration is CUDA-only; on CPU set `COSYVOICE2_USE_VLLM=0`/`_USE_TRT=0` (minutes/gen).
+For a CPU-only host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`.
 
 ### Local dev on Mac
 
@@ -53,90 +53,84 @@ make dev            # API runs on http://localhost:8000
 ```
 
 The API boots **without** the TTS engine — every non-TTS route works immediately;
-only a voice-generation call needs IndexTTS2, and without it you get a clean
+only a voice-generation call needs CosyVoice2, and without it you get a clean
 "engine not configured" error instead of a crash.
 
-To generate audio locally too, follow the *TTS engine* steps below but clone to
-`~/index-tts`, install the Mac torch build (`.venv/bin/pip install torch torchaudio`),
-and set in `.env`:
+CosyVoice2's fast path (vLLM + TensorRT) is **CUDA-only**, so full-quality TTS is not
+available on a Mac. If you must synthesize locally, clone CosyVoice to `~/CosyVoice`,
+install the Mac torch build, and set in `.env`:
 
 ```bash
-TTS_ENGINE=indextts2
-INDEXTTS2_REPO=/Users/<you>/index-tts
-INDEXTTS2_USE_GPU=0
-INDEXTTS2_FP16=0
+TTS_ENGINE=cosyvoice2
+COSYVOICE2_REPO=/Users/<you>/CosyVoice
+COSYVOICE2_FP16=0
+COSYVOICE2_USE_VLLM=0            # CUDA-only — falls back to the (slow) in-process LLM loop
+COSYVOICE2_USE_TRT=0            # CUDA-only
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
-IndexTTS2 auto-selects CUDA when available and falls back to CPU otherwise (Mac has no
-CUDA, so it runs on CPU). The `pynini` dependency (pulled in by WeTextProcessing) is the tricky
+CosyVoice2 auto-selects CUDA when available and falls back to CPU otherwise (Mac has no
+CUDA). The `pynini` dependency (pulled in by CosyVoice's WeTextProcessing) is the tricky
 part on macOS — install it via conda (`conda install -c conda-forge pynini==2.1.6`).
 
-### TTS engine — IndexTTS2 (prod)
+### TTS engine — CosyVoice2 (prod)
 
-> **License:** IndexTTS2 is released under a **non-commercial** license; commercial use
-> requires a separate license from Bilibili (`indexspeech@bilibili.com`). Ensure the
-> deployment is covered before shipping.
+> **License:** CosyVoice is released under **Apache-2.0** (commercial use permitted).
 
-IndexTTS2 is a git checkout, not a published pip package, run in-process. It needs
-**torch 2.8.x** and `transformers==4.52.1`, both already pinned in `requirements.txt`
-and installed by `make install` — so run `make install` FIRST, then install IndexTTS2
-into the **same venv**:
+CosyVoice2 is a git checkout, not a published pip package, run in-process. Its vLLM
+backend **hard-pins `torch==2.7.0`** and needs `transformers==4.51.3` + `pydantic>=2.9`,
+all pinned in `requirements.txt` and installed by `make install` — so run `make install`
+FIRST, then `make install-tts` (clones CosyVoice, installs its requirements with the
+conflicting torch/pydantic pins stripped, and downloads the CosyVoice2-0.5B checkpoints):
 
 ```bash
-# 1. clone
-git clone https://github.com/index-tts/index-tts.git /var/www/index-tts
+make install        # API venv: torch 2.7 + vllm 0.9.0 + transformers 4.51.3
+make install-tts    # clone CosyVoice + its deps + model  (COSYVOICE_REPO=/var/www/CosyVoice)
+```
 
-# 2. install IndexTTS2's deps into this venv. It pins torch==2.8.* / transformers==4.52.1,
-#    which make install already satisfied, so pip leaves the cu126 torch alone (no
-#    re-download). If you install this BEFORE make install, pip would pull a plain-PyPI
-#    torch 2.8 instead of our +cu126 build — always run make install first.
-.venv/bin/pip install -e /var/www/index-tts
+`make install-tts` does the equivalent of:
 
-# 3. pynini/WeTextProcessing need OpenFst — install via conda into this env
-#    (pip install pynini usually fails to build on CentOS):
-conda install -y -c conda-forge pynini==2.1.6
-.venv/bin/pip install WeTextProcessing
-.venv/bin/pip check       # must be clean — torch should still be 2.8.x
-
-# 4. IndexTTS-2 checkpoints (several GB) via Hugging Face
-.venv/bin/pip install "huggingface_hub[cli]"
-.venv/bin/hf download IndexTeam/IndexTTS-2 --local-dir /var/www/index-tts/checkpoints
+```bash
+git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/CosyVoice
+# strip torch/torchaudio/pydantic pins (they fight vLLM) and re-assert ours:
+sed -E '/^(torch|torchaudio|pydantic)==/d' /var/www/CosyVoice/requirements.txt > /tmp/cosy-reqs.txt
+.venv/bin/pip install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r /tmp/cosy-reqs.txt
+.venv/bin/python -c "from modelscope import snapshot_download; \
+  snapshot_download('iic/CosyVoice2-0.5B', local_dir='/var/www/CosyVoice/pretrained_models/CosyVoice2-0.5B')"
 ```
 
 Then set in `.env` and restart the service:
 
 ```bash
-TTS_ENGINE=indextts2
-INDEXTTS2_REPO=/var/www/index-tts
-INDEXTTS2_MODEL_DIR=/var/www/index-tts/checkpoints   # holds config.yaml + *.pth
-INDEXTTS2_USE_GPU=1
-INDEXTTS2_FP16=1                   # fp16 on GPU — faster, lower VRAM
-INDEXTTS2_USE_DEEPSPEED=1          # kernel-inject the GPT/AR stage — needs the CUDA toolkit (see below)
-INDEXTTS2_USE_CUDA_KERNEL=1        # BigVGAN fused vocoder kernel — needs the CUDA toolkit (see below)
-# "Default" voice needs a reference clip (IndexTTS2 always clones from a speaker prompt);
-# set it so warmup also kernel-warms and the FIRST request skips the one-time JIT compile:
-INDEXTTS2_DEFAULT_REF=/path/to/ref.wav
+TTS_ENGINE=cosyvoice2
+COSYVOICE2_REPO=/var/www/CosyVoice
+# COSYVOICE2_MODEL_DIR=/var/www/CosyVoice/pretrained_models/CosyVoice2-0.5B  # default
+COSYVOICE2_FP16=1                  # half VRAM + bandwidth (CUDA-only)
+COSYVOICE2_USE_VLLM=1              # vLLM LLM backend — the big speedup (CUDA-only)
+COSYVOICE2_USE_TRT=1               # TensorRT flow estimator (CUDA-only; builds once)
+# "Default" voice needs a reference clip AND its transcript (CosyVoice conditions on the
+# transcript). Set both so warmup also kernel-warms and the FIRST request is fast:
+COSYVOICE2_DEFAULT_REF=/path/to/ref.wav
+COSYVOICE2_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
 ```
 
-> **Runs on GPU (RTX A4000, 16 GB).** IndexTTS2 loads (~5 GB) with headroom and
-> synthesizes in seconds. Requires a real GPU with ~8 GB+ VRAM — a 4 GB card OOMs on
-> load, and CPU falls back to minutes/generation. First request after a restart pays a
-> one-time model load (~10–30 s); keep nginx `proxy_read_timeout` at a few minutes.
+> **Runs on GPU (RTX A4000, 16 GB).** CosyVoice2 loads at ~3 GB (fp16) with plenty of
+> headroom. The engine loads **once at FastAPI startup** (the model is a per-process
+> singleton) — this pays weights + vLLM CUDA-graph capture (~80 s) and, on the very
+> first boot, a one-time TensorRT engine build (cached to disk after). The startup
+> preload runs off-thread, so `/health` stays responsive; **subsequent requests only pay
+> synthesis time** (sub-real-time). Run the service with a **single worker** (`make run`)
+> — extra workers would each load their own copy, doubling VRAM and warmup.
 
-> **CUDA toolkit (for DeepSpeed / BigVGAN kernel).** `INDEXTTS2_USE_DEEPSPEED` and
-> `INDEXTTS2_USE_CUDA_KERNEL` JIT-compile fused CUDA ops at model-load time, so the box
-> needs `nvcc` — the CUDA **toolkit**, separate from the driver. Install it once (RHEL
-> prod, toolkit only, driver untouched) with `scripts/install-cuda-toolkit.sh`, then make
-> it visible to the service by copying `deploy/phansora-api.service.d/cuda-env.conf` to
-> `/etc/systemd/system/phansora-api.service.d/` and `systemctl daemon-reload`. Without the
-> toolkit, leave both flags at `0`: DeepSpeed's `init_inference` is not fault-tolerant and
-> would fail the model load. `deepspeed` itself is pinned in `requirements.txt`.
+> **No CUDA toolkit / nvcc needed.** Unlike the old DeepSpeed path, vLLM's and TensorRT's
+> CUDA ops ship precompiled in their wheels — the box needs only the NVIDIA **driver**,
+> not the CUDA toolkit. `scripts/install-cuda-toolkit.sh` and the `cuda-env.conf` drop-in
+> are legacy (DeepSpeed) and no longer required for the TTS engine.
 
-The API boots without the engine; only TTS calls need it. Emotion control (an
-expressiveness weight + the 8-way emotion vector) and speed are per-request options —
-see `GET /spokenverse/tts-options`.
+The API boots without the engine; only TTS calls need it. Speed (0.5–2.0×, native) is a
+per-request option — see `GET /spokenverse/tts-options`. There is no emotion control
+(CosyVoice2 has none; it clones from a reference clip + its transcript).
 
 ## Environment (`.env`)
 
@@ -149,11 +143,11 @@ both.
 |---|---|---|
 | `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | your real site origin(s) |
 | `PHANSORA_DATA_DIR` | *unset* → uses cwd | `/var/lib/phansora` (voices/audio/db live here) |
-| `INDEXTTS2_REPO` | `~/index-tts` | `/var/www/index-tts` |
-| `INDEXTTS2_USE_GPU` | `0` (no CUDA → CPU) | `1` (RTX A4000, 16 GB) |
-| `INDEXTTS2_FP16` | `0` | `1` (fp16 on GPU — faster, lower VRAM) |
-| `INDEXTTS2_USE_DEEPSPEED` | `0` | `1` (needs CUDA toolkit — see GPU section) |
-| `INDEXTTS2_USE_CUDA_KERNEL` | `0` | `1` (needs CUDA toolkit — see GPU section) |
+| `COSYVOICE2_REPO` | `~/CosyVoice` | `/var/www/CosyVoice` |
+| `COSYVOICE2_FP16` | `0` (CPU) | `1` (fp16 on GPU — faster, lower VRAM) |
+| `COSYVOICE2_USE_VLLM` | `0` (CUDA-only) | `1` (the LLM speedup) |
+| `COSYVOICE2_USE_TRT` | `0` (CUDA-only) | `1` (flow TensorRT engine) |
+| `COSYVOICE2_DEFAULT_REF` / `_REF_TEXT` | *unset* | ref clip + its transcript for the "default" voice |
 | `WHISPER_DEVICE` | `cpu` | `cuda` |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` |
 | `DB_HOST` / `DB_PORT` | your local Postgres | `127.0.0.1` / the shared Postgres port |
@@ -207,40 +201,41 @@ phansora tts --help        # batch TTS / PDF→TXT
 phansora dossier --help    # Dossier Nova pipeline
 ```
 
-## Known issues / what not to do (SpokenVerse + IndexTTS2 + DeepSpeed)
+## Known issues / what not to do (SpokenVerse + CosyVoice2 + vLLM)
 
-Hard-won notes from debugging the IndexTTS2 + DeepSpeed GPU setup. **Read before touching
-TTS engine / DeepSpeed / emotion config** — several of these cost real time.
+Hard-won notes from the CosyVoice2 + vLLM GPU setup. **Read before touching the TTS engine
+or its torch/vLLM pins** — several of these cost real time.
 
-1. **Pin `deepspeed==0.17.1` — do NOT use 0.19.x.** IndexTTS2 pins 0.17.1 upstream. 0.19.x
-   reworked the kernel-inject path and its cuBLAS GEMM wrappers fail on Ampere (RTX A4000,
-   sm_86) with `!!!! kernel execution error … error: 13/14`, corrupting the CUDA context.
-   *Fix:* `requirements.txt` pins `deepspeed==0.17.1`. (Version, not GPU-arch — the arch is fine.)
+1. **vLLM 0.9.0 hard-pins `torch==2.7.0` — the whole API venv is on torch 2.7, not 2.8.**
+   Installing CosyVoice's own `requirements.txt` unmodified will *downgrade* torch to 2.3.1
+   and pydantic to 2.7.0 (its pins), breaking vLLM. A pip **constraints** file can't override
+   an explicit `==` pin, so `make install-tts` **strips** `torch`/`torchaudio`/`pydantic` from
+   CosyVoice's requirements and re-asserts `torch==2.7.0 torchaudio==2.7.0 pydantic>=2.9` on the
+   command line. If pip then errors on `deepspeed`/`lightning` capping torch, add them to the
+   strip list — they're training-only and unused at inference.
 
-2. **DeepSpeed kernel-inject caps total tokens at `max_out_tokens=1024`, and IndexTTS2 never
-   sets it.** When (voice-clip conditioning + emotion tokens + text + generated audio) crosses
-   1024, the injected kernels overrun their buffer → `CUDA error: an illegal instruction was
-   encountered`. Unresolved **upstream** bug (index-tts #294, #336); architecture-independent.
-   *Workaround:* `_load_tts()` monkeypatches `deepspeed.init_inference` to inject
-   `max_out_tokens=4096` (override `INDEXTTS2_MAX_OUT_TOKENS`). Don't call `init_inference`
-   without raising this.
+2. **Register `CosyVoice2ForCausalLM` with vLLM BEFORE constructing the engine.** CosyVoice2's
+   LLM is a custom vLLM architecture; without `ModelRegistry.register_model(...)` (done in
+   `cosyvoice2_client._load_cosy`, gated on `COSYVOICE2_USE_VLLM`) vLLM raises "Cannot find
+   model module 'CosyVoice2ForCausalLM'".
 
-3. **The emotion vector (`emo_vector`) is DISABLED — don't re-enable it lightly.** Even after
-   the crash fix (#2), IndexTTS2 + DeepSpeed yields garbled / collapsed / word-skipping speech
-   and retry-hangs with an emotion vector on real text. Off in `_synthesize_sync` (`vec = None`)
-   and removed from the frontend; the voice's natural/inherent emotion is used instead.
-   *Note:* `emo_alpha` ("intensity") is a **no-op without a vector** (IndexTTS2 forces it to 1.0),
-   so it was removed from the UI too — don't expose it alone.
+3. **The model loads ONCE at FastAPI startup; don't construct it per request.** It's a
+   per-process singleton (`_load_cosy`, lock-guarded, cached). Startup preload (off-thread)
+   pays weights + vLLM CUDA-graph capture (~80 s) + first-run TensorRT build (cached to disk).
+   Constructing `CosyVoice2` inside a request handler would re-pay all of that every call.
 
-4. **`infer()` does NOT normalize the emotion vector — only IndexTTS2's webui does.** The webui
-   calls `normalize_emo_vec` (per-emotion bias, then cap the sum at 0.8) *before* `infer()`. A
-   raw/over-strong vector makes `(1 - sum(weights))` go negative inside `infer()` → runaway
-   generation. If you ever re-enable emotion, normalize first — we keep `_normalize_emo_vector`
-   (mirrors the webui) dormant for that.
+4. **Run a single uvicorn worker (`make run` → `--workers 1`).** vLLM's graph capture is
+   per-process and not disk-cached, and each worker holds its own resident engine — extra
+   workers multiply both VRAM and the ~80 s warmup. Scale non-TTS load via replicas/proxy.
 
-5. **Chunking / text length was a red herring for the crash.** The crash is the 1024-token cap
-   (#2), not chunk size. Don't chase `chunk_chars` to fix an `illegal instruction`.
+5. **CosyVoice needs the reference clip's transcript (`prompt_text`).** Unlike the old engine,
+   CosyVoice conditions on the transcript. Cloned voices store it as `ref_text` (auto-whisper
+   at create-voice); the `default` voice needs `COSYVOICE2_DEFAULT_REF_TEXT`. No transcript →
+   a clear "needs transcript" error, not silent garbage.
 
-6. **One large TTS model saturates the 16 GB A4000.** IndexTTS2 (+DeepSpeed) sits ~10.5 GB
-   resident, so a second big model (e.g. a NeuTTS/CosyVoice bench) OOMs on the same GPU unless
-   you free VRAM first (`systemctl stop phansora-api`).
+6. **No emotion control.** CosyVoice2 has no emotion vector/intensity knob (that was IndexTTS2).
+   Only `speed` (0.5–2.0×, native) remains. Don't wire emotion sliders back into the UI.
+
+7. **No CUDA toolkit / nvcc required.** vLLM and TensorRT ship precompiled CUDA ops in their
+   wheels; the box needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh` and the
+   `cuda-env.conf` systemd drop-in are legacy (DeepSpeed) and no longer needed for TTS.

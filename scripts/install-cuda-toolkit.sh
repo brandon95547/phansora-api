@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 #
+# ⚠ LEGACY — NO LONGER REQUIRED by the CosyVoice2 TTS engine. CosyVoice2 runs on vLLM +
+# TensorRT, whose CUDA ops ship precompiled in their wheels — the box needs only the NVIDIA
+# driver, not the toolkit/nvcc. This script (and deploy/.../cuda-env.conf) existed for the
+# old IndexTTS2 + DeepSpeed path. Kept for reference; safe to delete if no other engine
+# needs nvcc.
+#
 # Install the CUDA 12.6 TOOLKIT ONLY (nvcc + headers) to /usr/local/cuda-12.6 on the
 # RHEL-family prod GPU box. Needed so IndexTTS2's DeepSpeed kernel-inject
 # (INDEXTTS2_USE_DEEPSPEED=1) and the BigVGAN CUDA kernel (INDEXTTS2_USE_CUDA_KERNEL=1)

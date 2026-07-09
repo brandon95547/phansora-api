@@ -1,7 +1,9 @@
 # Phansora API — developer tasks
-.PHONY: help install install-mac dev run worker test compile docker-build docker-up docker-down clean
+.PHONY: help install install-tts install-mac dev run worker test compile docker-build docker-up docker-down clean
 
 VENV   ?= .venv
+# Where the CosyVoice2 TTS engine checkout lives (git clone, not a pip package).
+COSYVOICE_REPO ?= /var/www/CosyVoice
 # Prod needs Python 3.10 — the torch wheels in requirements.txt are cp310, and
 # CentOS Stream 8's default `python3` is 3.6 (which fails with "not a supported
 # wheel"). `install` builds the venv with 3.10 via uv (see below).
@@ -31,6 +33,24 @@ install: ## Create Python 3.10 venv and install deps (CUDA torch — prod / Linu
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 	$(PIP) install -e .
+	@echo ""
+	@echo "API installed. Now install the TTS engine:  make install-tts"
+
+install-tts: ## Clone CosyVoice2, install its reqs (torch-stripped) + download the model
+	@test -d $(COSYVOICE_REPO)/.git || \
+		git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git $(COSYVOICE_REPO)
+	cd $(COSYVOICE_REPO) && git submodule update --init --recursive
+	# CosyVoice's requirements pin torch==2.3.1 / torchaudio==2.3.1 / pydantic==2.7.0, which
+	# would fight vLLM 0.9.0 (torch 2.7, pydantic>=2.9). A constraints file can't override an
+	# explicit '==' pin, so STRIP those lines and re-assert our versions on the command line.
+	# (If pip then errors on deepspeed/lightning capping torch, add them to the sed list —
+	# they are training-only and unused at inference.)
+	sed -E '/^(torch|torchaudio|pydantic)==/d' $(COSYVOICE_REPO)/requirements.txt > $(VENV)/cosy-reqs.txt
+	$(PIP) install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r $(VENV)/cosy-reqs.txt
+	$(PY) -c "from modelscope import snapshot_download; snapshot_download('iic/CosyVoice2-0.5B', local_dir='$(COSYVOICE_REPO)/pretrained_models/CosyVoice2-0.5B')"
+	$(PY) -c "import torch, torchaudio, vllm; print('OK torch', torch.__version__, 'vllm', vllm.__version__, 'cuda', torch.cuda.is_available())"
+	@echo ""
+	@echo "Set COSYVOICE2_REPO=$(COSYVOICE_REPO) in .env (+ COSYVOICE2_DEFAULT_REF / _REF_TEXT)."
 
 install-mac: ## macOS local dev: venv + CPU/MPS torch + deps (no CUDA)
 	python3 -m venv $(VENV)
@@ -40,14 +60,18 @@ install-mac: ## macOS local dev: venv + CPU/MPS torch + deps (no CUDA)
 	$(PIP) install -r $(VENV)/requirements-mac.txt
 	$(PIP) install -e .
 	@echo ""
-	@echo "API deps installed. For actual TTS also install the GPT-SoVITS engine"
-	@echo "(brew install ffmpeg; clone + checkpoints) — see README 'Local dev on Mac'."
+	@echo "API deps installed. Note: CosyVoice2 (vLLM) is CUDA-only — Mac dev runs the API"
+	@echo "without TTS, or set COSYVOICE2_USE_VLLM=0/_USE_TRT=0 for a slow CPU path."
 
 dev: ## Run the unified API with autoreload
 	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --reload
 
 run: ## Run the unified API (no reload)
-	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --workers 2
+	# --workers 1: CosyVoice2 is a per-process singleton (weights + a resident vLLM engine).
+	# Each extra worker would load its OWN copy — doubling VRAM and the ~80s startup warmup —
+	# so the GPU model must live in a single warm process. Scale non-TTS load via a proxy/
+	# replicas, not in-process workers, if ever needed.
+	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --workers 1
 
 worker: ## Run the SpokenVerse / Book Alchemy durable worker
 	$(PY) -m phansora.products.spokenverse.worker

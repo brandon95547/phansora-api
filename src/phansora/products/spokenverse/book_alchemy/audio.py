@@ -1,21 +1,22 @@
 """Render a session script to a single audio file via the shared TTS service.
 
-The IndexTTS2 model is a per-process singleton with no unload path, so a second
+The CosyVoice2 model is a per-process singleton with no unload path, so a second
 resident copy does not fit alongside the API's copy on a 16 GB GPU. Instead of
 loading its own model, the worker POSTs the script to the API's existing
 ``POST /spokenverse/txt-to-audio`` endpoint (the same one the frontend uses) and
 saves the returned audio. That keeps a single, warmed model in the API process
 and funnels all synthesis through it (the GPU serializes inference anyway).
 
-The endpoint resolves a cloned-voice *id* -> its reference clip and applies the
-voice's saved emotion defaults, so we pass the raw voice id (not a file path).
+The endpoint resolves a cloned-voice *id* -> its reference clip AND its stored
+transcript (``ref_text`` -> prompt_text, which CosyVoice conditions on), so we
+pass the raw voice id (not a file path).
 """
 from __future__ import annotations
 
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
 import aiohttp
 
@@ -34,8 +35,6 @@ async def render_script_to_audio(
     user_id,
     voice: str = "default",
     output_format: str = "mp3",
-    emo_alpha: Optional[float] = None,
-    emo_vector: Optional[Sequence[float]] = None,
     speed: Optional[float] = None,
 ) -> int:
     """Synthesize ``script`` to ``out_path`` via the shared TTS endpoint.
@@ -54,10 +53,6 @@ async def render_script_to_audio(
     form.add_field("user_id", str(user_id))
     form.add_field("voice", str(voice or "default"))
     form.add_field("output_format", output_format)
-    if emo_alpha is not None:
-        form.add_field("emo_alpha", str(emo_alpha))
-    if emo_vector:
-        form.add_field("emo_vector", ",".join(str(x) for x in emo_vector))
     if speed is not None:
         form.add_field("speed", str(speed))
 

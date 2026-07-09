@@ -340,8 +340,8 @@ async def _phase_audio(project: dict) -> None:
     options = _as_dict(project.get("options"))
     voice = str(options.get("voice") or "default")
     # Pass the raw voice id + user_id to the shared txt-to-audio endpoint; it
-    # resolves a cloned voice id -> its reference clip and applies the voice's
-    # saved emotion defaults. (Resolving to a path here would make the endpoint
+    # resolves a cloned voice id -> its reference clip and its stored transcript
+    # (ref_text -> prompt_text). (Resolving to a path here would make the endpoint
     # fall back to the default voice.)
     out_path: Path = session_audio_path(project["user_id"], pid, sess["ordinal"], "mp3")
     seconds = await render_script_to_audio(

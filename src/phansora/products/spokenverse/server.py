@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (IndexTTS2)
+#  - TXT -> Audio (CosyVoice2)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -94,16 +94,17 @@ async def _sweep_stale_pending_voices() -> None:
 
 @app.on_event("startup")
 async def _preload_tts_model() -> None:
-    # Warm the TTS engine in the background so the first generation doesn't pay
-    # the one-time weight load (~30–60s cold start). Off-thread so startup and
-    # /health stay responsive; the load is lock-guarded, so a request that races
-    # the warmup just waits on the same load instead of starting a second one.
+    # Warm the TTS engine in the background so the first generation doesn't pay the
+    # one-time load. For CosyVoice2 this is the big one — weights + vLLM CUDA-graph
+    # capture (~80s) + first-run TensorRT engine build. Off-thread so startup and
+    # /health stay responsive; the load is lock-guarded, so a request that races the
+    # warmup just waits on the same load instead of starting a second one.
     import threading
 
-    from phansora.products.spokenverse.txt_to_voice.adapters import indextts2_client
+    from phansora.products.spokenverse.txt_to_voice.adapters import backend as tts_backend
 
     threading.Thread(
-        target=indextts2_client.preload, name="indextts2-preload", daemon=True
+        target=tts_backend.preload, name="cosyvoice2-preload", daemon=True
     ).start()
 
 
@@ -367,26 +368,6 @@ async def pdf_to_txt(
 # TXT -> Audio
 # ----------------------------
 
-def _parse_emo_vector(raw: Optional[str]) -> Optional[list]:
-    """Parse an emotion vector from a form field: JSON array or comma-separated floats.
-    Returns a list of floats, or None if absent/unparseable."""
-    if raw is None:
-        return None
-    s = str(raw).strip()
-    if not s:
-        return None
-    try:
-        data = json.loads(s)
-        if isinstance(data, list):
-            return [float(x) for x in data]
-    except (ValueError, TypeError):
-        pass
-    try:
-        return [float(x) for x in s.split(",") if x.strip() != ""]
-    except ValueError:
-        return None
-
-
 @app.post("/txt-to-audio", response_model=None)
 async def txt_to_audio(
     file: UploadFile = File(...),
@@ -401,9 +382,7 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed (ffmpeg atempo)
-    emo_alpha: Optional[float] = Form(None),  # expressiveness weight 0-1
-    emo_vector: Optional[str] = Form(None),  # 8 comma/JSON floats (EMO_LABELS order)
+    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -424,11 +403,12 @@ async def txt_to_audio(
     await _save_upload(file, txt_path)
     user_audio_dir = _user_audio_dir(safe_user)
 
-    # A non-"default" voice may be one of the user's saved cloned voices; resolve
-    # its id to the on-disk reference clip IndexTTS2 clones from, and fall back to the
-    # voice's approved emotion settings when the request doesn't override them.
+    # A non-"default" voice may be one of the user's saved cloned voices; resolve its id to
+    # the on-disk reference clip CosyVoice2 clones from, plus its stored transcript
+    # (``ref_text``) — CosyVoice conditions on that transcript (prompt_text). Fall back to
+    # the voice's saved language when the request doesn't override it.
     resolved_voice = voice
-    emo_vec = _parse_emo_vector(emo_vector)
+    prompt_text: Optional[str] = None
     if voice and voice != "default":
         clip = voice_store.voice_path(safe_user, voice)
         if clip is not None:
@@ -437,10 +417,7 @@ async def txt_to_audio(
         if rec:
             if not language:
                 language = rec.get("language")
-            if emo_alpha is None and rec.get("emo_alpha") is not None:
-                emo_alpha = rec.get("emo_alpha")
-            if emo_vec is None and rec.get("emo_vector"):
-                emo_vec = rec.get("emo_vector")
+            prompt_text = rec.get("ref_text") or None
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -451,11 +428,10 @@ async def txt_to_audio(
         chunk_chars=chunk_chars,
         speaker=speaker,
         language=language,
+        prompt_text=prompt_text,
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
         speed=speed,
-        emo_alpha=emo_alpha,
-        emo_vector=emo_vec,
     )
 
     try:
@@ -498,8 +474,6 @@ async def txt_to_audio(
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
                 "speed": speed,
-                "emo_alpha": emo_alpha,
-                "emo_vector": emo_vec,
             },
         },
     )
@@ -588,38 +562,35 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the IndexTTS2 backend.
+    Options currently available from the CosyVoice2 backend.
     """
-    from phansora.products.spokenverse.txt_to_voice.adapters import indextts2_client as ix
+    from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice2_client as cv
 
     voices = discover_voices()
     return {
-        "backend": "indextts2",
+        "backend": "cosyvoice2",
         "voices": voices,
-        "languages": ix.LANGUAGES,
+        "languages": cv.LANGUAGES,
         "audio_formats": ["mp3", "wav"],
-        "voice_cloning": "supported — pass a reference-clip path as `voice`/`speaker`",
+        "voice_cloning": "supported — clone from a reference clip + its transcript (ref_text)",
         "controls_available": {
-            "language": {"values": ix.LANGUAGES, "default": ix.LANGUAGE_DEFAULT,
+            "language": {"values": cv.LANGUAGES, "default": cv.LANGUAGE_DEFAULT,
                          "description": "language of the synthesized text"},
-            "speed": {"min": ix.SPEED_MIN, "max": ix.SPEED_MAX,
-                      "default": ix.SPEED_DEFAULT, "description": "playback speed (ffmpeg atempo)"},
-            "emo_alpha": {"min": ix.EMO_ALPHA_MIN, "max": ix.EMO_ALPHA_MAX,
-                          "default": ix.EMO_ALPHA_DEFAULT, "description": "expressiveness weight"},
-            "emo_vector": {"labels": ix.EMO_LABELS, "length": ix.EMO_VECTOR_LEN, "each": [0.0, 1.0],
-                           "description": "per-emotion mix (8 weights 0-1); all-zero => inherent emotion"},
+            "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
+                      "default": cv.SPEED_DEFAULT, "description": "native CosyVoice2 speed (mel time-scaling)"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
-            "INDEXTTS2_REPO", "INDEXTTS2_MODEL_DIR", "INDEXTTS2_CONFIG", "INDEXTTS2_FP16",
-            "INDEXTTS2_USE_CUDA_KERNEL", "INDEXTTS2_USE_DEEPSPEED", "INDEXTTS2_DEFAULT_REF",
-            "INDEXTTS2_LANGUAGE", "INDEXTTS2_SPEED", "INDEXTTS2_EMO_ALPHA",
+            "COSYVOICE2_REPO", "COSYVOICE2_MODEL_DIR", "COSYVOICE2_FP16",
+            "COSYVOICE2_USE_VLLM", "COSYVOICE2_USE_TRT", "COSYVOICE2_DEFAULT_REF",
+            "COSYVOICE2_DEFAULT_REF_TEXT", "COSYVOICE2_LANGUAGE", "COSYVOICE2_SPEED",
+            "COSYVOICE2_MAX_CHARS",
         ],
     }
 
 
 # ----------------------------
-# Custom voices (IndexTTS2 cloning)
+# Custom voices (CosyVoice2 cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not
@@ -632,18 +603,17 @@ async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
-    speed: Optional[float] = Form(None),  # 0.5-2.0; playback speed (ffmpeg atempo)
-    emo_alpha: Optional[float] = Form(None),  # expressiveness weight 0-1
-    emo_vector: Optional[str] = Form(None),  # 8 comma/JSON floats (EMO_LABELS order)
+    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
     The upload is trimmed and normalized to a 24kHz mono WAV reference clip.
-    IndexTTS2 clones from the clip; we still auto-transcribe it (whisper) and store
-    the text as ``ref_text`` for reference, then run the engine to speak
-    ``VOICE_SAMPLE_TEXT`` with the chosen emotion. That synthesized sample is what
-    the user hears. Returns a token used to preview and then approve/discard.
-    Nothing is saved as a usable voice until it is approved.
+    CosyVoice2 clones from the clip PLUS its transcript, so we auto-transcribe it
+    (whisper) and store the text as ``ref_text`` — that transcript is required at
+    synthesis (passed as prompt_text). We then run the engine to speak
+    ``VOICE_SAMPLE_TEXT``; that synthesized sample is what the user hears. Returns a
+    token used to preview and then approve/discard. Nothing is saved as a usable
+    voice until it is approved.
     """
     safe_user = _safe_user_id(user_id)
     # Opportunistically drop abandoned previews (uploaded but never approved or
@@ -665,13 +635,11 @@ async def voice_preview(
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
 
-    knobs = voice_store.clamp_settings(
-        language=language, speed=speed, emo_alpha=emo_alpha,
-        emo_vector=_parse_emo_vector(emo_vector),
-    )
+    knobs = voice_store.clamp_settings(language=language, speed=speed)
 
-    # Auto-transcribe the reference clip and store it as ref_text (informational;
-    # IndexTTS2 clones from the clip alone). Best-effort: skipped on failure.
+    # Auto-transcribe the reference clip and store it as ref_text. CosyVoice2 REQUIRES this
+    # transcript at synthesis (prompt_text). Best-effort: if it fails, ref_text stays empty
+    # and the preview below will surface the "needs transcript" error.
     ref_text = ""
     try:
         model = os.getenv("WHISPER_MODEL", "base")
@@ -688,7 +656,7 @@ async def voice_preview(
         sample_out = voice_store.pending_sample_path(safe_user, token)
         engine_call = {
             "text": VOICE_SAMPLE_TEXT, "out_path": str(sample_out), "voice": str(ref_clip),
-            **knobs,
+            "prompt_text": ref_text, **knobs,
         }
         # TESTING: log the exact call sent to the engine on create-voice generate.
         print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
@@ -700,9 +668,8 @@ async def voice_preview(
             rate="+0%",
             volume="+0%",
             language=knobs["language"],
+            prompt_text=ref_text,  # CosyVoice conditions on the ref clip's transcript
             speed=knobs["speed"],
-            emo_alpha=knobs["emo_alpha"],
-            emo_vector=knobs["emo_vector"],
         )
     except Exception as e:
         import traceback

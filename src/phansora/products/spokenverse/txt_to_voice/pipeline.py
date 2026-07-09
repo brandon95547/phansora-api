@@ -1,6 +1,6 @@
 # src/txt_to_voice/pipeline.py
 #
-# Batch TXT -> Audio pipeline (IndexTTS2 backend).
+# Batch TXT -> Audio pipeline (CosyVoice2 backend).
 # Supports chunk-level and file-level concurrency to speed up larger batches.
 
 from __future__ import annotations
@@ -25,35 +25,36 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "indextts2" (the only engine); honours TTS_ENGINE for validation.
+    # Resolves to "cosyvoice2" (the only engine); honours TTS_ENGINE for validation.
     return resolve_engine(None)
 
 
 @dataclass(frozen=True)
 class TTSConfig:
-    voice: str  # IndexTTS2 reference-clip path, or "default" for the built-in voice
+    voice: str  # CosyVoice2 reference-clip path, or "default" for the built-in voice
     use_gpu: bool  # whether to request CUDA in the TTS backend
-    rate: str  # accepted for compatibility; ignored by IndexTTS2
-    volume: str  # accepted for compatibility; ignored by IndexTTS2
+    rate: str  # accepted for compatibility; ignored by CosyVoice2
+    volume: str  # accepted for compatibility; ignored by CosyVoice2
     output_format: str  # "mp3" or "wav"
     chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
     language: Optional[str] = None  # en/zh/ja/ko/yue/auto
 
-    # TTS engine ("indextts2"); kept for forward-compatibility.
+    # TTS engine ("cosyvoice2"); kept for forward-compatibility.
     engine: str = field(default_factory=_default_engine)
-    # IndexTTS2 reference clip for voice cloning.
+    # CosyVoice2 reference clip for voice cloning.
     ref_audio: Optional[str] = None
+    # Transcript of the reference clip. CosyVoice conditions on it (REQUIRED for cloning);
+    # cloned voices store it as ``ref_text``. None => engine's COSYVOICE2_DEFAULT_REF_TEXT.
+    prompt_text: Optional[str] = None
 
     # NEW: how many chunks to synthesize in parallel per TXT file
     max_concurrency: int = 4
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
-    # IndexTTS2 knobs; None => engine/env defaults.
-    speed: Optional[float] = None  # 0.5-2.0 (ffmpeg atempo)
-    emo_alpha: Optional[float] = None  # expressiveness weight 0-1
-    emo_vector: Optional[list] = None  # 8-way emotion mix (each 0-1), EMO_LABELS order
+    # CosyVoice2 knobs; None => engine/env defaults.
+    speed: Optional[float] = None  # 0.5-2.0 (native mel time-scaling)
 
 
 class BatchConverter:
@@ -123,9 +124,8 @@ class BatchConverter:
                     speaker=self.cfg.speaker,
                     language=self.cfg.language,
                     ref_audio=self.cfg.ref_audio,
+                    prompt_text=self.cfg.prompt_text,
                     speed=self.cfg.speed,
-                    emo_alpha=self.cfg.emo_alpha,
-                    emo_vector=self.cfg.emo_vector,
                 )
 
         tasks: List[asyncio.Task[None]] = []

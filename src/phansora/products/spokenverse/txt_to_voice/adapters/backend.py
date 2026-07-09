@@ -1,11 +1,11 @@
 """TTS engine selection.
 
-IndexTTS2 is the sole engine. The selector is kept as a thin indirection so the
+CosyVoice2 is the sole engine. The selector is kept as a thin indirection so the
 rest of the pipeline stays engine-agnostic (and a second engine could be added
 later), but there is only one implementation today.
 
-The engine module exposes: ``synthesize_to_file``, ``_discover_voices_sync`` and
-``list_voices``.
+The engine module exposes: ``synthesize_to_file``, ``_discover_voices_sync``,
+``list_voices`` and ``preload``.
 """
 
 from __future__ import annotations
@@ -16,11 +16,14 @@ from typing import Awaitable, Callable
 
 LOG = logging.getLogger("txt_to_voice")
 
-_INDEXTTS2_ALIASES = {"indextts2", "indextts", "index-tts2", "index_tts2", "index-tts", "indextts-2", "default", ""}
+_COSYVOICE2_ALIASES = {
+    "cosyvoice2", "cosyvoice", "cosy-voice", "cosy_voice", "cosy", "cosyvoice-2",
+    "default", "",
+}
 # Engines that used to exist here; a leftover TTS_ENGINE / --engine pointing at one
-# degrades to IndexTTS2 with a warning rather than crashing every request.
+# degrades to CosyVoice2 with a warning rather than crashing every request.
 _RETIRED_ALIASES = {
-    "cosyvoice", "cosyvoice2", "cosy-voice", "cosy_voice", "cosy",
+    "indextts2", "indextts", "index-tts2", "index_tts2", "index-tts", "indextts-2",
     "gptsovits", "gpt-sovits", "gpt_sovits", "sovits", "gsv",
     "styletts2", "styletts-2", "style", "stts2", "st2",
     "kokoro", "openvoice", "chatterbox", "xtts",
@@ -34,19 +37,19 @@ def resolve_engine(engine: str | None = None) -> str:
     if name in _RETIRED_ALIASES:
         if name not in _warned_retired:
             LOG.warning(
-                "TTS engine '%s' has been removed; using IndexTTS2. "
-                "Update TTS_ENGINE / --engine to 'indextts2' to silence this.",
+                "TTS engine '%s' has been removed; using CosyVoice2. "
+                "Update TTS_ENGINE / --engine to 'cosyvoice2' to silence this.",
                 name,
             )
             _warned_retired.add(name)
-        return "indextts2"
-    # Everything else (indextts2 aliases, unknown values) resolves to the only engine.
-    return "indextts2"
+        return "cosyvoice2"
+    # Everything else (cosyvoice2 aliases, unknown values) resolves to the only engine.
+    return "cosyvoice2"
 
 
 def _module(engine: str | None):
     resolve_engine(engine)  # validate (warns on retired engines)
-    from . import indextts2_client as mod  # type: ignore
+    from . import cosyvoice2_client as mod  # type: ignore
     return mod
 
 
@@ -61,3 +64,8 @@ def discover_voices(engine: str | None = None) -> list[str]:
 
 async def list_voices(engine: str | None = None) -> None:
     await _module(engine).list_voices()
+
+
+def preload(engine: str | None = None) -> None:
+    """Load the active engine's model once (called at FastAPI startup)."""
+    _module(engine).preload()

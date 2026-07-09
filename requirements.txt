@@ -1,21 +1,24 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
 #
-# Torch baseline: aligned to the IndexTTS2 TTS engine (torch 2.8.0, CUDA 12.6).
-# torchvision 0.23.0 / torchaudio 2.8.0 are the matching releases. Prod runs on an
-# RTX A4000 (16 GB, Ampere) — plenty for IndexTTS2 (~5 GB). `+cu126` runs on any recent
-# driver via CUDA minor-version compatibility. For a CPU-only host, swap `whl/cu126` +
-# `+cu126` for `whl/cpu` + `+cpu` (but CPU synthesis is minutes/gen — GPU strongly preferred).
+# Torch baseline: aligned to the CosyVoice2 TTS engine's vLLM backend (torch 2.7.0,
+# CUDA 12.6). vLLM 0.9.0 HARD-PINS torch==2.7.0 (and pulls xformers/torchvision that
+# require the same), so torch is 2.7.0 here — NOT 2.8. torchvision 0.22.0 / torchaudio
+# 2.7.0 are the matching releases. Prod runs on an RTX A4000 (16 GB, Ampere) — plenty
+# for CosyVoice2 (~3 GB fp16). `+cu126` runs on any recent driver via CUDA minor-version
+# compatibility. For a CPU-only host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`
+# and set COSYVOICE2_USE_VLLM=0 / _USE_TRT=0 (both are CUDA-only).
 #
 # System packages required: ffmpeg, tesseract-ocr
 #
-# TTS engine: IndexTTS2 is a git checkout (NOT a published pip package), run in-process.
-# In prod: run `make install` (installs the torch/transformers pins below), then clone it
-# and `pip install -e /var/www/index-tts` INTO this venv, install pynini via conda
-# (`conda install -c conda-forge pynini==2.1.6`), download the IndexTeam/IndexTTS-2
-# checkpoints, and set INDEXTTS2_REPO. The API boots without it; only TTS calls require
-# it.  ⚠ IndexTTS2 pins `torch==2.8.*` / `transformers==4.52.1`, both satisfied by the
-# pins below — so install IndexTTS2 AFTER make install and pip leaves torch untouched.
+# TTS engine: CosyVoice2 is a git checkout (NOT a published pip package), run in-process.
+# In prod: run `make install` (installs the torch/vllm/transformers pins below), then
+# clone FunAudioLLM/CosyVoice (+ its Matcha-TTS submodule), install its requirements INTO
+# this venv with torch/torchaudio/pydantic STRIPPED (a constraints/strip is required — its
+# requirements pin torch==2.3.1, which would fight vLLM; see the Makefile), download the
+# CosyVoice2-0.5B checkpoints, and set COSYVOICE2_REPO. The API boots without it; only TTS
+# calls require it. ⚠ vLLM 0.9.0 needs transformers==4.51.3 and pydantic>=2.9 — both
+# pinned below so the CosyVoice requirements install can't downgrade them.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Torch wheels are pinned as DIRECT CloudFront URLs (download.pytorch.org) rather than
@@ -26,22 +29,18 @@
 # reachable. These URLs are pinned to cp310 / manylinux_2_28_x86_64 — the prod image
 # (torch >= 2.7 uses the manylinux_2_28 tag, NOT the old linux_x86_64). For a CPU-only
 # host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`.
-torch @ https://download.pytorch.org/whl/cu126/torch-2.8.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
-torchvision @ https://download.pytorch.org/whl/cu126/torchvision-0.23.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
-torchaudio @ https://download.pytorch.org/whl/cu126/torchaudio-2.8.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
+torch @ https://download.pytorch.org/whl/cu126/torch-2.7.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
+torchvision @ https://download.pytorch.org/whl/cu126/torchvision-0.22.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
+torchaudio @ https://download.pytorch.org/whl/cu126/torchaudio-2.7.0%2Bcu126-cp310-cp310-manylinux_2_28_x86_64.whl
 
-# TTS acceleration — DeepSpeed kernel-inject for the IndexTTS2 GPT/AR stage
-# (INDEXTTS2_USE_DEEPSPEED=1). Pure-python wheel; its fused CUDA op JIT-compiles at
-# model-load time, so it needs the CUDA *toolkit* (nvcc) present — NOT installable via
-# pip. On the prod GPU box run `scripts/install-cuda-toolkit.sh` once, then set CUDA_HOME
-# for the service (deploy/phansora-api.service.d/cuda-env.conf). CPU-only hosts can omit.
-#
-# Pin MUST match IndexTTS2's own pin (index-tts pyproject: deepspeed==0.17.1). 0.19.x
-# reworked the kernel-inject inference path; on Ampere (RTX A4000, sm_86) its cuBLAS GEMM
-# wrappers fail with EXECUTION_FAILED once the GPT sequence exceeds ~1024 tokens (long
-# text + emotion vector), corrupting the CUDA context -> "illegal instruction". 0.17.1 is
-# the version validated by upstream / the HF Space and does not exhibit this.
-deepspeed==0.17.1
+# TTS acceleration — vLLM runs CosyVoice2's autoregressive LLM (CUDA graphs + paged
+# attention remove the per-token CPU sync that otherwise starves the GPU; this is the
+# dominant synthesis cost). vLLM 0.9.0 is the version validated against CosyVoice2's
+# legacy engine (0.10.x untested, <0.9.0 unsupported) and keeps transformers at 4.51.3.
+# It hard-pins torch==2.7.0 and needs pydantic>=2.9 (both pinned in this file). CUDA-only;
+# a CPU host must set COSYVOICE2_USE_VLLM=0. Its CUDA ops ship precompiled in the wheel —
+# no nvcc/CUDA-toolkit needed at runtime (unlike the old DeepSpeed path).
+vllm==0.9.0
 
 # Shared numeric / runtime pins
 numpy<2
@@ -64,7 +63,7 @@ orjson
 # ── AI clients ──
 anthropic>=0.49          # chrono_origin — Claude grounded web search
 openai>=1.51.0           # dossier_nova — DeepSeek via OpenAI-compatible API
-pydantic>=2.6            # chrono_origin models
+pydantic>=2.9            # chrono_origin models — >=2.9 also required by vLLM 0.9.0
 pydantic-settings>=2.2   # chrono_origin settings
 
 # ── SpokenVerse: TTS + media ──
@@ -86,8 +85,8 @@ markdown
 mobi
 
 # ── Dossier Nova: local embeddings ──
-# transformers pinned to 4.52.1 — required by IndexTTS2 and compatible with
-# sentence-transformers 5.x (needs >=4.41).
+# transformers pinned to 4.51.3 — required by CosyVoice2's vLLM 0.9.0 backend and
+# compatible with sentence-transformers 5.x (needs >=4.41).
 faiss-cpu>=1.7.4
-transformers==4.52.1
+transformers==4.51.3
 sentence-transformers>=5.0
