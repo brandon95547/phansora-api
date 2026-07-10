@@ -194,6 +194,46 @@ make run      # the prod-ish command systemd wraps: uvicorn --workers 1
 - `GET /spokenverse/tts-options` — TTS backend + available settings
 - `…/spokenverse/*`, `…/chrono/*`, `…/dossier/*` — each product's routes
 
+## SpokenVerse txt → audio: chunking & concatenation
+
+How an uploaded `.txt` (or a Book Alchemy session script) becomes **one** mp3 with every
+word intact. There are **two** levels of splitting and **two** levels of joining:
+
+```
+text
+ └─ pipeline split @ chunk_chars (2500)  ─────►  N pipeline chunks   (N=1 for text ≤ 2500 chars)
+      └─ engine split @ 200 chars ──────────►  ~M pieces of ≤ 200, on line/sentence boundaries
+           └─ inference each piece ─────────►  audio tensors  (cosy.inference_zero_shot)
+                └─ torch.cat (in memory) ───►  ONE .wav per pipeline chunk   (no intermediate files)
+   ffmpeg concat the N .wav files ───────────►  merged.wav   (skipped entirely when N = 1)
+   transcode ────────────────────────────────►  final .mp3
+```
+
+- **Pipeline split** — `chunk_text(text, chunk_chars=2500)` (`shared/utils/chunking.py`),
+  on paragraph/sentence boundaries. Most inputs are ≤ 2500 → a single pipeline chunk.
+- **Engine split** — inside `_synthesize_sync`, `_chunk_text(text, 200)`
+  (`txt_to_voice/adapters/cosyvoice2_client.py`) packs whole lines/sentences up to the
+  `MAX_CHARS_DEFAULT` / `COSYVOICE2_MAX_CHARS` cap (**200**; newline-aware so verse splits too).
+- **Join within a pipeline chunk** — the ≤200 pieces are **not** separate files; their audio
+  tensors are concatenated in RAM via `torch.cat` (`cosyvoice2_client.py`) → one wav.
+- **Join across pipeline chunks** — only when text > 2500 (N > 1) are the per-chunk wavs
+  written out and stitched with **ffmpeg** `concat_audio_files_ffmpeg` → `merged.wav`
+  (`shared/utils/ffmpeg.py`; orchestrated in `txt_to_voice/pipeline.py`).
+- **Transcode** — `transcode_audio_ffmpeg` → the final mp3.
+
+**Why every word lands:** the concat steps always preserved order — nothing was ever dropped
+at a join. The words that used to vanish were never *generated*: given a long piece, CosyVoice2
+truncates its tail mid-call. The 200-char cap keeps each piece short enough to finish. See
+known-issue #8.
+
+**Book Alchemy uses this same path.** `render_script_to_audio` (`book_alchemy/audio.py`) POSTs
+**one session script per session** to the very same `POST /spokenverse/txt-to-audio` endpoint
+(no `chunk_chars` → default 2500), so the 200-char cap and the flow above apply unchanged — a
+long session just yields more pieces and (for scripts > 2500 chars) an ffmpeg concat, still one
+mp3. Long sessions do **not** hit nginx's `proxy_read_timeout` (300 s): the worker calls
+`http://127.0.0.1:8000` directly (bypassing nginx) with its own **3600 s** client timeout
+(`BOOK_ALCHEMY_TTS_HTTP_TIMEOUT_S`). The 300 s limit only concerns the direct front-end upload.
+
 ## CLI
 
 ```bash
@@ -251,7 +291,9 @@ or its torch/vLLM pins** — several of these cost real time.
    ~2 k-char / 351-word input). **Fix/workaround:** `MAX_CHARS_DEFAULT = 200` in
    `txt_to_voice/adapters/cosyvoice2_client.py` bounds every inference chunk; `_chunk_text` packs
    whole lines/sentences up to that cap (newline-aware so verse — line breaks, no periods — also
-   splits), and only a single run longer than the cap is broken at a word boundary. Tune without
+   splits), and only a single run longer than the cap is broken at a word boundary. (See
+   *SpokenVerse txt → audio: chunking & concatenation* above for how the pieces re-join into one
+   mp3.) Tune without
    redeploying via `COSYVOICE2_MAX_CHARS` in `.env` (then `systemctl restart phansora-api`). Do
    **not** raise it back toward 550 "for fewer joins" — 250 already dropped words. If drops ever
    reappear, lower it further and re-verify with the whisper word-diff method above.
