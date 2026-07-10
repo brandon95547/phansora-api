@@ -71,10 +71,14 @@ LANGUAGE_DEFAULT = "en"
 # native CosyVoice2 parameter (mel time-scaling), applied at synthesis time.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 
-# CosyVoice reliably renders ~550 chars at a time; longer input drops/truncates words. Input
-# is split into <= MAX_CHARS chunks (on line and sentence boundaries) and the rendered audio
-# is concatenated. Only a run longer than MAX_CHARS is broken mid-boundary (at a word).
-MAX_CHARS_DEFAULT = 550
+# CosyVoice2 intermittently drops/truncates words when a single inference chunk is long (the
+# drop clusters at the chunk tail), and it is far worse with cloned voices. Measured on prod
+# with a cloned voice + whisper transcription: 550/400 dropped whole sentences, 300 dropped
+# the tail, 250 dropped words in 1/2 trials, while 200 was clean in 8/8 trials. So we cap the
+# per-inference chunk at 200 chars. Input is split into <= MAX_CHARS chunks (on line and
+# sentence boundaries) and the rendered audio is concatenated. Only a run longer than
+# MAX_CHARS is broken mid-boundary (at a word). Override with COSYVOICE2_MAX_CHARS.
+MAX_CHARS_DEFAULT = 200
 
 
 def _env(name: str, default: str = "") -> str:

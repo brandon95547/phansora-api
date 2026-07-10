@@ -239,3 +239,23 @@ or its torch/vLLM pins** — several of these cost real time.
 7. **No CUDA toolkit / nvcc required.** vLLM and TensorRT ship precompiled CUDA ops in their
    wheels; the box needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh` and the
    `cuda-env.conf` systemd drop-in are legacy (DeepSpeed) and no longer needed for TTS.
+
+8. **CosyVoice2 silently drops/skips words on long inference chunks — cap chunks at ~200 chars.**
+   Given a long text in a single `inference_zero_shot` call, CosyVoice2 intermittently stops
+   generating early and **omits whole clauses** — the dropped span clusters at the *tail* of the
+   chunk. It is **far worse with cloned voices** than the `default` voice, and it is a *model*
+   behavior, not a chunking-boundary or ffmpeg-concat bug (drops land mid-chunk, not at joins).
+   Measured on prod with a cloned voice (synthesize via the warm API → whisper-transcribe →
+   word-diff against the source): 550/400 chars dropped whole sentences, 300 dropped the tail,
+   250 dropped words in 1/2 trials, **200 was clean in 8/8 trials** (and clean on a 5-paragraph,
+   ~2 k-char / 351-word input). **Fix/workaround:** `MAX_CHARS_DEFAULT = 200` in
+   `txt_to_voice/adapters/cosyvoice2_client.py` bounds every inference chunk; `_chunk_text` packs
+   whole lines/sentences up to that cap (newline-aware so verse — line breaks, no periods — also
+   splits), and only a single run longer than the cap is broken at a word boundary. Tune without
+   redeploying via `COSYVOICE2_MAX_CHARS` in `.env` (then `systemctl restart phansora-api`). Do
+   **not** raise it back toward 550 "for fewer joins" — 250 already dropped words. If drops ever
+   reappear, lower it further and re-verify with the whisper word-diff method above.
+   *Latency note:* smaller chunks ⇒ more serialized inference (one `_INFER_LOCK`), so a very
+   large single upload to the synchronous `/txt-to-audio` can approach nginx's `proxy_read_timeout`
+   (300 s). Book Alchemy long-form runs through the durable worker, not that endpoint, so it is
+   unaffected; only watch the direct front-end upload path.
