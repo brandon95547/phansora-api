@@ -257,6 +257,26 @@ def _ensure_ref_length(ref_clip: str) -> tuple[str, Optional[str]]:
         return ref_clip, None  # best-effort; let the engine surface any error
 
 
+# CosyVoice2 has no end-of-prompt token: it interleaves the prompt transcript with the
+# prompt audio, so if the transcript doesn't clearly "end", the model can treat the prompt
+# audio as unfinished and leak ~1s of prompt-like (often non-English) audio at the START of
+# the generated clip. Guaranteeing terminal punctuation demarcates the prompt boundary and
+# suppresses that leak. Our reference clips are cut at a fixed length (voices.MAX_SECONDS),
+# which routinely lands mid-sentence, so the auto-transcript often lacks closing punctuation.
+# See github.com/FunAudioLLM/CosyVoice issues #967 and #1704.
+_TERMINAL_PUNCT = ".!?。！？…"
+
+
+def _ensure_prompt_terminal(p_text: str) -> str:
+    """Append a period if the reference transcript lacks sentence-final punctuation, so
+    CosyVoice2 sees a clean prompt boundary (prevents leaked prompt audio at the start)."""
+    p_text = (p_text or "").strip()
+    if p_text and p_text[-1] not in _TERMINAL_PUNCT:
+        # Use a full-width period when the text looks CJK, else an ASCII period.
+        p_text += "。" if any("　" <= ch <= "鿿" for ch in p_text) else "."
+    return p_text
+
+
 def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[str]) -> Optional[str]:
     for candidate in (ref_audio, speaker, voice, os.getenv("COSYVOICE2_REF_AUDIO")):
         if not candidate:
@@ -348,6 +368,8 @@ def _synthesize_sync(
             "CosyVoice2 needs the reference clip's transcript (prompt_text). Cloned voices "
             "store it as ref_text; for the default voice set COSYVOICE2_DEFAULT_REF_TEXT."
         )
+    # Demarcate the prompt boundary so CosyVoice2 doesn't leak prompt audio at the start.
+    p_text = _ensure_prompt_terminal(p_text)
 
     ref_clip, _ref_tmp = _ensure_ref_length(ref_clip)
 

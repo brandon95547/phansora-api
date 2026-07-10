@@ -34,6 +34,18 @@ from phansora.shared.paths import runtime_dir
 # the first 9s (safely inside the range) — this clip is what it clones from, and
 # it's also what gets auto-transcribed, so the two stay in sync.
 MAX_SECONDS = 9
+# We never end the reference on a hard mid-word cut: that leaves the prompt audio with no
+# "the speaker stopped" boundary (CosyVoice2 then leaks ~1s of prompt-like audio at the
+# start of every clone) and yields a half-sentence transcript with no closing punctuation.
+# Instead we cut at the last natural pause within the window and pad a little trailing
+# silence, so the clip ends cleanly after a whole word. Only accept a pause once we've kept
+# at least MIN_SECONDS of reference (a too-early pause would starve the clone of audio); if
+# there's no usable pause, fall back to the hard cut but still pad trailing silence.
+MIN_SECONDS = 4.0
+TRAILING_SILENCE_SECONDS = 0.5
+# silencedetect thresholds: treat < -35 dB for >= 0.3s as a pause (inter-word/sentence gap).
+_SILENCE_NOISE_DB = "-35dB"
+_SILENCE_MIN_DUR = 0.3
 # CosyVoice2 reference clips: 24 kHz mono.
 _SAMPLE_RATE = 24000
 # Pending clips (uploaded but never approved or discarded) are pruned after this
@@ -117,14 +129,54 @@ def _probe_duration(path: Path) -> float:
         return 0.0
 
 
+def _last_pause_before(path: Path, cap: float) -> Optional[float]:
+    """Return the end-of-speech time of the last natural pause at or before ``cap``
+    seconds (and at/after ``MIN_SECONDS``), or None if there's no usable pause.
+
+    Uses ffmpeg ``silencedetect``; each detected silence's ``silence_start`` marks where
+    the preceding word ended, which is exactly where we want to cut so the clip finishes
+    on a whole word rather than mid-syllable."""
+    proc = subprocess.run(
+        ["ffmpeg", "-i", str(path), "-af",
+         f"silencedetect=noise={_SILENCE_NOISE_DB}:d={_SILENCE_MIN_DUR}", "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60,
+    )
+    best: Optional[float] = None
+    for m in re.finditer(r"silence_start:\s*([0-9.]+)", proc.stderr or ""):
+        try:
+            t = float(m.group(1))
+        except ValueError:
+            continue
+        if MIN_SECONDS <= t <= cap:
+            best = t  # keep the latest qualifying pause
+    return best
+
+
 def _process_to_wav(src: Path, dst: Path, max_seconds: int = MAX_SECONDS) -> None:
-    """Trim to at most ``max_seconds`` (keeps the start, drops the tail) and
-    convert to 24 kHz mono WAV."""
+    """Normalize an uploaded clip to a 24 kHz mono WAV reference, ending it on a clean
+    boundary: cut at the last natural pause within ``max_seconds`` (falling back to a hard
+    ``max_seconds`` cut) and pad ``TRAILING_SILENCE_SECONDS`` of silence, so the clip
+    finishes after a whole word with a clear "speaker stopped" gap."""
+    # 1. Normalize + cap to the working window (mono 24 kHz, at most max_seconds).
+    tmp = dst.with_suffix(".norm.wav")
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(src), "-t", str(max_seconds),
-         "-ac", "1", "-ar", str(_SAMPLE_RATE), str(dst)],
+         "-ac", "1", "-ar", str(_SAMPLE_RATE), str(tmp)],
         check=True, capture_output=True, timeout=180,
     )
+    try:
+        # 2. End at the last natural pause (whole word) if we have one; else the hard cap.
+        end = _last_pause_before(tmp, float(max_seconds)) or float(max_seconds)
+        # 3. Trim to that boundary and append trailing silence.
+        af = (f"atrim=end={end:.3f},asetpts=PTS-STARTPTS,"
+              f"apad=pad_dur={TRAILING_SILENCE_SECONDS}")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(tmp), "-af", af,
+             "-ac", "1", "-ar", str(_SAMPLE_RATE), str(dst)],
+            check=True, capture_output=True, timeout=180,
+        )
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def create_pending(user_id: str, upload_path: Path) -> dict:
