@@ -71,9 +71,10 @@ LANGUAGE_DEFAULT = "en"
 # native CosyVoice2 parameter (mel time-scaling), applied at synthesis time.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 
-# CosyVoice synthesizes per sentence; long input is split into <= MAX_CHARS chunks and the
-# rendered audio is concatenated. Whole sentences are never split.
-MAX_CHARS_DEFAULT = 300
+# CosyVoice reliably renders ~550 chars at a time; longer input drops/truncates words. Input
+# is split into <= MAX_CHARS chunks (on line and sentence boundaries) and the rendered audio
+# is concatenated. Only a run longer than MAX_CHARS is broken mid-boundary (at a word).
+MAX_CHARS_DEFAULT = 550
 
 
 def _env(name: str, default: str = "") -> str:
@@ -307,22 +308,59 @@ def _spk_id_for(cosy, ref_clip: str, prompt_text: str) -> str:
     return spk_id
 
 
+def _hard_split(segment: str, max_chars: int) -> list[str]:
+    """Split a segment longer than ``max_chars`` at clause, then word boundaries.
+
+    Used only when a single line/sentence exceeds the limit (e.g. punctuation-free
+    verse). Never cuts mid-word; every returned piece is ``<= max_chars`` unless a
+    single word is itself longer.
+    """
+    import re
+    pieces: list[str] = []
+    for clause in re.split(r"(?<=[,;:])\s+", segment):
+        clause = clause.strip()
+        if not clause:
+            continue
+        if len(clause) <= max_chars:
+            pieces.append(clause)
+            continue
+        buf = ""
+        for word in clause.split():
+            if not buf:
+                buf = word
+            elif len(buf) + 1 + len(word) <= max_chars:
+                buf = f"{buf} {word}"
+            else:
+                pieces.append(buf)
+                buf = word
+        if buf:
+            pieces.append(buf)
+    return pieces
+
+
 def _chunk_text(text: str, max_chars: int) -> list[str]:
-    """Pack whole sentences into chunks no longer than ``max_chars`` (never splits one)."""
+    """Pack lines/sentences into chunks no longer than ``max_chars``.
+
+    Splits on blank lines, single newlines (verse lines), and sentence
+    terminators, so verse (line breaks, no periods) chunks correctly. A single
+    segment longer than ``max_chars`` is hard-split at clause/word boundaries.
+    """
     import re
     chunks: list[str] = []
     buf = ""
-    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
-        sentence = sentence.strip()
-        if not sentence:
+    for segment in re.split(r"\n\s*\n+|\n|(?<=[.!?])\s+", text.strip()):
+        segment = segment.strip()
+        if not segment:
             continue
-        if not buf:
-            buf = sentence
-        elif len(buf) + 1 + len(sentence) <= max_chars:
-            buf = f"{buf} {sentence}"
-        else:
-            chunks.append(buf)
-            buf = sentence
+        pieces = [segment] if len(segment) <= max_chars else _hard_split(segment, max_chars)
+        for piece in pieces:
+            if not buf:
+                buf = piece
+            elif len(buf) + 1 + len(piece) <= max_chars:
+                buf = f"{buf} {piece}"
+            else:
+                chunks.append(buf)
+                buf = piece
     if buf:
         chunks.append(buf)
     return chunks or ([text.strip()] if text.strip() else [])
