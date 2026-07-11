@@ -24,7 +24,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 
@@ -714,7 +714,11 @@ async def voice_discard(token: str, user_id: str = Form(...)) -> dict:
 
 
 @app.get("/voices", response_model=None)
-async def voice_list(user_id: str) -> dict:
+async def voice_list(user_id: str, response: Response) -> dict:
+    # Per-user, mutates whenever a voice is approved/deleted. Must never be cached, or a
+    # freshly saved voice won't appear until a hard refresh (browser/nginx served a stale
+    # list). no-store also stops any intermediate proxy from caching it.
+    response.headers["Cache-Control"] = "no-store"
     return {"ok": True, "voices": voice_store.list_voices(_safe_user_id(user_id))}
 
 
