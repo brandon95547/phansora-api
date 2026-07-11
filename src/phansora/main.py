@@ -26,6 +26,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from phansora.config import settings
+from phansora.shared.contact import router as contact_router
 
 logger = logging.getLogger("phansora")
 
@@ -34,12 +35,14 @@ _PRODUCT_APPS = {
     "/spokenverse": "phansora.products.spokenverse.server:app",
     "/chrono": "phansora.products.chrono_origin.server:app",
     "/dossier": "phansora.products.dossier_nova.api:app",
+    "/book-alchemy": "phansora.products.book_alchemy.server:app",
 }
 # prefix -> product key used by Settings.enabled_products
 _PREFIX_TO_KEY = {
     "/spokenverse": "spokenverse",
     "/chrono": "chrono_origin",
     "/dossier": "dossier_nova",
+    "/book-alchemy": "book_alchemy",
 }
 
 
@@ -88,6 +91,9 @@ app.add_middleware(
 
 for _prefix, _sub in _products.items():
     app.mount(_prefix, _sub)
+
+# Cross-cutting endpoints that belong to no product live on the core app.
+app.include_router(contact_router)
 
 
 @app.get("/")

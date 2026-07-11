@@ -10,7 +10,7 @@ deliberately a SEPARATE process from the FastAPI app so that:
     project once its lease expires and resumes from the last committed phase.
 
 Run:
-    python book_alchemy_worker.py
+    python -m phansora.products.book_alchemy.worker
 Deploy as the systemd unit `book-alchemy-worker.service` (single instance to
 start; the SKIP LOCKED claim design already allows scaling to N workers later).
 """
@@ -25,8 +25,8 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from phansora.products.spokenverse.book_alchemy import db, pipeline  # noqa: E402
-from phansora.products.spokenverse.book_alchemy.deepseek_client import DeepSeekClient  # noqa: E402
+from phansora.products.book_alchemy import db, pipeline  # noqa: E402
+from phansora.products.book_alchemy.deepseek_client import DeepSeekClient  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

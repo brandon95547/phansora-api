@@ -19,7 +19,7 @@ services:
   worker:
     image: phansora-api
     build: .
-    command: ["python", "-m", "phansora.products.spokenverse.worker"]
+    command: ["python", "-m", "phansora.products.book_alchemy.worker"]
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"

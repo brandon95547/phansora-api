@@ -17,7 +17,7 @@ load_dotenv()
 
 # All products the platform knows about. A product is mounted only if it imports
 # cleanly (its optional heavy dependencies are installed) — see phansora.main.
-ALL_PRODUCTS = ("spokenverse", "chrono_origin", "dossier_nova")
+ALL_PRODUCTS = ("spokenverse", "chrono_origin", "dossier_nova", "book_alchemy")
 
 
 def _split_csv(value: str) -> List[str]:
