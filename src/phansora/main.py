@@ -26,6 +26,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from phansora.config import settings
+from phansora.shared.admin.router import router as admin_router
 from phansora.shared.contact import router as contact_router
 from phansora.shared.conversions.router import router as conversions_router
 
@@ -96,6 +97,7 @@ for _prefix, _sub in _products.items():
 # Cross-cutting endpoints that belong to no product live on the core app.
 app.include_router(contact_router)
 app.include_router(conversions_router)
+app.include_router(admin_router)
 
 
 @app.get("/")
