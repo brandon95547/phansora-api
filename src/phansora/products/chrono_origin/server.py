@@ -26,8 +26,17 @@ logger = logging.getLogger("chrono-origin")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        logger.warning("ANTHROPIC_API_KEY is not set. /trace will fail until configured.")
+    import os
+
+    provider = os.getenv("CHRONO_LLM_PROVIDER", "deepseek").strip().lower()
+    if provider in ("anthropic", "claude"):
+        if not settings.anthropic_api_key:
+            logger.warning("ANTHROPIC_API_KEY is not set. /trace will fail until configured.")
+    else:
+        if not os.getenv("DEEPSEEK_API_KEY"):
+            logger.warning("DEEPSEEK_API_KEY is not set. /trace will fail until configured.")
+        logger.info("Chrono-Origin LLM provider: %s (search: %s)",
+                    provider, os.getenv("CHRONO_SEARCH_PROVIDER", "auto"))
     app.state.executor = ThreadPoolExecutor(max_workers=4)
     app.state.orchestrator = TraceOrchestrator()
     app.state.job_manager = JobManager(app.state.orchestrator, app.state.executor)

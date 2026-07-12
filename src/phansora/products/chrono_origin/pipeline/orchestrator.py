@@ -15,7 +15,7 @@ def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
 from ..models import Citation, OriginResult, TimelineEvent, TraceRequest, TraceResponse
 from ..services.cache import get_cached, normalize_title, save_cached
-from phansora.shared.ai.anthropic import AnthropicClient, GroundedAnswer
+from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from .prompts import (
     DECOMPOSE_PROMPT,
     EXPAND_EXTRACT_PROMPT,
@@ -62,8 +62,9 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
 
 
 class TraceOrchestrator:
-    def __init__(self, client: Optional[AnthropicClient] = None) -> None:
-        self.client = client or AnthropicClient()
+    def __init__(self, client: Optional[object] = None) -> None:
+        # Provider chosen by CHRONO_LLM_PROVIDER (deepseek by default).
+        self.client = client or build_research_client()
         self.settings = get_settings()
 
     # ------------------------------------------------------------------ public

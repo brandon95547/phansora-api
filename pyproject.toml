@@ -21,6 +21,7 @@ dependencies = [
     "openai>=1.51.0",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
+    "ddgs",  # keyless DuckDuckGo web search for Chrono-Origin's DeepSeek provider
 ]
 
 [project.scripts]
