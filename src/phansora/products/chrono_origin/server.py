@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -66,14 +67,26 @@ def root():
     return {"name": "chrono-origin", "status": "ok", "version": "0.2.0"}
 
 
+def _provider() -> str:
+    return os.getenv("CHRONO_LLM_PROVIDER", "deepseek").strip().lower()
+
+
+def _provider_configured() -> bool:
+    """Is the *active* LLM provider configured? (DeepSeek by default, not Anthropic.)"""
+    if _provider() in ("anthropic", "claude"):
+        return bool(get_settings().anthropic_api_key)
+    return bool(os.getenv("DEEPSEEK_API_KEY"))
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "anthropic_configured": bool(get_settings().anthropic_api_key)}
+    return {"status": "ok", "provider": _provider(), "configured": _provider_configured()}
 
 
 def _ensure_configured() -> None:
-    if not get_settings().anthropic_api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured.")
+    if not _provider_configured():
+        key = "ANTHROPIC_API_KEY" if _provider() in ("anthropic", "claude") else "DEEPSEEK_API_KEY"
+        raise HTTPException(status_code=503, detail=f"{key} is not configured.")
 
 
 @app.post("/trace", response_model=TraceResponse)
