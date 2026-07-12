@@ -18,6 +18,8 @@ import hmac
 import logging
 import os
 import shutil
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -83,29 +85,30 @@ def _dossier_embeddings() -> Path:
 
 
 # ---- size / delete helpers --------------------------------------------------
-def _dir_size(p: Path) -> int:
+def _dir_size(p: Path) -> Optional[int]:
+    """Fast, bounded directory size via `du`. Returns bytes, or None if it times
+    out / errors — a huge tree (node_modules, .venv) must not hang the request."""
     try:
         if not p.exists():
             return 0
         if p.is_file():
             return p.stat().st_size
-        total = 0
-        for f in p.rglob("*"):
-            try:
-                if f.is_file():
-                    total += f.stat().st_size
-            except OSError:
-                pass
-        return total
-    except OSError:
-        return 0
+        # `du -sk` is portable (Linux + macOS): summary size in 1K blocks.
+        out = subprocess.run(
+            ["du", "-sk", str(p)], capture_output=True, text=True, timeout=12
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        return int(out.stdout.split()[0]) * 1024
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        return None
 
 
 def _clear_contents(p: Path) -> int:
     """Delete everything inside p (keep the dir). Returns bytes freed."""
     if not p.exists():
         return 0
-    freed = _dir_size(p)
+    freed = _dir_size(p) or 0
     for child in p.iterdir():
         try:
             if child.is_dir():
@@ -117,32 +120,37 @@ def _clear_contents(p: Path) -> int:
     return freed
 
 
-def _entry(key: str, label: str, path: Path, *, deletable: bool, kind: str = "") -> dict:
-    return {
-        "key": key,
-        "label": label,
-        "path": str(path),
-        "exists": path.exists(),
-        "bytes": _dir_size(path),
-        "deletable": deletable,
-        "kind": kind,
-    }
-
-
 # ---- endpoints --------------------------------------------------------------
 @router.get("/storage/info")
 def storage_info(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> dict:
     require_admin(x_admin_key)
     du = shutil.disk_usage("/")
+    # (key, label, path, deletable, kind)
+    specs = [
+        ("frontend", "Frontend", _frontend_dir(), False, ""),
+        ("api", "API code + data", _api_dir(), False, ""),
+        ("runtime_data", "Runtime data", runtime_root(), False, ""),
+        ("chrono_cache", "Chrono-Origin cache", _chrono_cache_dir(), True, "chrono"),
+        ("hf_cache", "HuggingFace model cache", _hf_cache_dir(), True, "model"),
+        ("torch_cache", "Torch hub cache", _torch_cache_dir(), True, "model"),
+        ("cosyvoice", "CosyVoice2 weights (do not delete)", _cosyvoice_dir(), False, ""),
+        ("dossier_embeddings", "Dossier embeddings (expensive to rebuild)", _dossier_embeddings(), False, ""),
+    ]
+    # Size each dir concurrently so the whole call is bounded by the slowest `du`
+    # (~12s), not the sum. bytes=null means it timed out / was too large to size.
+    with ThreadPoolExecutor(max_workers=len(specs)) as ex:
+        sizes = list(ex.map(lambda s: _dir_size(s[2]), specs))
     entries = [
-        _entry("frontend", "Frontend", _frontend_dir(), deletable=False),
-        _entry("api", "API code + data", _api_dir(), deletable=False),
-        _entry("runtime_data", "Runtime data", runtime_root(), deletable=False),
-        _entry("chrono_cache", "Chrono-Origin cache", _chrono_cache_dir(), deletable=True, kind="chrono"),
-        _entry("hf_cache", "HuggingFace model cache", _hf_cache_dir(), deletable=True, kind="model"),
-        _entry("torch_cache", "Torch hub cache", _torch_cache_dir(), deletable=True, kind="model"),
-        _entry("cosyvoice", "CosyVoice2 weights (do not delete)", _cosyvoice_dir(), deletable=False),
-        _entry("dossier_embeddings", "Dossier embeddings (expensive to rebuild)", _dossier_embeddings(), deletable=False),
+        {
+            "key": key,
+            "label": label,
+            "path": str(path),
+            "exists": path.exists(),
+            "bytes": size,
+            "deletable": deletable,
+            "kind": kind,
+        }
+        for (key, label, path, deletable, kind), size in zip(specs, sizes)
     ]
     return {
         "ok": True,
