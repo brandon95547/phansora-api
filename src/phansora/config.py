@@ -31,8 +31,6 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8000
     cors_allow_origins: List[str] = field(default_factory=lambda: ["*"])
-    # Subset of ALL_PRODUCTS to expose. Empty => expose every product that imports.
-    enabled_products: List[str] = field(default_factory=list)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -42,7 +40,6 @@ class Settings:
             host=os.getenv("HOST", "0.0.0.0"),
             port=int(os.getenv("PORT", "8000")),
             cors_allow_origins=_split_csv(os.getenv("CORS_ALLOW_ORIGINS", "*")),
-            enabled_products=_split_csv(os.getenv("PHANSORA_ENABLED_PRODUCTS", "")),
         )
 
 

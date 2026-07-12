@@ -39,7 +39,7 @@ _PRODUCT_APPS = {
     "/dossier": "phansora.products.dossier_nova.api:app",
     "/book-alchemy": "phansora.products.book_alchemy.server:app",
 }
-# prefix -> product key used by Settings.enabled_products
+# prefix -> product key (used in the root() response)
 _PREFIX_TO_KEY = {
     "/spokenverse": "spokenverse",
     "/chrono": "chrono_origin",
@@ -49,13 +49,10 @@ _PREFIX_TO_KEY = {
 
 
 def _load_products() -> Dict[str, FastAPI]:
-    """Import each product app, skipping (with a warning) any that fail to load."""
+    """Import every product app, skipping (with a warning) any that fail to import
+    (e.g. a host missing that product's optional heavy deps)."""
     loaded: Dict[str, FastAPI] = {}
-    enabled = set(settings.enabled_products)
     for prefix, target in _PRODUCT_APPS.items():
-        if enabled and _PREFIX_TO_KEY[prefix] not in enabled:
-            logger.info("Skipping %s (not in PHANSORA_ENABLED_PRODUCTS)", prefix)
-            continue
         module_name, attr = target.split(":")
         try:
             module = importlib.import_module(module_name)
