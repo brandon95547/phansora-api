@@ -357,3 +357,26 @@ def delete_voice(user_id: str, voice_id: str) -> bool:
     items = [v for v in _load_manifest(user_id) if v.get("id") != vid]
     _save_manifest(user_id, items)
     return existed
+
+
+def rename_voice(user_id: str, voice_id: str, name: str) -> Optional[dict]:
+    """Rename a saved voice. Returns the updated record (with clamped settings), or
+    None if no such voice. Raises ``ValueError`` if the name is blank or already
+    used by another of this user's voices (case-insensitive) — same rule as approve.
+    """
+    clean_name = (name or "").strip()[:80]
+    if not clean_name:
+        raise ValueError("A voice name is required.")
+    vid = _safe_token(voice_id)
+    items = _load_manifest(user_id)
+    target = next((v for v in items if v.get("id") == vid), None)
+    if target is None:
+        return None
+    if any(
+        v.get("id") != vid and (v.get("name") or "").strip().casefold() == clean_name.casefold()
+        for v in items
+    ):
+        raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
+    target["name"] = clean_name
+    _save_manifest(user_id, items)
+    return {**target, **clamp_settings(**{k: target.get(k) for k in SETTING_KEYS})}

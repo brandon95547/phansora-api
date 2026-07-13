@@ -707,6 +707,17 @@ async def voice_delete(voice_id: str, user_id: str) -> dict:
     return {"ok": True}
 
 
+@app.patch("/voices/{voice_id}", response_model=None)
+async def voice_rename(voice_id: str, user_id: str = Form(...), name: str = Form(...)) -> dict:
+    try:
+        rec = voice_store.rename_voice(_safe_user_id(user_id), voice_id, name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if rec is None:
+        raise HTTPException(status_code=404, detail="Voice not found.")
+    return {"ok": True, "voice": rec}
+
+
 @app.get("/users/{user_id}/history")
 async def get_user_history(user_id: str) -> dict:
     safe_user = _safe_user_id(user_id)
