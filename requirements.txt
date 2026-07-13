@@ -63,8 +63,7 @@ tenacity
 orjson
 
 # ── AI clients ──
-anthropic>=0.49          # chrono_origin — Claude grounded web search
-openai>=1.51.0           # dossier_nova — DeepSeek via OpenAI-compatible API
+openai>=2.0.0            # chrono_origin (GPT-5 Nano — Responses API + web_search); dossier_nova (DeepSeek via OpenAI-compatible API)
 pydantic>=2.9            # chrono_origin models — >=2.9 also required by vLLM 0.9.0
 pydantic-settings>=2.2   # chrono_origin settings
 

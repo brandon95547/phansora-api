@@ -1,17 +1,17 @@
-"""DeepSeek-backed research client — a drop-in for AnthropicClient.
+"""DeepSeek-backed research client — Chrono-Origin's selectable fallback provider.
 
-Exposes the same surface the orchestrator uses:
+Exposes the same surface the orchestrator uses (a drop-in for the OpenAI client):
   - ``grounded_search(prompt)`` -> GroundedAnswer(text, citations, queries)
   - ``reason_json(prompt, *, use_reasoning_model)`` -> dict
 
 DeepSeek has no built-in web search, so ``grounded_search`` does it in three steps,
-mirroring what Claude's web_search tool does internally:
+mirroring what a hosted web_search tool does internally:
   1. derive 1-2 search queries from the prompt,
   2. run them via ``search.web_search`` (Brave / SearXNG / DuckDuckGo),
   3. have DeepSeek write a concise, cited summary from the real results.
 
 ``reason_json`` is a plain DeepSeek chat call in JSON mode, parsed with the same
-salvage logic the Anthropic client used.
+salvage logic the other research clients use.
 """
 from __future__ import annotations
 

@@ -17,8 +17,7 @@ dependencies = [
     "aiohttp",
     "tenacity",
     "orjson",
-    "anthropic>=0.49",
-    "openai>=1.51.0",
+    "openai>=2.0.0",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "ddgs",  # keyless DuckDuckGo web search for Chrono-Origin's DeepSeek provider

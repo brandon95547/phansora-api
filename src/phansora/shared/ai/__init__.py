@@ -1,8 +1,9 @@
 """Shared AI clients.
 
-    anthropic — Claude grounded web search + JSON reasoning (used by chrono_origin)
-    deepseek  — DeepSeek chat / OCR-cleanup helper (used by spokenverse)
+    research  — provider-neutral Chrono-Origin surface (GroundedAnswer + factory);
+                backed by openai_research (GPT-5 Nano) or deepseek_research.
+    deepseek  — DeepSeek chat / OCR-cleanup helper (spokenverse, book_alchemy, dossier).
 """
-from .anthropic import AnthropicClient, AnthropicConfig, GroundedAnswer
+from .research import GroundedAnswer, build_research_client
 
-__all__ = ["AnthropicClient", "AnthropicConfig", "GroundedAnswer"]
+__all__ = ["GroundedAnswer", "build_research_client"]

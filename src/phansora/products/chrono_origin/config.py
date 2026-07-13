@@ -10,18 +10,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # Anthropic (Claude) — grounded web search + JSON reasoning
-    anthropic_api_key: str = ""
-    anthropic_search_model: str = "claude-sonnet-4-6"
-    anthropic_reasoning_model: str = "claude-opus-4-8"
-    anthropic_search_max_tokens: int = 4096
-    anthropic_reason_max_tokens: int = 16000
+    # The LLM provider is configured via env (CHRONO_LLM_PROVIDER: openai | deepseek)
+    # and read directly by the research clients in phansora.shared.ai; no
+    # provider keys live here.
 
     # Pipeline limits
     chrono_max_depth: int = 4
     chrono_max_sources_per_stage: int = 8
     chrono_max_queries_per_stage: int = 5
-    # Web searches Claude may run per grounded-search call (cost cap).
+    # Max web searches per grounded-search call (cost cap; deepseek fallback).
     chrono_search_max_uses: int = 4
     chrono_request_timeout_s: int = 120
 

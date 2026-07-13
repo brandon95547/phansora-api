@@ -26,18 +26,13 @@ logger = logging.getLogger("chrono-origin")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings = get_settings()
-    import os
-
-    provider = os.getenv("CHRONO_LLM_PROVIDER", "deepseek").strip().lower()
-    if provider in ("anthropic", "claude"):
-        if not settings.anthropic_api_key:
-            logger.warning("ANTHROPIC_API_KEY is not set. /trace will fail until configured.")
-    else:
-        if not os.getenv("DEEPSEEK_API_KEY"):
-            logger.warning("DEEPSEEK_API_KEY is not set. /trace will fail until configured.")
-        logger.info("Chrono-Origin LLM provider: %s (search: %s)",
-                    provider, os.getenv("CHRONO_SEARCH_PROVIDER", "auto"))
+    provider = _provider()
+    key = "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
+    if not os.getenv(key):
+        logger.warning("%s is not set. /trace will fail until configured.", key)
+    logger.info("Chrono-Origin LLM provider: %s", provider)
+    if provider == "deepseek":
+        logger.info("DeepSeek external search: %s", os.getenv("CHRONO_SEARCH_PROVIDER", "auto"))
     app.state.executor = ThreadPoolExecutor(max_workers=4)
     app.state.orchestrator = TraceOrchestrator()
     app.state.job_manager = JobManager(app.state.orchestrator, app.state.executor)
@@ -47,7 +42,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Chrono-Origin API",
-    description="Trace the earliest known origin of a story, myth, or event using Claude grounded search.",
+    description="Trace the earliest known origin of a story, myth, or event using grounded web search.",
     version="0.2.0",
     lifespan=lifespan,
 )
@@ -68,14 +63,14 @@ def root():
 
 
 def _provider() -> str:
-    return os.getenv("CHRONO_LLM_PROVIDER", "deepseek").strip().lower()
+    return os.getenv("CHRONO_LLM_PROVIDER", "openai").strip().lower()
 
 
 def _provider_configured() -> bool:
-    """Is the *active* LLM provider configured? (DeepSeek by default, not Anthropic.)"""
-    if _provider() in ("anthropic", "claude"):
-        return bool(get_settings().anthropic_api_key)
-    return bool(os.getenv("DEEPSEEK_API_KEY"))
+    """Is the *active* LLM provider configured? (OpenAI/GPT-5 Nano by default.)"""
+    if _provider() == "deepseek":
+        return bool(os.getenv("DEEPSEEK_API_KEY"))
+    return bool(os.getenv("OPENAI_API_KEY"))
 
 
 @app.get("/health")
@@ -85,7 +80,7 @@ def health():
 
 def _ensure_configured() -> None:
     if not _provider_configured():
-        key = "ANTHROPIC_API_KEY" if _provider() in ("anthropic", "claude") else "DEEPSEEK_API_KEY"
+        key = "DEEPSEEK_API_KEY" if _provider() == "deepseek" else "OPENAI_API_KEY"
         raise HTTPException(status_code=503, detail=f"{key} is not configured.")
 
 
