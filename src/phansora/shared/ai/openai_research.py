@@ -48,6 +48,19 @@ def _parse_json(raw: str) -> Dict[str, Any]:
         raise
 
 
+def _env(name: str, default: str = "") -> str:
+    """Read an env var, stripping any inline ``# comment`` and whitespace.
+
+    Guards against a ``.env.example`` line like ``OPENAI_REASON_EFFORT=low  # note``
+    being copied verbatim so the value becomes ``low`` (not ``low  # note``). Not
+    used for secrets, which are read directly.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.split("#", 1)[0].strip() or default
+
+
 @dataclass
 class OpenAIResearchConfig:
     api_key: str = ""
@@ -67,19 +80,19 @@ class OpenAIResearchConfig:
 
     @classmethod
     def from_env(cls) -> "OpenAIResearchConfig":
-        model = (os.getenv("OPENAI_MODEL", "gpt-5-nano") or "gpt-5-nano").strip()
+        model = _env("OPENAI_MODEL", "gpt-5-nano")
         return cls(
             api_key=(os.getenv("OPENAI_API_KEY") or "").strip(),
-            base_url=(os.getenv("OPENAI_BASE_URL") or "").strip(),
-            search_model=(os.getenv("OPENAI_SEARCH_MODEL") or model).strip(),
-            reasoning_model=(os.getenv("OPENAI_REASONING_MODEL") or model).strip(),
-            reason_effort=(os.getenv("OPENAI_REASON_EFFORT", "medium") or "medium").strip(),
-            light_effort=(os.getenv("OPENAI_LIGHT_EFFORT", "low") or "low").strip(),
-            search_effort=(os.getenv("OPENAI_SEARCH_EFFORT", "low") or "low").strip(),
-            reason_max_output_tokens=int(os.getenv("OPENAI_REASON_MAX_TOKENS", "8000")),
-            search_max_output_tokens=int(os.getenv("OPENAI_SEARCH_MAX_TOKENS", "4000")),
-            web_search_tool=(os.getenv("OPENAI_WEB_SEARCH_TOOL", "web_search") or "web_search").strip(),
-            timeout_s=int(os.getenv("CHRONO_REQUEST_TIMEOUT_S", "120")),
+            base_url=_env("OPENAI_BASE_URL", ""),
+            search_model=_env("OPENAI_SEARCH_MODEL", model),
+            reasoning_model=_env("OPENAI_REASONING_MODEL", model),
+            reason_effort=_env("OPENAI_REASON_EFFORT", "medium"),
+            light_effort=_env("OPENAI_LIGHT_EFFORT", "low"),
+            search_effort=_env("OPENAI_SEARCH_EFFORT", "low"),
+            reason_max_output_tokens=int(_env("OPENAI_REASON_MAX_TOKENS", "8000")),
+            search_max_output_tokens=int(_env("OPENAI_SEARCH_MAX_TOKENS", "4000")),
+            web_search_tool=_env("OPENAI_WEB_SEARCH_TOOL", "web_search"),
+            timeout_s=int(_env("CHRONO_REQUEST_TIMEOUT_S", "120")),
         )
 
 
