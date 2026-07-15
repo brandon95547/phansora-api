@@ -49,7 +49,10 @@ ANALYZE_SYSTEM = (
     "examples, conclusions. Each item is an object: "
     '{"title": str, "body": str}. '
     "Only include items genuinely supported by THIS excerpt. Empty arrays are "
-    "fine. Do not summarize the whole book — only what this excerpt supports."
+    "fine. Do not summarize the whole book — only what this excerpt supports.\n"
+    "Keep it compact so the response never truncates: at most 8 items per array "
+    "(the most important only), each `title` under 12 words and each `body` under "
+    "40 words. Capture the idea concisely — do not copy long passages verbatim."
 )
 
 

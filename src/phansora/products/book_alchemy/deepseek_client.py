@@ -79,6 +79,16 @@ class DeepSeekClient:
                 if finish == "length" and budget < MAX_JSON_TOKENS:
                     budget = min(MAX_JSON_TOKENS, budget * 2)
                     continue
+                # Budget exhausted (or a non-length failure): salvage the
+                # complete portion of a truncated response rather than failing
+                # the whole chunk over the trailing, cut-off item.
+                if finish == "length":
+                    repaired = _repair_truncated_json(raw)
+                    if repaired is not None:
+                        try:
+                            return json.loads(repaired)
+                        except json.JSONDecodeError:
+                            pass
                 raise
         raise last_err  # pragma: no cover
 
@@ -159,3 +169,56 @@ def _parse_json_loose(raw: str) -> Any:
             except json.JSONDecodeError:
                 continue
     raise ValueError(f"Could not parse JSON from DeepSeek response: {raw[:300]}")
+
+
+def _repair_truncated_json(raw: str) -> Optional[str]:
+    """Salvage a JSON doc that was cut off mid-generation (finish=='length').
+
+    Walks the text tracking string/escape and bracket state, rewinds to the last
+    point where a container ({…} or […]) closed cleanly, and appends closers for
+    whatever is still open. For Book Alchemy's schema — an object of arrays of
+    ``{title, body}`` objects — this keeps every complete item and drops only the
+    trailing, cut-off one. Returns a parseable string, or None if nothing
+    complete came through."""
+    raw = (raw or "").strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*)$", raw, re.DOTALL)
+    if fenced:
+        raw = fenced.group(1)
+    start = raw.find("{")
+    alt = raw.find("[")
+    if start == -1 or (alt != -1 and alt < start):
+        start = alt
+    if start == -1:
+        return None
+
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    cut: Optional[int] = None          # index (exclusive) of a safe truncation point
+    cut_stack: tuple[str, ...] = ()     # containers still open at that point
+
+    for i in range(start, len(raw)):
+        ch = raw[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in "}]":
+            if not stack:
+                break  # unbalanced close; best guess is everything before it
+            stack.pop()
+            cut, cut_stack = i + 1, tuple(stack)
+
+    if cut is None:
+        return None
+    return raw[start:cut] + "".join(reversed(cut_stack))
