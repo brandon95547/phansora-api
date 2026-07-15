@@ -152,13 +152,24 @@ async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
         await db.set_project(pid, analyze_cursor=cursor + 1)
         return
 
-    extracted = await client.chat_json(
-        system=prompts.ANALYZE_SYSTEM,
-        user=prompts.analyze_user(chunk["text"], chapter=chunk["chapter"]),
-        max_output_tokens=2000,
-    )
-    concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
-    await db.insert_concepts(pid, concepts)
+    try:
+        extracted = await client.chat_json(
+            system=prompts.ANALYZE_SYSTEM,
+            user=prompts.analyze_user(chunk["text"], chapter=chunk["chapter"]),
+            max_output_tokens=2000,
+        )
+        concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
+        await db.insert_concepts(pid, concepts)
+    except Exception as exc:  # noqa: BLE001
+        # One chunk that won't parse (e.g. the model emitted JSON too long for the
+        # token budget and it truncated) must not fail the whole course. Skip it
+        # and advance — the concepts from every other chunk still build the
+        # curriculum, and if *every* chunk fails, _phase_curriculum raises a
+        # TerminalError on zero concepts.
+        log.warning(
+            "Project %s: skipping chunk %s (ordinal) — concept extraction failed: %s",
+            pid, cursor, exc,
+        )
 
     done = cursor + 1
     progress = 10 + int(40 * done / max(1, total))
