@@ -46,16 +46,26 @@ except Exception as _ba_exc:  # noqa: BLE001
 
 app = FastAPI(title="Book Alchemy", version="0.1.0")
 
-_cors_origins = [
-    o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
-] or ["*"]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Mirror the SpokenVerse sub-app's CORS config (the two share the api.phansora.com
+# origin and the same CORS_ALLOW_ORIGINS env). The browser calls this API
+# cross-origin without cookies — the user is identified by the ?user_id= query
+# param — so credentials stay off. allow_credentials=True with a wildcard origin
+# is invalid CORS (no usable Access-Control-Allow-Origin is sent), which is what
+# blocked generation from https://www.phansora.com.
+_cors_origins_raw = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000",
 )
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
 
 
 @app.get("/")
