@@ -28,6 +28,13 @@ async def send_email(data):
     msg["From"] = DEFAULT_FROM
     msg["To"] = to_address
     msg["Subject"] = subject
+
+    # Optional Reply-To so replies go straight to the person who submitted the
+    # form. Guard against header injection and obvious non-addresses.
+    reply_to = str(data.get("reply_to", "") or "").strip()
+    if reply_to and "\n" not in reply_to and "\r" not in reply_to and "@" in reply_to:
+        msg["Reply-To"] = reply_to
+
     msg.set_content(message_body)
 
     # Let SMTP/connection errors propagate so the caller can return a
