@@ -688,10 +688,11 @@ async def voice_list(user_id: str, response: Response) -> dict:
 @app.get("/voices/{voice_id}/audio", response_model=None)
 async def voice_audio(voice_id: str, user_id: str) -> FileResponse:
     safe_user = _safe_user_id(user_id)
-    # Play back the synthesized sample (what the user approved). Fall back to the
-    # reference clip for voices saved before samples were stored.
-    sample = voice_store.voice_sample_path(safe_user, voice_id)
-    if sample.exists():
+    # Play back the synthesized sample (what the user approved) — the user's own, or a
+    # shared default voice's. Fall back to the reference clip for voices saved before
+    # samples were stored.
+    sample = voice_store.resolve_sample_path(safe_user, voice_id)
+    if sample is not None:
         return FileResponse(path=str(sample), media_type="audio/wav", filename=f"{voice_id}.wav")
     p = voice_store.voice_path(safe_user, voice_id)
     if p is None:
