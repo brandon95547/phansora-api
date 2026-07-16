@@ -79,16 +79,16 @@ class DeepSeekClient:
                 if finish == "length" and budget < MAX_JSON_TOKENS:
                     budget = min(MAX_JSON_TOKENS, budget * 2)
                     continue
-                # Budget exhausted (or a non-length failure): salvage the
-                # complete portion of a truncated response rather than failing
-                # the whole chunk over the trailing, cut-off item.
-                if finish == "length":
-                    repaired = _repair_truncated_json(raw)
-                    if repaired is not None:
-                        try:
-                            return json.loads(repaired)
-                        except json.JSONDecodeError:
-                            pass
+                # Budget exhausted (or a non-length failure): salvage the complete
+                # portion of a (possibly truncated) response rather than failing the
+                # whole chunk over a trailing, cut-off item. Repair returns None when
+                # nothing complete came through, so this is safe for any failure.
+                repaired = _repair_truncated_json(raw)
+                if repaired is not None:
+                    try:
+                        return json.loads(repaired)
+                    except json.JSONDecodeError:
+                        pass
                 raise
         raise last_err  # pragma: no cover
 
@@ -211,8 +211,13 @@ def _repair_truncated_json(raw: str) -> Optional[str]:
             in_string = True
         elif ch == "{":
             stack.append("}")
+            # A safe cut point right after an (empty) container opens, so a doc
+            # truncated *before its first element closes* still salvages to a valid
+            # empty container instead of failing (drops only the cut-off element).
+            cut, cut_stack = i + 1, tuple(stack)
         elif ch == "[":
             stack.append("]")
+            cut, cut_stack = i + 1, tuple(stack)
         elif ch in "}]":
             if not stack:
                 break  # unbalanced close; best guess is everything before it
