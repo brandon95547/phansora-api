@@ -640,6 +640,18 @@ async def voice_preview(
         traceback.print_exc()
         voice_store.discard_pending(safe_user, token)
         raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
+
+    # Match the sample's loudness to all other TTS output (EBU R128 / -16 LUFS).
+    # Best-effort: keep the raw sample if loudnorm fails, so the preview still works.
+    tmp_norm = sample_out.with_name(sample_out.name + ".tmp.wav")
+    try:
+        from phansora.shared.utils.ffmpeg import loudnorm_audio
+        loudnorm_audio(sample_out, tmp_norm)
+        tmp_norm.replace(sample_out)
+    except Exception:
+        print("[create-voice] loudnorm skipped for sample", flush=True)
+        tmp_norm.unlink(missing_ok=True)
+
     # Remember the knobs + reference transcript so approval can persist them.
     voice_store.save_pending_settings(safe_user, token, ref_text=ref_text, **knobs)
     return result

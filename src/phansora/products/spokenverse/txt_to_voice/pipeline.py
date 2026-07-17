@@ -16,6 +16,7 @@ from phansora.shared.utils.chunking import chunk_text
 from phansora.shared.utils.naming import sanitize_stem
 from phansora.shared.utils.ffmpeg import (
     concat_audio_files_ffmpeg,
+    loudnorm_audio,
     require_ffmpeg_if_needed,
     transcode_audio_ffmpeg,
 )
@@ -91,9 +92,9 @@ class BatchConverter:
         safe_name = self._make_output_stem(txt_path, in_dir)
         final_audio = out_dir / f"{safe_name}.{self.cfg.output_format}"
 
-        needs_concat = len(chunks) > 1
-        needs_transcode = self.cfg.output_format != "wav"
-        require_ffmpeg_if_needed(needs_concat or needs_transcode)
+        # ffmpeg is always required now: every render ends with a loudnorm pass so all
+        # output sits at the same professional loudness (see the final step below).
+        require_ffmpeg_if_needed(True)
 
         tmp_dir = out_dir / ".tmp_chunks" / safe_name
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -142,11 +143,18 @@ class BatchConverter:
             LOG.info("  Concatenating chunks with ffmpeg -> %s", final_audio.name)
             concat_audio_files_ffmpeg(chunk_files, merged_audio)
 
-        if self.cfg.output_format == "wav":
-            final_audio.parent.mkdir(parents=True, exist_ok=True)
-            merged_audio.replace(final_audio)
-        else:
-            transcode_audio_ffmpeg(merged_audio, final_audio)
+        # Final step: loudness-normalize to a consistent professional level (EBU R128,
+        # -16 LUFS) while encoding to the requested format. Fall back to the plain
+        # replace/transcode path if loudnorm ever fails, so audio still renders.
+        final_audio.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            loudnorm_audio(merged_audio, final_audio)
+        except Exception:
+            LOG.warning("loudnorm failed; writing un-normalized audio", exc_info=True)
+            if self.cfg.output_format == "wav":
+                merged_audio.replace(final_audio)
+            else:
+                transcode_audio_ffmpeg(merged_audio, final_audio)
 
         # Cleanup temp chunks
         try:
