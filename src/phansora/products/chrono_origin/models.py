@@ -20,6 +20,11 @@ class TraceRequest(BaseModel):
     language: str = Field(default="en")
 
 
+class CacheKeyRequest(BaseModel):
+    """Invalidate a cached trace by its title (see /cache/invalidate)."""
+    title: str = Field(..., min_length=1)
+
+
 class Citation(BaseModel):
     title: Optional[str] = None
     url: str

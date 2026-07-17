@@ -16,8 +16,9 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from .config import get_settings  # noqa: E402
-from .models import ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
+from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
 from .pipeline.orchestrator import TraceOrchestrator  # noqa: E402
+from .services.cache import delete_cached, normalize_title  # noqa: E402
 from .services.job_manager import JobManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -112,6 +113,14 @@ def submit_trace_job(req: TraceRequest):
     _ensure_configured()
     job = app.state.job_manager.submit(req)
     return job.to_dict()
+
+
+@app.post("/cache/invalidate")
+def invalidate_cache(req: CacheKeyRequest):
+    """Drop the cached trace for a title so a re-trace runs fresh. Called by the
+    Node app when a user deletes an origin trace. Idempotent."""
+    removed = delete_cached(normalize_title(req.title))
+    return {"ok": True, "removed": removed}
 
 
 @app.get("/trace/jobs/{job_id}")
