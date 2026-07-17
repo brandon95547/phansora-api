@@ -13,6 +13,12 @@ PIP    := $(VENV)/bin/pip
 HOST   ?= 0.0.0.0
 PORT   ?= 8000
 
+# All runtime data (voices, generated audio/text, Book Alchemy, caches) lives under
+# ./data in dev, mirroring prod's PHANSORA_DATA_DIR=<repo>/data. Exported to every
+# recipe so the API and workers share one root instead of scattering dirs at the repo root.
+PHANSORA_DATA_DIR ?= $(CURDIR)/data
+export PHANSORA_DATA_DIR
+
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
