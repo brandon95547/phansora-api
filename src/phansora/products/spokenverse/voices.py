@@ -354,9 +354,12 @@ def _list_own(user_id: str) -> List[dict]:
 
 
 def list_default_voices() -> List[dict]:
-    """App-wide default voices shown to every user. Flagged ``default: True`` so the
-    client can present them distinctly (and keep them out of the user's "My Voices")."""
-    return [{**v, "default": True} for v in _list_own(DEFAULTS_ID)]
+    """App-wide default voices shown to every user, sorted alphabetically by name
+    (so they appear in order everywhere). Flagged ``default: True`` so the client can
+    present them distinctly (and keep them out of the user's "My Voices")."""
+    items = [{**v, "default": True} for v in _list_own(DEFAULTS_ID)]
+    items.sort(key=lambda v: (v.get("name") or "").casefold())
+    return items
 
 
 def list_voices(user_id: str) -> List[dict]:
