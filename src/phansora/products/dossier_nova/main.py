@@ -36,6 +36,7 @@ from .validation import (
     compute_duplication_ratio,
 )
 from .text_cleaner import clean_extracted_text
+from .synthesis import synthesize_dossier, render_front_matter
 from phansora.shared.paths import runtime_root
 
 # Runtime data root (CWD / PHANSORA_DATA_DIR), not the installed package dir.
@@ -164,6 +165,32 @@ def run_pipeline(
             )
         ]
 
+    # 4b. Cross-source intelligence synthesis (Phase 1). The one stage that sees
+    # every source together: merges duplicate facts into single findings with
+    # confidence + supporting sources, builds a timeline, cross-source agreement/
+    # conflict analysis, evidence matrix, and an executive summary. Rendered as the
+    # dossier's leading front matter (prepended after the body is assembled, below).
+    # Best-effort: any failure leaves front_matter empty and the dossier proceeds.
+    front_matter = ""
+    if config.enable_correlation and len(sources) > 1:
+        print("[PIPELINE] Running cross-source intelligence synthesis...")
+        intel_model = _timed(
+            "synthesis",
+            lambda: synthesize_dossier(
+                sources=sources,
+                source_profiles=source_profiles,
+                client=config.deepseek_client,
+                sample_chars=config.synthesis_sample_chars,
+            ),
+        )
+        if intel_model:
+            source_labels = [s["label"] for s in sources]
+            front_matter = render_front_matter(intel_model, source_labels)
+            print(
+                f"[PIPELINE] Synthesis produced {len(intel_model.get('findings') or [])} "
+                f"findings, {len(intel_model.get('timeline') or [])} timeline events."
+            )
+
     # 5. Build the merged text (with source headers) for TOC extraction
     merged_text = _build_source_labeled_text(sources)
 
@@ -244,6 +271,16 @@ def run_pipeline(
     report_path = Path(resolved_toc_path).parent / "loss_report.md"
     report_path.write_text(loss_report, encoding="utf-8")
 
+    # 10d. Prepend the intelligence front matter so the dossier LEADS with the
+    # executive summary, timeline, findings, cross-source analysis, and evidence
+    # matrix — above the per-section synthesized body. Done after coverage/validation
+    # so those metrics reflect the source-derived body, not the synthesized summary.
+    if front_matter:
+        dossier_body = Path(resolved_toc_path).read_text(encoding="utf-8")
+        Path(resolved_toc_path).write_text(
+            front_matter + "\n\n" + dossier_body, encoding="utf-8"
+        )
+
     coverage_score = coverage["coverage_score"]
     if coverage_score < 0.95:
         print(f"⚠️  Coverage score: {coverage_score:.1%} — some content may have been lost.")
@@ -273,6 +310,7 @@ def run_pipeline(
         "source_count": len(sources),
         "source_balance": source_balance,
         "duplication_ratio": duplication_ratio,
+        "has_front_matter": bool(front_matter),
     }
 
 

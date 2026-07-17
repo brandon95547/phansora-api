@@ -77,6 +77,12 @@ class Config:
         self.enable_source_profiling = os.getenv("ENABLE_SOURCE_PROFILING", "true").lower() in ("true", "1", "yes")
         # Maximum chars sent to the LLM per source for profiling (first N chars).
         self.profile_sample_chars = _get_int_env("PROFILE_SAMPLE_CHARS", 4000)
+        # Cross-source intelligence synthesis (Phase 1): correlate every source into
+        # one structured model (merged findings + confidence + timeline + evidence
+        # matrix + executive summary) and prepend it as dossier front matter.
+        self.enable_correlation = os.getenv("ENABLE_CORRELATION", "true").lower() in ("true", "1", "yes")
+        # Chars per source fed to the single correlation call (first N chars).
+        self.synthesis_sample_chars = _get_int_env("SYNTHESIS_SAMPLE_CHARS", 8000)
 
     @classmethod
     def from_env(cls):
