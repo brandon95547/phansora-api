@@ -72,7 +72,12 @@ class OpenAIResearchConfig:
     reason_effort: str = "medium"
     light_effort: str = "low"
     search_effort: str = "low"
-    reason_max_output_tokens: int = 8000
+    # GPT-5 Nano is a reasoning model: reasoning tokens count against
+    # max_output_tokens. Too small a budget (e.g. 8000) gets fully consumed by
+    # reasoning on non-trivial prompts, leaving EMPTY output ({} JSON) — which
+    # collapsed Chrono-Origin syntheses to "unknown". Keep this generous; it is a
+    # CAP, not a fixed cost (you only pay for tokens actually generated).
+    reason_max_output_tokens: int = 24000
     search_max_output_tokens: int = 4000
     # The hosted web-search tool type; override to "web_search_preview" on older tiers.
     web_search_tool: str = "web_search"
@@ -89,7 +94,7 @@ class OpenAIResearchConfig:
             reason_effort=_env("OPENAI_REASON_EFFORT", "medium"),
             light_effort=_env("OPENAI_LIGHT_EFFORT", "low"),
             search_effort=_env("OPENAI_SEARCH_EFFORT", "low"),
-            reason_max_output_tokens=int(_env("OPENAI_REASON_MAX_TOKENS", "8000")),
+            reason_max_output_tokens=int(_env("OPENAI_REASON_MAX_TOKENS", "24000")),
             search_max_output_tokens=int(_env("OPENAI_SEARCH_MAX_TOKENS", "4000")),
             web_search_tool=_env("OPENAI_WEB_SEARCH_TOOL", "web_search"),
             timeout_s=int(_env("CHRONO_REQUEST_TIMEOUT_S", "120")),
