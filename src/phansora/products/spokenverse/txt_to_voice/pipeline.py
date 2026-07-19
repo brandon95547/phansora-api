@@ -56,6 +56,9 @@ class TTSConfig:
 
     # CosyVoice2 knobs; None => engine/env defaults.
     speed: Optional[float] = None  # 0.5-2.0 (native mel time-scaling)
+    # Delivery direction routed through inference_instruct2 ("speak in a calm tone").
+    # None/empty => plain zero-shot cloning.
+    instruct_text: Optional[str] = None
 
 
 class BatchConverter:
@@ -127,6 +130,7 @@ class BatchConverter:
                     ref_audio=self.cfg.ref_audio,
                     prompt_text=self.cfg.prompt_text,
                     speed=self.cfg.speed,
+                    instruct_text=self.cfg.instruct_text,
                 )
 
         tasks: List[asyncio.Task[None]] = []

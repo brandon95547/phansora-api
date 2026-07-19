@@ -16,8 +16,13 @@ Acceleration (all quality-preserving, all default-on; see the load flags below):
     * TensorRT flow estimator   — fp16 engine for the flow ODE (built once, cached to disk).
 
 Speed is a NATIVE CosyVoice2 knob (mel time-scaled at synthesis, 0.5-2.0) — no ffmpeg
-post-process. There is no emotion control (removed with IndexTTS2); ``emo_*`` args are
-accepted for interface parity and ignored.
+post-process.
+
+Delivery is steered with ``instruct_text`` — a short natural-language direction ("speak
+in a calm, reassuring tone") routed through ``inference_instruct2``. It shapes prosody
+while the reference clip still supplies the timbre, so the clone stays on-voice. There is
+no emotion *vector* (that went with IndexTTS2); ``emo_*`` args are accepted for interface
+parity and ignored.
 
 Exposes the backend surface used by ``adapters.backend``:
     * ``synthesize_to_file(...)`` — async, writes a WAV to ``out_path``
@@ -295,21 +300,39 @@ def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[s
     return None
 
 
-def _spk_id_for(cosy, ref_clip: str, prompt_text: str) -> str:
-    """Extract + cache the reference speaker ONCE, keyed by (clip, transcript).
+def _spk_id_for(cosy, ref_clip: str, conditioning_text: str) -> str:
+    """Extract + cache the reference speaker ONCE, keyed by (clip, conditioning text).
 
     CosyVoice's frontend otherwise re-runs prompt extraction (speech tokenizer, campplus
     speaker embedding, speech feat) for every sentence; caching via add_zero_shot_spk turns
     that into a one-time cost per voice. Features are identical, so voice similarity is
-    unchanged."""
-    sig = hashlib.sha1(f"{ref_clip}\x00{prompt_text}".encode("utf-8")).hexdigest()[:16]
+    unchanged.
+
+    ``conditioning_text`` is the reference transcript for plain cloning, or the INSTRUCT
+    text in instruct mode — see ``_synthesize_sync`` for why the instruction has to be
+    baked into the cache entry rather than passed at call time."""
+    sig = hashlib.sha1(f"{ref_clip}\x00{conditioning_text}".encode("utf-8")).hexdigest()[:16]
     cached = _SPK_CACHE.get(sig)
     if cached is not None:
         return cached
     spk_id = f"spk_{sig}"
-    cosy.add_zero_shot_spk(prompt_text, ref_clip, spk_id)
+    cosy.add_zero_shot_spk(conditioning_text, ref_clip, spk_id)
     _SPK_CACHE[sig] = spk_id
     return spk_id
+
+
+# An instruction is a short natural-language delivery direction ("speak in a calm,
+# reassuring tone"). It is NOT the text to be spoken. Keep it short: it occupies the same
+# LLM prompt slot the reference transcript normally would, and a long instruction crowds
+# out the conditioning that keeps the clone on-voice.
+INSTRUCT_MAX_CHARS = 200
+
+
+def _clean_instruct(instruct_text: Optional[str]) -> str:
+    """Normalize a user-supplied instruction: collapse whitespace, cap the length."""
+    import re
+    t = re.sub(r"\s+", " ", (instruct_text or "").strip())
+    return t[:INSTRUCT_MAX_CHARS]
 
 
 def _hard_split(segment: str, max_chars: int) -> list[str]:
@@ -385,6 +408,7 @@ def _synthesize_sync(
     style: Optional[str] = None,
     emo_alpha: Optional[float] = None,
     emo_vector: Optional[Sequence[float]] = None,
+    instruct_text: Optional[str] = None,
 ) -> None:
     # CosyVoice2 clones from the speaker clip + its transcript. rate/volume/language/style
     # and emo_* are accepted for interface parity but not used by the model.
@@ -426,15 +450,38 @@ def _synthesize_sync(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     chunks = _chunk_text(text, max_chars)
+
+    # Instruct mode: a delivery direction steers prosody while the clip still supplies the
+    # voice. CosyVoice2 implements this by swapping the reference transcript out of the LLM
+    # prompt for the instruction and dropping llm_prompt_speech_token (so the LLM stops
+    # copying the prompt's delivery), while flow_prompt_speech_token + the speaker embedding
+    # — what actually carry timbre — are untouched.
+    #
+    # SUBTLE: upstream's frontend_zero_shot ignores its prompt_text argument entirely when a
+    # cached zero_shot_spk_id is supplied (it returns spk2info[spk_id] wholesale), and
+    # frontend_instruct2 just delegates to it. So passing the instruction as the call
+    # argument would SILENTLY DO NOTHING against our speaker cache. Instead we bake the
+    # instruction in as the cache entry's conditioning text — _SPK_CACHE is keyed on it, so
+    # each instruction gets its own entry and we keep the one-extraction-per-voice win. We
+    # still pass it positionally for correctness if the cache ever misses.
+    instruct = _clean_instruct(instruct_text)
+    conditioning = instruct or p_text
+
     try:
         with _INFER_LOCK:
-            spk_id = _spk_id_for(cosy, ref_clip, p_text)
+            spk_id = _spk_id_for(cosy, ref_clip, conditioning)
             parts: list["torch.Tensor"] = []
             for chunk in chunks:
-                # zero-shot via the cached speaker id (prompt_text/prompt_wav unused then).
-                for out in cosy.inference_zero_shot(
-                    chunk, "", "", zero_shot_spk_id=spk_id, stream=False, speed=speed
-                ):
+                # Both paths run off the cached speaker id (prompt_text/prompt_wav unused).
+                if instruct:
+                    stream = cosy.inference_instruct2(
+                        chunk, instruct, "", zero_shot_spk_id=spk_id, stream=False, speed=speed
+                    )
+                else:
+                    stream = cosy.inference_zero_shot(
+                        chunk, "", "", zero_shot_spk_id=spk_id, stream=False, speed=speed
+                    )
+                for out in stream:
                     parts.append(out["tts_speech"])
             if not parts:
                 raise RuntimeError("CosyVoice2 synthesis produced no audio.")
@@ -462,12 +509,13 @@ async def synthesize_to_file(
     style: Optional[str] = None,  # accepted for parity; not used
     emo_alpha: Optional[float] = None,  # accepted for parity; CosyVoice2 has no emotion control
     emo_vector: Optional[Sequence[float]] = None,  # accepted for parity; ignored
+    instruct_text: Optional[str] = None,  # delivery direction, e.g. "speak in a calm tone"
     **_ignored,
 ) -> None:
     await asyncio.to_thread(
         _synthesize_sync,
         text, out_path, voice, use_gpu, rate, volume, speaker, language, ref_audio,
-        prompt_text, speed, style, emo_alpha, emo_vector,
+        prompt_text, speed, style, emo_alpha, emo_vector, instruct_text,
     )
 
 

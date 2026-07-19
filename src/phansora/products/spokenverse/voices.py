@@ -59,10 +59,11 @@ PENDING_TTL_SECONDS = 6 * 3600
 from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice2_client import (
     LANGUAGES, LANGUAGE_DEFAULT,
     SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
+    INSTRUCT_MAX_CHARS,
 )
 
 # All persisted setting keys (used to backfill/read from the manifest + pending JSON).
-SETTING_KEYS = ("language", "speed")
+SETTING_KEYS = ("language", "speed", "instruct_text")
 
 # Reserved store of app-wide DEFAULT voices, shown to every user in addition to their
 # own saved voices. A regular user_id can never resolve to this id (the server's
@@ -71,7 +72,7 @@ SETTING_KEYS = ("language", "speed")
 DEFAULTS_ID = "_defaults"
 
 
-def clamp_settings(language=None, speed=None) -> dict:
+def clamp_settings(language=None, speed=None, instruct_text=None) -> dict:
     """Coerce/clamp CosyVoice2 generation knobs to supported ranges, filling defaults."""
     lang = (str(language).strip().lower() if language else "")
     out = {"language": lang if lang in LANGUAGES else LANGUAGE_DEFAULT}
@@ -80,6 +81,10 @@ def clamp_settings(language=None, speed=None) -> dict:
     except (TypeError, ValueError):
         sp = SPEED_DEFAULT
     out["speed"] = max(SPEED_MIN, min(SPEED_MAX, round(sp, 3)))
+    # Delivery direction saved with the voice; "" means plain cloning. Whitespace is
+    # collapsed and the length capped to match what the engine will accept.
+    instruct = re.sub(r"\s+", " ", str(instruct_text or "").strip())[:INSTRUCT_MAX_CHARS]
+    out["instruct_text"] = instruct
     return out
 
 

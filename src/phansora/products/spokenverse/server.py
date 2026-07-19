@@ -358,6 +358,7 @@ async def txt_to_audio(
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
     speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    instruct_text: Optional[str] = Form(None),  # delivery direction, e.g. "in a calm tone"
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -393,6 +394,10 @@ async def txt_to_audio(
             if not language:
                 language = rec.get("language")
             prompt_text = rec.get("ref_text") or None
+            # The voice's saved delivery direction is the default; a value on the request
+            # overrides it for this render only.
+            if instruct_text is None:
+                instruct_text = rec.get("instruct_text") or None
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -407,6 +412,7 @@ async def txt_to_audio(
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
         speed=speed,
+        instruct_text=instruct_text,
     )
 
     try:
@@ -449,6 +455,7 @@ async def txt_to_audio(
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
                 "speed": speed,
+                "instruct_text": instruct_text,
             },
         },
     )
@@ -553,6 +560,9 @@ async def tts_options() -> dict:
                          "description": "language of the synthesized text"},
             "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
                       "default": cv.SPEED_DEFAULT, "description": "native CosyVoice2 speed (mel time-scaling)"},
+            "instruct_text": {"max_chars": cv.INSTRUCT_MAX_CHARS, "default": "",
+                              "description": "natural-language delivery direction (e.g. 'speak in a "
+                                             "calm, reassuring tone'); empty = plain cloning"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
@@ -579,6 +589,7 @@ async def voice_preview(
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
     speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    instruct_text: Optional[str] = Form(None),  # delivery direction saved with the voice
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
@@ -610,7 +621,9 @@ async def voice_preview(
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
 
-    knobs = voice_store.clamp_settings(language=language, speed=speed)
+    knobs = voice_store.clamp_settings(
+        language=language, speed=speed, instruct_text=instruct_text
+    )
 
     # Auto-transcribe the reference clip and store it as ref_text. CosyVoice2 REQUIRES this
     # transcript at synthesis (prompt_text). Best-effort: if it fails, ref_text stays empty
@@ -645,6 +658,7 @@ async def voice_preview(
             language=knobs["language"],
             prompt_text=ref_text,  # CosyVoice conditions on the ref clip's transcript
             speed=knobs["speed"],
+            instruct_text=knobs["instruct_text"],
         )
     except Exception as e:
         import traceback
