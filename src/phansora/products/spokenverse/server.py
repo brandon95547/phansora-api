@@ -103,6 +103,18 @@ async def _preload_tts_model() -> None:
     # capture (~80s) + first-run TensorRT engine build. Off-thread so startup and
     # /health stay responsive; the load is lock-guarded, so a request that races the
     # warmup just waits on the same load instead of starting a second one.
+    #
+    # Dev escape hatch: set TTS_PRELOAD=0 to skip this. The CosyVoice2 model (and its
+    # heavy torch/vLLM imports) then never loads at startup — it lazy-loads on the first
+    # generation instead. Useful on machines that never run TTS locally (e.g. macOS / no
+    # GPU), so `make dev` starts without loading the model.
+    if os.getenv("TTS_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
+        import logging
+        logging.getLogger("spokenverse").info(
+            "TTS_PRELOAD is off — skipping CosyVoice2 startup warmup (lazy-loads on first use)."
+        )
+        return
+
     import threading
 
     from phansora.products.spokenverse.txt_to_voice.adapters import backend as tts_backend

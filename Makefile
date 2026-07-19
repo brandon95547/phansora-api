@@ -1,5 +1,5 @@
 # Phansora API — developer tasks
-.PHONY: help install install-tts install-mac dev run worker test compile docker-build docker-up docker-down clean
+.PHONY: help install install-tts install-mac dev run worker test compile clean
 
 VENV   ?= .venv
 # Where the CosyVoice2 TTS engine checkout lives (git clone, not a pip package).
@@ -97,15 +97,6 @@ test: ## Run the test suite
 
 compile: ## Byte-compile every module (fast syntax check)
 	$(PY) -m py_compile $$(find src -name '*.py')
-
-docker-build: ## Build the production image
-	docker compose build
-
-docker-up: ## Start the stack
-	docker compose up -d
-
-docker-down: ## Stop the stack
-	docker compose down
 
 clean: ## Remove caches and build artifacts
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
