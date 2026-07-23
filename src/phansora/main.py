@@ -38,7 +38,7 @@ _PRODUCT_APPS = {
     "/chrono": "phansora.products.chrono_origin.server:app",
     "/dossier": "phansora.products.dossier_nova.api:app",
     "/book-alchemy": "phansora.products.book_alchemy.server:app",
-    "/studio": "phansora.products.studio.server:app",
+    "/studio": "phansora.products.narrava_studio.server:app",
 }
 # prefix -> product key (used in the root() response)
 _PREFIX_TO_KEY = {
