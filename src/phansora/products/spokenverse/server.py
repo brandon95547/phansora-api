@@ -103,6 +103,18 @@ async def _preload_tts_model() -> None:
     # capture (~80s) + first-run TensorRT engine build. Off-thread so startup and
     # /health stay responsive; the load is lock-guarded, so a request that races the
     # warmup just waits on the same load instead of starting a second one.
+    #
+    # Dev escape hatch: set TTS_PRELOAD=0 to skip this. The CosyVoice2 model (and its
+    # heavy torch/vLLM imports) then never loads at startup — it lazy-loads on the first
+    # generation instead. Useful on machines that never run TTS locally (e.g. macOS / no
+    # GPU), so `make dev` starts without loading the model.
+    if os.getenv("TTS_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
+        import logging
+        logging.getLogger("spokenverse").info(
+            "TTS_PRELOAD is off — skipping CosyVoice2 startup warmup (lazy-loads on first use)."
+        )
+        return
+
     import threading
 
     from phansora.products.spokenverse.txt_to_voice.adapters import backend as tts_backend
@@ -346,6 +358,7 @@ async def txt_to_audio(
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
     speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    instruct_text: Optional[str] = Form(None),  # delivery direction, e.g. "in a calm tone"
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -381,6 +394,10 @@ async def txt_to_audio(
             if not language:
                 language = rec.get("language")
             prompt_text = rec.get("ref_text") or None
+            # The voice's saved delivery direction is the default; a value on the request
+            # overrides it for this render only.
+            if instruct_text is None:
+                instruct_text = rec.get("instruct_text") or None
 
     cfg = TTSConfig(
         voice=resolved_voice,
@@ -395,6 +412,7 @@ async def txt_to_audio(
         max_concurrency=max_concurrency,
         file_concurrency=file_concurrency,
         speed=speed,
+        instruct_text=instruct_text,
     )
 
     try:
@@ -437,6 +455,7 @@ async def txt_to_audio(
                 "max_concurrency": max_concurrency,
                 "file_concurrency": file_concurrency,
                 "speed": speed,
+                "instruct_text": instruct_text,
             },
         },
     )
@@ -541,6 +560,9 @@ async def tts_options() -> dict:
                          "description": "language of the synthesized text"},
             "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
                       "default": cv.SPEED_DEFAULT, "description": "native CosyVoice2 speed (mel time-scaling)"},
+            "instruct_text": {"max_chars": cv.INSTRUCT_MAX_CHARS, "default": "",
+                              "description": "natural-language delivery direction (e.g. 'speak in a "
+                                             "calm, reassuring tone'); empty = plain cloning"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
         "env_overrides": [
@@ -567,6 +589,7 @@ async def voice_preview(
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
     speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    instruct_text: Optional[str] = Form(None),  # delivery direction saved with the voice
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
@@ -598,7 +621,9 @@ async def voice_preview(
     if ref_clip is None:
         raise HTTPException(status_code=400, detail="Could not process audio.")
 
-    knobs = voice_store.clamp_settings(language=language, speed=speed)
+    knobs = voice_store.clamp_settings(
+        language=language, speed=speed, instruct_text=instruct_text
+    )
 
     # Auto-transcribe the reference clip and store it as ref_text. CosyVoice2 REQUIRES this
     # transcript at synthesis (prompt_text). Best-effort: if it fails, ref_text stays empty
@@ -633,6 +658,7 @@ async def voice_preview(
             language=knobs["language"],
             prompt_text=ref_text,  # CosyVoice conditions on the ref clip's transcript
             speed=knobs["speed"],
+            instruct_text=knobs["instruct_text"],
         )
     except Exception as e:
         import traceback
@@ -640,6 +666,18 @@ async def voice_preview(
         traceback.print_exc()
         voice_store.discard_pending(safe_user, token)
         raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
+
+    # Match the sample's loudness to all other TTS output (EBU R128 / -16 LUFS).
+    # Best-effort: keep the raw sample if loudnorm fails, so the preview still works.
+    tmp_norm = sample_out.with_name(sample_out.name + ".tmp.wav")
+    try:
+        from phansora.shared.utils.ffmpeg import loudnorm_audio
+        loudnorm_audio(sample_out, tmp_norm)
+        tmp_norm.replace(sample_out)
+    except Exception:
+        print("[create-voice] loudnorm skipped for sample", flush=True)
+        tmp_norm.unlink(missing_ok=True)
+
     # Remember the knobs + reference transcript so approval can persist them.
     voice_store.save_pending_settings(safe_user, token, ref_text=ref_text, **knobs)
     return result
@@ -688,10 +726,11 @@ async def voice_list(user_id: str, response: Response) -> dict:
 @app.get("/voices/{voice_id}/audio", response_model=None)
 async def voice_audio(voice_id: str, user_id: str) -> FileResponse:
     safe_user = _safe_user_id(user_id)
-    # Play back the synthesized sample (what the user approved). Fall back to the
-    # reference clip for voices saved before samples were stored.
-    sample = voice_store.voice_sample_path(safe_user, voice_id)
-    if sample.exists():
+    # Play back the synthesized sample (what the user approved) — the user's own, or a
+    # shared default voice's. Fall back to the reference clip for voices saved before
+    # samples were stored.
+    sample = voice_store.resolve_sample_path(safe_user, voice_id)
+    if sample is not None:
         return FileResponse(path=str(sample), media_type="audio/wav", filename=f"{voice_id}.wav")
     p = voice_store.voice_path(safe_user, voice_id)
     if p is None:

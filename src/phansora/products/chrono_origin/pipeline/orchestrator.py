@@ -172,6 +172,23 @@ class TraceOrchestrator:
                 max_queries=max_queries,
             )
 
+        # Guard: a trace with no grounded evidence can only synthesize an "unknown"
+        # origin — a useless, misleading dossier. Fail loudly instead so the job is
+        # marked failed (job_manager) and the caller refunds the credit (Node sync),
+        # rather than silently returning an empty result. The usual cause is a broken
+        # or unconfigured web-search provider returning zero results.
+        if not all_mentions:
+            if not all_citations:
+                raise RuntimeError(
+                    "Web search returned no results for this subject. The search "
+                    "provider is likely unconfigured or unavailable — no origin could "
+                    "be traced."
+                )
+            raise RuntimeError(
+                "No datable events could be extracted from the sources found for this "
+                "subject, so no origin could be traced."
+            )
+
         # Stage 5 - Synthesize
         progress(loop_end_pct, "Synthesizing timeline")
         final = self._synthesize(
@@ -230,7 +247,14 @@ class TraceOrchestrator:
             citations_block=_format_citations_block(citations),
         )
         try:
-            data = self.client.reason_json(prompt)
+            # Use the light (non-reasoning) path: extracting dated mentions from the
+            # provided search notes is mechanical, not a reasoning task. Critically, on
+            # GPT-5 Nano the reasoning path burns its whole output-token budget on
+            # reasoning for large note prompts and returns EMPTY json ({} -> no
+            # mentions), which collapses the whole trace to "unknown". Low effort leaves
+            # room for the JSON output. (Verified: 15k-char prompt -> 0 mentions with
+            # reasoning, 7 with the light path.)
+            data = self.client.reason_json(prompt, use_reasoning_model=False)
             return data.get("mentions", []) or []
         except Exception as exc:
             logger.warning("Extraction failed: %s", exc)
@@ -397,7 +421,9 @@ class TraceOrchestrator:
             max_events=req.max_events,
         )
         try:
-            data = self.client.reason_json(extract_prompt)
+            # Light path — same reason as _extract: mechanical event extraction, and
+            # the reasoning path returns empty JSON on large note prompts with GPT-5 Nano.
+            data = self.client.reason_json(extract_prompt, use_reasoning_model=False)
             raw_events = data.get("events") or []
         except Exception as exc:
             logger.warning("Expand extract failed: %s", exc)

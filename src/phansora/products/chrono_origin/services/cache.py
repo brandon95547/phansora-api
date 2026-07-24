@@ -43,3 +43,15 @@ def save_cached(key: str, payload: dict[str, Any]) -> None:
     if path is None:
         return
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def delete_cached(key: str) -> bool:
+    """Remove a cached trace by key. Returns True if a file was actually deleted."""
+    path = _cache_path(key)
+    if path is None or not path.exists():
+        return False
+    try:
+        path.unlink()
+        return True
+    except Exception:
+        return False

@@ -52,7 +52,9 @@ ANALYZE_SYSTEM = (
     "fine. Do not summarize the whole book — only what this excerpt supports.\n"
     "Keep it compact so the response never truncates: at most 8 items per array "
     "(the most important only), each `title` under 12 words and each `body` under "
-    "40 words. Capture the idea concisely — do not copy long passages verbatim."
+    "40 words. Capture the idea concisely — do not copy long passages verbatim. "
+    "These limits are hard: if the excerpt is long or florid, compress aggressively "
+    "rather than reproducing its wording at length."
 )
 
 

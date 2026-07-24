@@ -21,11 +21,13 @@ import logging
 import os
 import signal
 import socket
+from pathlib import Path
+
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from phansora.products.book_alchemy import db, pipeline  # noqa: E402
+from phansora.products.book_alchemy import db, pipeline, storage  # noqa: E402
 from phansora.products.book_alchemy.deepseek_client import DeepSeekClient  # noqa: E402
 
 logging.basicConfig(
@@ -41,6 +43,25 @@ IDLE_SLEEP = float(os.getenv("BOOK_ALCHEMY_IDLE_SLEEP", "5"))
 _stop = asyncio.Event()
 
 
+def _cleanup_source(proj: dict) -> None:
+    """Delete the uploaded source file (PDF/EPUB/etc.) once a project reaches a
+    terminal phase — whether the audio course succeeded or failed. The source is
+    only needed while parsing; afterwards it just consumes disk and accumulates.
+    The rendered session audio in the same folder is left untouched. Best-effort:
+    never raises, and only ever unlinks a real file inside the book_alchemy dir."""
+    source_path = proj.get("source_path")
+    if not source_path:
+        return
+    try:
+        path = Path(source_path).resolve()
+        base = storage.BASE_DIR.resolve()
+        if base in path.parents and path.is_file():
+            path.unlink()
+            log.info("Deleted source file for project %s: %s", proj.get("id"), path.name)
+    except Exception:  # noqa: BLE001 — cleanup must never break the worker
+        log.warning("Could not delete source file %s", source_path, exc_info=True)
+
+
 async def _process_project(project_id: int, client: DeepSeekClient) -> None:
     """Drive one claimed project to a terminal phase, renewing its lease."""
     while not _stop.is_set():
@@ -49,6 +70,8 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
             return
         proj = dict(row)
         if proj["phase"] in ("complete", "failed"):
+            # Reached a terminal phase (course done or failed) — drop the source file.
+            _cleanup_source(proj)
             return
         try:
             await pipeline.run_step(proj, client)
@@ -58,6 +81,7 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
                 project_id, status="failed", phase="failed",
                 stage="Failed", error_message=str(exc)[:1000],
             )
+            _cleanup_source(proj)
             return
         except Exception as exc:  # noqa: BLE001
             log.exception("Project %s step crashed", project_id)
@@ -65,6 +89,7 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
                 project_id, status="failed", phase="failed",
                 stage="Failed", error_message=str(exc)[:1000],
             )
+            _cleanup_source(proj)
             return
         await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
 

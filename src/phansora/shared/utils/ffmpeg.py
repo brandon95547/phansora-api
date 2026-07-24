@@ -74,3 +74,50 @@ def transcode_audio_ffmpeg(src_path: Path, dst_path: Path) -> None:
         str(dst_path),
     ]
     subprocess.run(cmd, check=True)
+
+
+# EBU R128 loudness target applied to ALL synthesized TTS/voice output, so every clip
+# sits at the same professional loudness regardless of the source voice. -16 LUFS is
+# the podcast/audiobook spoken-word standard (clear and present on phones/laptops).
+LOUDNESS_I = -16.0    # integrated loudness, LUFS
+LOUDNESS_TP = -1.0    # true-peak ceiling, dBTP
+LOUDNESS_LRA = 11.0   # target loudness range, LU
+
+
+def loudnorm_audio(
+    src_path: Path,
+    dst_path: Path,
+    *,
+    i: float = LOUDNESS_I,
+    tp: float = LOUDNESS_TP,
+    lra: float = LOUDNESS_LRA,
+    sample_rate: int = 24000,
+) -> None:
+    """Loudness-normalize ``src`` to an EBU R128 target (single-pass ``loudnorm``) and
+    encode to ``dst`` (format inferred by extension). Forcing ``-ar`` keeps loudnorm from
+    resampling to 192 kHz. Used as the final pass on every rendered TTS file."""
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    ext = dst_path.suffix.lower()
+    if ext == ".mp3":
+        codec_args = ["-codec:a", "libmp3lame", "-q:a", "2"]
+    elif ext == ".wav":
+        codec_args = ["-codec:a", "pcm_s16le"]
+    else:
+        raise ValueError(f"Unsupported target extension for loudnorm: {ext}")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(src_path),
+        "-af",
+        f"loudnorm=I={i}:TP={tp}:LRA={lra}",
+        "-ar",
+        str(sample_rate),
+        *codec_args,
+        str(dst_path),
+    ]
+    subprocess.run(cmd, check=True)
