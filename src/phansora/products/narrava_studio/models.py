@@ -111,3 +111,32 @@ class MediaSearchRequest(BaseModel):
 
 class MediaSearchResponse(BaseModel):
     clips: List[MediaClip]
+
+
+# ── Storyboard (AI first visual pass) ────────────────────────────────────────
+# An experienced-documentary-editor pass over the narration: where should the
+# VISUAL change, and what should fill each section. Boundaries follow the story
+# (a new idea / person / place / event / time period / visual concept), never a
+# fixed interval or every sentence.
+class StoryboardRequest(BaseModel):
+    full_text: str = Field(..., min_length=3, max_length=20000)
+    # The narration's real rendered length on the timeline; scene times are laid
+    # out proportionally across it (the model never guesses seconds).
+    total_duration_sec: float = Field(..., gt=0, le=36000)
+    max_scenes: int = Field(default=24, ge=1, le=80)
+
+
+class StoryboardScene(BaseModel):
+    id: str
+    index: int
+    text: str                       # the narration span this visual covers
+    start_sec: float
+    end_sec: float
+    rationale: str = ""             # one line: why the visual changes here
+    media_type: Literal["image", "video"] = "image"
+    search_terms: List[str] = Field(default_factory=list)
+    visual_ideas: List[str] = Field(default_factory=list)
+
+
+class StoryboardResponse(BaseModel):
+    scenes: List[StoryboardScene] = Field(default_factory=list)

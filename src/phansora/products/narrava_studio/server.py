@@ -31,10 +31,12 @@ from .models import (  # noqa: E402
     ScriptGenerateResponse,
     SegmentRequest,
     SegmentResponse,
+    StoryboardRequest,
+    StoryboardResponse,
     TimelineBuildRequest,
     TimelineBuildResponse,
 )
-from .services import llm, media, script, timeline, voices  # noqa: E402
+from .services import llm, media, script, storyboard, timeline, voices  # noqa: E402
 
 logger = logging.getLogger("narrava-studio")
 
@@ -143,6 +145,26 @@ async def build_timeline(req: TimelineBuildRequest):
         ),
     )
     return TimelineBuildResponse(timeline=result)
+
+
+@app.post("/storyboard", response_model=StoryboardResponse)
+async def build_storyboard(req: StoryboardRequest):
+    """AI first visual pass: narration -> media-placeholder scenes at story-flow
+    boundaries, each with media suggestions."""
+    _ensure_llm()
+    try:
+        scenes = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: storyboard.build_storyboard(
+                req.full_text,
+                total_duration_sec=req.total_duration_sec,
+                max_scenes=req.max_scenes,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Storyboard build failed")
+        raise HTTPException(status_code=502, detail=f"Storyboard build failed: {exc}")
+    return StoryboardResponse(scenes=scenes)
 
 
 if __name__ == "__main__":
