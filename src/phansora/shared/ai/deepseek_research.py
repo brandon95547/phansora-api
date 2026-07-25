@@ -58,8 +58,10 @@ def _parse_json(raw: str) -> Dict[str, Any]:
 class DeepSeekConfig:
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-v4-flash"
-    reasoning_model: str = "deepseek-v4-flash"
+    # No literals: from_env() resolves both through shared.ai.models, which raises
+    # if nothing is configured rather than falling back to a name that may be retired.
+    model: str = ""
+    reasoning_model: str = ""
     reason_max_tokens: int = 8000
     search_max_tokens: int = 1024
     timeout_s: int = 120
@@ -67,13 +69,13 @@ class DeepSeekConfig:
     @classmethod
     def from_env(cls) -> "DeepSeekConfig":
         base = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        from .models import resolve_model
+        from .models import resolve_model, resolve_reasoning_model
         model = resolve_model("CHRONO_MODEL", provider="deepseek")
         return cls(
             api_key=(os.getenv("DEEPSEEK_API_KEY") or "").strip(),
             base_url=base,
             model=model,
-            reasoning_model=os.getenv("DEEPSEEK_REASONING_MODEL", model).strip(),
+            reasoning_model=resolve_reasoning_model("CHRONO_MODEL", provider="deepseek"),
             reason_max_tokens=int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS", "8000")),
             search_max_tokens=int(os.getenv("DEEPSEEK_SEARCH_MAX_TOKENS", "1024")),
         )

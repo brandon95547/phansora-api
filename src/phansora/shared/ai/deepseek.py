@@ -20,7 +20,7 @@ from typing import Optional
 
 import aiohttp
 
-from .models import DEFAULT_DEEPSEEK_MODEL, resolve_model
+from .models import resolve_model
 
 
 DEFAULT_CLEAN_PROMPT = """
@@ -50,8 +50,7 @@ OUTPUT:
 """.strip()
 
 # Model names + the per-product override chain live in shared.ai.models (see that module for
-# the resolution order). Re-exported here because callers already import from this one.
-DEFAULT_CHAT_MODEL = DEFAULT_DEEPSEEK_MODEL
+# the resolution order). Nothing is re-exported: there is no default name to re-export.
 
 
 def chat_model(product_var: str | None = None) -> str:
@@ -80,7 +79,6 @@ class DeepSeekChatConfig:
     def from_env(
         *,
         default_base_url: str = "https://api.deepseek.com",
-        default_model: str = DEFAULT_CHAT_MODEL,
         product_var: Optional[str] = None,
     ) -> "DeepSeekChatConfig":
         """``product_var`` names this product's model override (e.g. "BOOK_ALCHEMY_MODEL");
@@ -96,7 +94,7 @@ class DeepSeekChatConfig:
         api_key = (
             os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY") or ""
         ).strip()
-        model = resolve_model(product_var, provider="deepseek") or default_model
+        model = resolve_model(product_var, provider="deepseek")
 
         if not api_key:
             raise RuntimeError(
@@ -171,7 +169,7 @@ async def _chat_completion(
                         body = await resp.text()
                         # `thinking` is a v4-era parameter. If the configured model doesn't
                         # know it, drop it and retry rather than failing the whole job —
-                        # model names change under us (see DEFAULT_CHAT_MODEL).
+                        # model names change under us (the model comes from .env).
                         if resp.status == 400 and "thinking" in body and "thinking" in payload:
                             payload.pop("thinking", None)
                             continue

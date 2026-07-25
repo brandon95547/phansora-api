@@ -1,7 +1,13 @@
-"""DeepSeek client that can drive a *reasoning* model (R1 / ``deepseek-reasoner``).
+"""DeepSeek client that can drive a *reasoning* model.
 
-The reasoning models are not drop-in replacements for ``deepseek-chat``. Three differences
-matter enough to break a naive port:
+Which model that is comes entirely from the environment (see ``shared/ai/models.py``);
+no model name is written down here. DeepSeek's v4 family reasons on every tier, so the
+"reasoning model" is now a cost/quality choice rather than a separate SKU — but earlier
+R1-style models needed a different request shape, and providers may ship such a model
+again, so the payload is still built from the model *kind*.
+
+Where a reasoning-only model is in use, three differences matter enough to break a naive
+port:
 
   1. **No JSON mode.** ``response_format={"type":"json_object"}`` is unsupported. Structured
      output has to be requested in the prompt and parsed leniently on the way back — which
@@ -23,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import random
 from typing import Any, Optional
 
@@ -31,6 +36,8 @@ import aiohttp
 
 from .deepseek import DeepSeekChatConfig
 from .json_repair import parse_json_loose, repair_truncated_json
+# Model names live in shared/ai/models.py so a retired name is an .env edit, not a
+# code change. (`deepseek-reasoner` was hardcoded here and now 400s.)
 
 logger = logging.getLogger("phansora.ai.deepseek")
 
@@ -38,8 +45,6 @@ logger = logging.getLogger("phansora.ai.deepseek")
 # are billed and generated separately, so a JSON answer does not need extra headroom here.
 MAX_OUTPUT_TOKENS = 8000
 
-DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
-DEFAULT_REASONING_MODEL = "deepseek-reasoner"
 
 _JSON_INSTRUCTION = "\n\nRespond with valid JSON only. No prose, no explanation, no markdown fences."
 
@@ -61,18 +66,24 @@ class DeepSeekReasoner:
 
     def __init__(self, cfg: Optional[DeepSeekChatConfig] = None, model: Optional[str] = None) -> None:
         self.cfg = cfg or DeepSeekChatConfig.from_env()
-        self.model = (model or self.cfg.model or DEFAULT_CHAT_MODEL).strip()
+        # cfg.model already came from .env via resolve_model(); no literal fallback.
+        self.model = (model or self.cfg.model).strip()
 
     @classmethod
-    def reasoning(cls) -> "DeepSeekReasoner":
-        """The judgement model — ranking chapters, writing a script."""
-        return cls(model=os.getenv("DEEPSEEK_REASONING_MODEL", DEFAULT_REASONING_MODEL))
+    def reasoning(cls, product_var: Optional[str] = None) -> "DeepSeekReasoner":
+        """The judgement model — ranking chapters, writing a script.
+
+        Falls back to the chat model when no *_REASONING_MODEL is set, rather than to
+        a hardcoded reasoning name: DeepSeek v4 no longer ships a separate reasoner."""
+        from .models import resolve_reasoning_model
+        return cls(model=resolve_reasoning_model(product_var, provider="deepseek"))
 
     @classmethod
-    def fast(cls) -> "DeepSeekReasoner":
+    def fast(cls, product_var: Optional[str] = None) -> "DeepSeekReasoner":
         """The bulk model — summarising fifty chapters, where reasoning buys nothing and
         would cost minutes per book."""
-        return cls(model=os.getenv("DEEPSEEK_MODEL", DEFAULT_CHAT_MODEL))
+        from .models import resolve_model
+        return cls(model=resolve_model(product_var, provider="deepseek"))
 
     @property
     def reasons(self) -> bool:

@@ -65,9 +65,10 @@ def _env(name: str, default: str = "") -> str:
 class OpenAIResearchConfig:
     api_key: str = ""
     base_url: str = ""  # blank = api.openai.com
-    # gpt-5-nano is a reasoning model with access to the native web_search tool.
-    search_model: str = "gpt-5-nano"
-    reasoning_model: str = "gpt-5-nano"
+    # No literals: from_env() resolves both through shared.ai.models, which raises
+    # if nothing is configured rather than falling back to a name that may be retired.
+    search_model: str = ""
+    reasoning_model: str = ""
     # Reasoning effort: minimal | low | medium | high.
     reason_effort: str = "medium"
     light_effort: str = "low"
