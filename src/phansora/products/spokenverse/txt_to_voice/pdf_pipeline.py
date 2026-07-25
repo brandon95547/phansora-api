@@ -45,7 +45,11 @@ class PdfToTxtConfig:
     # DeepSeek cleaning batching
     batch_pages: int = 5              # how many pages to send per LLM call
     batch_max_chars: int = 20000      # safety cap per LLM call input
-    max_output_tokens: int = 3500     # response cap per call (adjust if needed)
+    # The cleaner echoes the batch back corrected, so the response is about as long as the
+    # input: 20k chars is roughly 5-6k tokens, which 3500 could never hold — batches came
+    # back truncated or (once the v4 reasoning models arrived) empty. This is a CAP, not a
+    # cost: you pay for tokens actually generated.
+    max_output_tokens: int = 12000    # response cap per call
     clean_concurrency: int = 2        # parallel DeepSeek clean requests
 
     # Output formatting

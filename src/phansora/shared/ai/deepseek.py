@@ -126,6 +126,12 @@ async def clean_ocr_text(
         system_prompt=prompt,
         user_text=raw_text,
         max_output_tokens=max_output_tokens,
+        # Cleaning OCR is mechanical transcription, not a problem to think about. The v4
+        # models reason by default and those tokens are billed against max_tokens — on a
+        # full page batch they consumed the entire budget and the answer came back EMPTY
+        # ("DeepSeek cleaning returned empty output"). Disabling it also cut completion
+        # tokens ~15x on a sample page.
+        disable_thinking=True,
     )
 
 
@@ -135,6 +141,7 @@ async def _chat_completion(
     system_prompt: str,
     user_text: str,
     max_output_tokens: int,
+    disable_thinking: bool = False,
 ) -> str:
     url = f"{cfg.base_url}/v1/chat/completions"
     payload = {
@@ -147,6 +154,8 @@ async def _chat_completion(
         "max_tokens": max_output_tokens,
         "stream": False,
     }
+    if disable_thinking:
+        payload["thinking"] = {"type": "disabled"}
     headers = {
         "Authorization": f"Bearer {cfg.api_key}",
         "Content-Type": "application/json",
@@ -160,6 +169,12 @@ async def _chat_completion(
                 async with session.post(url, json=payload, headers=headers) as resp:
                     if resp.status >= 400:
                         body = await resp.text()
+                        # `thinking` is a v4-era parameter. If the configured model doesn't
+                        # know it, drop it and retry rather than failing the whole job —
+                        # model names change under us (see DEFAULT_CHAT_MODEL).
+                        if resp.status == 400 and "thinking" in body and "thinking" in payload:
+                            payload.pop("thinking", None)
+                            continue
                         raise RuntimeError(f"DeepSeek chat HTTP {resp.status}: {body[:800]}")
                     data = await resp.json()
 
