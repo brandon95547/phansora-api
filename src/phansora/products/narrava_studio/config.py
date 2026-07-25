@@ -25,9 +25,13 @@ class Settings(BaseSettings):
     narrava_words_per_minute: int = 150
 
     # ── Media sourcing ───────────────────────────────────────────────────────
-    # Default provider returns openly/CC-licensed media with attribution so the
-    # preliminary timeline respects fair use. Openverse needs no API key.
-    narrava_media_provider: str = "openverse"  # openverse | placeholder
+    # Media search fans out across whichever stock providers have an API key set
+    # (Wikimedia Commons needs none, so search always returns something). Keys are
+    # read from the environment by services/media.py — none are stored here:
+    #   PIXABAY_API_KEY       images + video
+    #   PEXELS_API_KEY        images + video
+    # Set to "placeholder" to force deterministic offline placeholders (dev/CI).
+    narrava_media_provider: str = "auto"  # auto | placeholder
     narrava_media_per_segment: int = 1
     narrava_media_timeout_s: int = 15
 

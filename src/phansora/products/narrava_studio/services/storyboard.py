@@ -35,8 +35,9 @@ _SYSTEM = (
     "For each scene, give the exact narration text it covers (verbatim, in order, with no "
     "gaps or overlaps so the pieces concatenate back to the original), a one-line rationale "
     "for why the visual changes there, whether it wants a still image or motion footage, "
-    "3-6 concrete media SEARCH TERMS an editor would type to find the shot, and 2-3 short "
-    "VISUAL IDEAS describing what to show. "
+    "3-6 concrete media SEARCH TERMS an editor would type to find the shot — each term MUST "
+    "be 3 words or fewer, because longer queries return far fewer stock results — and 2-3 "
+    "short VISUAL IDEAS describing what to show. "
     'Respond with ONLY JSON of the form: {"scenes":[{"text":"...","rationale":"...",'
     '"media_type":"image|video","search_terms":["..."],"visual_ideas":["..."]}]}'
 )
@@ -79,7 +80,7 @@ def _ask_llm(text: str, max_scenes: int) -> List[Dict[str, Any]]:
             "text": span,
             "rationale": str(s.get("rationale") or "").strip()[:280],
             "media_type": "video" if str(s.get("media_type") or "").lower() == "video" else "image",
-            "search_terms": _str_list(s.get("search_terms"), limit=6),
+            "search_terms": _str_list(s.get("search_terms"), limit=6, max_words=3),
             "visual_ideas": _str_list(s.get("visual_ideas"), limit=3),
         })
         if len(cleaned) >= max_scenes:
@@ -144,12 +145,16 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float) -> List[StoryboardScene
     return out
 
 
-def _str_list(value: Any, *, limit: int) -> List[str]:
+def _str_list(value: Any, *, limit: int, max_words: int | None = None) -> List[str]:
     if not isinstance(value, list):
         return []
     out: List[str] = []
     for item in value:
         s = str(item or "").strip()
+        # Search terms are capped to `max_words` — stock providers return far fewer results
+        # for long queries, so a 6-word AI term is trimmed to its first few words.
+        if s and max_words:
+            s = " ".join(s.split()[:max_words])
         if s:
             out.append(s[:80])
         if len(out) >= limit:
