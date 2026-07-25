@@ -45,10 +45,17 @@ TARGET_LESSON_WORDS = WORDS_PER_MINUTE * TARGET_LESSON_MINUTES   # 2100
 MAX_LESSON_WORDS = WORDS_PER_MINUTE * MAX_LESSON_MINUTES         # 3000
 MIN_LESSON_WORDS = WORDS_PER_MINUTE * MIN_LESSON_MINUTES         # 1200
 
-# Narration length relative to its own source segments: parity, not expansion.
-# Under the floor means information was dropped; over the ceiling means padding.
-DENSITY_MIN = 0.85
-DENSITY_MAX = 1.15
+# Lesson length relative to its own source segments.
+#
+# This is the dial between the two failure modes actually observed. A parity band
+# (0.85-1.15) leaves no room to say anything differently, so the model reads the
+# source back almost verbatim. Wide open, it invents a course around the material —
+# the first run turned a 334-word letter into ~1,290 words across four lessons, 3.8x.
+# Teaching the same content in your own words genuinely costs more words than the
+# source uses, so the floor sits just under parity and the ceiling well above it,
+# with the prompt saying plainly that the headroom is for explaining, not padding.
+DENSITY_MIN = 0.9
+DENSITY_MAX = 1.6
 
 MAX_TOPICS_PER_SEGMENT = 5        # detail carried into the segmentation prompt
 MAX_SEGMENT_DIGEST_CHARS = 60_000 # keep that prompt inside the context window
@@ -540,9 +547,9 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         )
         return
 
-    # Density target: the narration carries this part's information at roughly
-    # the length the author used for it. Coming in short means content was
-    # dropped; running long means filler was added.
+    # Length target: enough headroom to teach the material in different words,
+    # not enough to build a course around it. See DENSITY_MIN/MAX for why the band
+    # sits where it does.
     source_words = sum(_word_count(c["text"]) for c in chunk_dicts)
     min_words = max(60, int(source_words * DENSITY_MIN))
     max_words = max(min_words + 40, int(source_words * DENSITY_MAX))

@@ -1,14 +1,22 @@
 """All DeepSeek prompts for Book Alchemy.
 
-Book Alchemy is an *adaptation* system, not an authoring system. It converts a
-written work into spoken-word audio that carries the same information, in the
-same order, at roughly the same density. It is deliberately NOT a course
-generator: it does not teach, expand, editorialise, or restructure the author's
-material, and it does not manufacture lessons where the source has none.
+Book Alchemy turns a written work into a spoken audio course — the source taught
+back the way a college lecturer would teach it after reading it.
 
-The rule repeated in every prompt: everything in the output must be traceable to
-something the author actually wrote. Where the source is silent, the output is
-silent.
+The rule repeated in every prompt separates two acts that are easy to conflate:
+
+  RESTATING the author's material in the lecturer's own words is the job. The
+  output should never be the source read aloud.
+
+  ADDING anything of the lecturer's own — a fact, an example, a motive, a moral,
+  a "what this shows" — is never allowed. Where the source is silent, so is the
+  lesson.
+
+Both failure modes have been seen in production, and they pull in opposite
+directions: prompts tight enough to stop invention produced near-verbatim
+read-back, while prompts loose enough to teach produced a four-lesson course out
+of a one-page letter. The prompts below aim at the middle, and the length band in
+``pipeline.py`` (DENSITY_MIN/MAX) is the dial that holds it there.
 
 Note on naming: the pipeline phase and the DB column are still called
 ``curriculum`` (changing them would break in-flight rows), but the job that
@@ -20,28 +28,36 @@ from __future__ import annotations
 import json
 
 GROUNDING = (
-    "You are part of Book Alchemy, which adapts an author's written work into "
-    "spoken-word audio. You are adapting a work, not teaching a course, "
-    "summarising a text, or writing about it.\n"
+    "You are part of Book Alchemy, which turns a written work into a spoken audio "
+    "course. Teach the source the way a good college lecturer would teach it after "
+    "reading it: in your own words, organised so it lands by ear.\n"
     "\n"
-    "Hard rules:\n"
-    "- Use ONLY the supplied source text. Never add facts, examples, analogies, "
-    "background, or conclusions that are not in it.\n"
-    "- Never state or imply WHY the author wrote something, what they intended, "
-    "felt, believed, or hoped to achieve, unless the source says so explicitly. "
-    "Report what the source says, never what it means.\n"
-    "- Never interpret, evaluate, or draw out implications. No 'this shows', "
-    "'this means', 'in other words', 'the significance is', 'notice how', "
-    "'this illustrates'.\n"
-    "- Keep the author's order, emphasis, and level of detail. A point the source "
-    "makes once is made once.\n"
-    "- Preserve the author's terminology, names, figures, and quotations exactly. "
-    "Do not modernise, correct, or normalise them.\n"
-    "- If the source is unclear, incomplete, or self-contradictory, carry that "
-    "across unchanged. Do not resolve it, and do not remark on it.\n"
-    "- You MAY re-word for the ear: unpack abbreviations, turn print-only "
-    "constructs (tables, footnotes, 'see figure 3') into speakable phrasing, and "
-    "smooth sentences that only parse on the page. Meaning must not change."
+    "The line that matters is RESTATING versus ADDING. Restating the author's "
+    "material in clearer words is the entire job. Adding anything of your own is "
+    "never allowed. Those are different acts, and only the second is forbidden.\n"
+    "\n"
+    "Do this:\n"
+    "- Say the author's points in your own words. Explain them; do not read them "
+    "out. A listener should hear a lecturer who has read the text, not a recording "
+    "of the text.\n"
+    "- Group and order the material so it teaches well — related points together, "
+    "a term explained before it is used.\n"
+    "- Define a term the way the source defines it, and spell out what the source "
+    "states compactly (an abbreviation, a table, 'see figure 3') in speakable words.\n"
+    "- Quote a short, striking phrase when the author's own wording carries it, and "
+    "keep names, numbers, dates and quoted words exact.\n"
+    "\n"
+    "Never do this:\n"
+    "- State any fact, name, figure, event, example or analogy that is not in the "
+    "source. Not from your own knowledge, not as illustration.\n"
+    "- Say WHY someone did or wrote something, what they intended, felt, believed "
+    "or hoped for, unless the source says so.\n"
+    "- Say what the material means, why it matters, what it shows, or what should "
+    "be learned from it, unless the source says so.\n"
+    "- Reproduce the source's sentences as your narration. Copying is not teaching, "
+    "and it is the failure mode to avoid most.\n"
+    "- Resolve or remark on a gap. If the source is unclear or incomplete on a "
+    "point, teach what it does say and move on."
 )
 
 # ----------------------------------------------------------------- title
@@ -151,27 +167,23 @@ def segment_user(
 # ----------------------------------------------------------------- session script
 SCRIPT_SYSTEM = (
     GROUNDING
-    + "\n\nTask: turn the source segments below into spoken narration — a "
-    "faithful audio edition of this part of the work.\n"
+    + "\n\nTask: teach the source segments below as one spoken lesson.\n"
     "\n"
-    "- Work through the segments in the order given. Nothing in them is dropped, "
-    "and nothing is added.\n"
-    "- No lesson framing whatsoever. Do not open by announcing what will be "
-    "covered ('In this lesson...', 'We explore...'), do not close with a recap, "
-    "summary, takeaways, or 'to recap', and do not write bridging commentary "
-    "between topics ('First...', 'Second...', 'Now let us turn to...'). Begin on "
-    "the source's own first point and end on its last.\n"
-    "- Do not refer to the source from outside it. No 'the author says', 'the "
-    "letter states', 'the writer reveals', 'this passage describes'. Narrate the "
-    "content directly, in the source's own voice.\n"
-    "- Where the author writes in the first person, stay in the first person. "
-    "Where the source is a letter, a list, or a quotation, keep it recognisable "
-    "as one.\n"
-    "- Write for a single narrator reading aloud: plain sentences, no markdown, "
-    "no headings, no bullets, no speaker labels, no stage directions.\n"
-    "- Spell out what the ear cannot resolve: currency and figures as words, "
-    "'e.g.' as 'for example', symbols as their spoken form. Keep initialisms the "
-    "author uses, but make sure they read cleanly aloud.\n"
+    "- Cover every point the segments contain, in your own words. Completeness is "
+    "the requirement; verbatim wording is not.\n"
+    "- Follow the source's order unless grouping related points teaches better. "
+    "Say each point once — a lesson does not circle back.\n"
+    "- Attribution is natural and welcome: 'Crowley writes that…', 'he goes on to "
+    "say…'. What you must not do is characterise the writing ('this reveals', "
+    "'strikingly', 'what is remarkable here').\n"
+    "- Open straight on the material — one orienting sentence at most, naming what "
+    "this lesson covers. No 'In this lesson we will explore…'. Do not close with a "
+    "recap, summary, takeaways, or 'to recap'; stop when the material is taught.\n"
+    "- Write for a single narrator speaking to a room: plain, connected sentences. "
+    "No markdown, headings, bullets, speaker labels, or stage directions.\n"
+    "- Spell out what the ear cannot resolve: currency and figures as words, 'e.g.' "
+    "as 'for example', symbols as their spoken form. Keep the author's initialisms "
+    "but make sure they read cleanly aloud.\n"
     "\n"
     "Return plain text only."
 )
@@ -206,14 +218,15 @@ def script_user(
         )
 
     return (
-        f"Part title: {session_title}\n\n"
-        f"Topics in this part, in source order — a coverage checklist; every one "
-        f"must be present in the narration:\n{outline_txt}\n"
+        f"Lesson title: {session_title}\n\n"
+        f"Points to cover, in source order — every one must be taught:\n{outline_txt}\n"
         f"{fix}\n"
-        f"Length: the source below runs about {source_words} words. Your narration "
-        f"must be between {min_words} and {max_words} words. Coming in under that "
-        f"means you dropped information; going over means you padded. Neither is "
-        f"acceptable.\n\n"
+        f"Length: the source below runs about {source_words} words; your lesson "
+        f"should land between {min_words} and {max_words} words. Teaching in your own "
+        f"words naturally runs a little longer than the source — that headroom is for "
+        f"explaining, not for padding. Under the floor means you dropped material or "
+        f"merely summarised it; over the ceiling means you added something that is "
+        f"not in the source.\n\n"
         f"Source segments, in order:\n{excerpts}"
     )
 
@@ -221,26 +234,28 @@ def script_user(
 # ----------------------------------------------------------------- validation
 VALIDATION_SYSTEM = (
     GROUNDING
-    + "\n\nTask: check a narration script against the source segments it was "
-    "built from. Check fidelity in BOTH directions — what was added and what was "
-    "lost.\n"
+    + "\n\nTask: check a lesson script against the source segments it was built "
+    "from. It must teach everything in them, add nothing, and be in its own words.\n"
     "\n"
     "Flag each of:\n"
-    '- "added": a statement, example, figure, or conclusion in the script that '
-    "the segments do not support.\n"
-    '- "inferred": the script gives a motive, intent, feeling, cause, or '
-    "significance the source does not state, or explains what something means.\n"
-    '- "omitted": something the segments say that the script leaves out.\n'
-    '- "filler": narration carrying no source information — an introduction '
-    "announcing what will be covered, a recap or takeaways, a transition, "
-    "commentary about the source or its author, or the same point made twice.\n"
+    '- "added": a fact, name, figure, event, example or analogy in the script that '
+    "the segments do not contain.\n"
+    '- "inferred": a motive, intent, feeling, cause, significance or lesson the '
+    "source does not state — including 'this shows', 'what matters here'.\n"
+    '- "omitted": something the segments say that the lesson never teaches.\n'
+    '- "copied": a run of source wording reproduced as narration rather than '
+    "taught. A short quoted phrase is fine; a reproduced sentence or passage is "
+    "not, and neither is following the source clause by clause.\n"
+    '- "filler": words carrying no source content — an intro announcing what will '
+    "be covered, a closing recap or takeaways, or the same point taught twice.\n"
     "\n"
-    "Re-wording for the ear is expected and is NOT a problem. Following the "
-    "author's own wording closely is expected and is NOT a problem. Judge only "
-    "against the segments supplied — never against outside knowledge.\n"
+    "Restating the author's material in different words is the POINT and is never "
+    "a problem. Neither is naming the author, ordinary connective phrasing, or a "
+    "sentence that orients the listener. Judge only against the segments supplied "
+    "— never against outside knowledge.\n"
     "\n"
     'Return JSON: {"supported": bool, "flagged": [{"type": '
-    '"added"|"inferred"|"omitted"|"filler", "claim": str, "reason": str}], '
+    '"added"|"inferred"|"omitted"|"copied"|"filler", "claim": str, "reason": str}], '
     '"notes": str}. Set `supported` to false if any flagged item is material.'
 )
 
