@@ -9,7 +9,8 @@
 #     RHEL/CentOS 8 (prod):  dnf install -y tesseract tesseract-langpack-eng
 #     Debian/Ubuntu (dev):   apt install -y tesseract-ocr tesseract-ocr-eng
 #   Verify with:             tesseract --version && tesseract --list-langs
-.PHONY: help install install-dev install-tts install-mac dev run worker test compile clean
+#   Run `make doctor` on a freshly provisioned box to find these before users do.
+.PHONY: help doctor install install-dev install-tts install-mac dev run worker test compile clean
 
 VENV   ?= .venv
 # Where the CosyVoice2 TTS engine checkout lives (git clone, not a pip package).
@@ -37,6 +38,9 @@ export PHANSORA_DATA_DIR
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+doctor: ## Check the system deps pip can't install (tesseract, ffmpeg) — run on a new box
+	@python3 scripts/doctor.py
 
 install: ## Create Python 3.10 venv and install deps (CUDA torch — prod / Linux GPU)
 	@# The interpreter is validated BEFORE anything is deleted. This target used to
