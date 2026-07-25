@@ -584,6 +584,15 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
             pid, sess["ordinal"], written, min_words, max_words, source_words,
         )
 
+    if not script.strip():
+        # The model returned nothing on every attempt. Previously this was written out as a
+        # blank script and only noticed when the finished course had no audio.
+        log.warning(
+            "Project %s session %s: model returned an empty script after %s attempt(s) "
+            "(budget %s tokens, %s source words)",
+            pid, sess["ordinal"], regen + 1, token_budget, source_words,
+        )
+
     await db.set_session(
         sess["id"],
         script=script,
@@ -605,6 +614,12 @@ async def _phase_audio(project: dict) -> None:
         return
 
     if not (sess["script"] or "").strip():
+        # A blank script silently yields a course with no audio, which is the hardest
+        # possible failure to diagnose from the outside — say so.
+        log.warning(
+            "Project %s session %s: empty script, no audio rendered (validation=%s)",
+            pid, sess["ordinal"], sess.get("validation_status"),
+        )
         await db.set_session(sess["id"], status="complete", audio_seconds=0)
         return
 

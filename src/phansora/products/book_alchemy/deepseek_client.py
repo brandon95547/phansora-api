@@ -112,6 +112,13 @@ class DeepSeekClient:
             ],
             "max_tokens": max_output_tokens,
             "stream": False,
+            # The v4 models reason by default and bill those tokens against max_tokens.
+            # Every budget here is sized for the ANSWER only — a session script is
+            # `words * 1.7 + 400`, about 1000 tokens — so reasoning consumed the whole
+            # allowance and the content came back EMPTY. An empty script is not an error
+            # anywhere downstream: the session is simply written blank and the audio phase
+            # skips it, which is how a course completed with no MP3s and no failure.
+            "thinking": {"type": "disabled"},
         }
         if json_mode:
             # DeepSeek supports OpenAI-style JSON mode; harmless if ignored.
@@ -130,6 +137,11 @@ class DeepSeekClient:
                     async with session.post(url, json=payload, headers=headers) as resp:
                         if resp.status >= 400:
                             body = await resp.text()
+                            # `thinking` is a v4-era parameter; if the configured model
+                            # rejects it, drop it and retry rather than failing the job.
+                            if resp.status == 400 and "thinking" in body and "thinking" in payload:
+                                payload.pop("thinking", None)
+                                continue
                             raise RuntimeError(f"DeepSeek HTTP {resp.status}: {body[:800]}")
                         data = await resp.json()
                 choices = data.get("choices") or []
