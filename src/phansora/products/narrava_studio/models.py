@@ -106,7 +106,7 @@ class TimelineBuildResponse(BaseModel):
 class MediaSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=200)
     media_type: Literal["image", "video"] = "image"
-    limit: int = Field(default=32, ge=1, le=60)
+    limit: int = Field(default=48, ge=1, le=60)
 
 
 class MediaSearchResponse(BaseModel):

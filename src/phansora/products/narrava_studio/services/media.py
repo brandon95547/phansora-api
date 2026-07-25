@@ -47,10 +47,21 @@ def _timeout() -> float:
 
 
 def _page(limit: int) -> int:
-    """How many results to ask a single provider for. Each provider is asked for the full
-    limit (not limit/N) so the grid still fills when the others return little; capped at 50,
-    which sits under every provider's own per-page maximum."""
+    """Clamp a provider's page size to something it will actually accept (every provider's
+    own per-page maximum is >= 50)."""
     return max(3, min(int(limit or 1), 50))
+
+
+def _per_provider(total: int, providers: int) -> int:
+    """How many results to ask ONE provider for, given the total we intend to show.
+
+    Each provider gets roughly its share of the total, doubled as headroom so the grid still
+    fills when some sources come back thin. Deliberately NOT the full total: asking five
+    providers for 48 each fetches ~240 results to display 48, and for NASA/Internet Archive
+    (a follow-up request per hit) that difference is a pile of wasted round-trips.
+    """
+    share = -(-max(1, int(total or 1)) // max(1, providers))  # ceil division
+    return _page(min(share * 2, total))
 
 
 # Providers that need a follow-up request per hit (NASA, Internet Archive) resolve those
@@ -124,9 +135,12 @@ def _providers_for(want_video: bool) -> List[Provider]:
 def _fan_out(providers: List[Provider], query: str, *, segment_id: str, limit: int) -> List[MediaClip]:
     if not providers:
         return []
+    # Each provider is asked for its share of the total (not the whole thing) — see
+    # _per_provider — while the merge below still fills up to `limit` overall.
+    per = _per_provider(limit, len(providers))
     # Providers are blocking HTTP; run them in parallel so total latency ≈ the slowest one.
     with ThreadPoolExecutor(max_workers=len(providers)) as pool:
-        futures = [pool.submit(_safe, fn, query, segment_id, limit) for fn in providers]
+        futures = [pool.submit(_safe, fn, query, segment_id, per) for fn in providers]
         lists = [f.result() for f in futures]
     return _interleave(lists, limit)
 
