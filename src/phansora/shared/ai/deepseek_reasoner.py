@@ -38,7 +38,7 @@ logger = logging.getLogger("phansora.ai.deepseek")
 # are billed and generated separately, so a JSON answer does not need extra headroom here.
 MAX_OUTPUT_TOKENS = 8000
 
-DEFAULT_CHAT_MODEL = "deepseek-chat"
+DEFAULT_CHAT_MODEL = "deepseek-v4-flash"
 DEFAULT_REASONING_MODEL = "deepseek-reasoner"
 
 _JSON_INSTRUCTION = "\n\nRespond with valid JSON only. No prose, no explanation, no markdown fences."

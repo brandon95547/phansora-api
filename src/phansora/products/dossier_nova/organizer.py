@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 from .toc_manager import TocManager
 from .embeddings import EmbeddingStore
 from .source_profiler import SourceProfile
+from phansora.shared.ai.deepseek import chat_model
 
 
 # Subheading labels that are internal placeholders, not real dossier structure.
@@ -535,7 +536,7 @@ class ChunkOrganizer:
     def _call_llm(self, prompt: str) -> str:
         """Make a chat.completions call to DeepSeek."""
         response = self.client.chat.completions.create(
-            model="deepseek-chat",
+            model=chat_model("DOSSIER_MODEL"),
             messages=[
                 {
                     "role": "system",

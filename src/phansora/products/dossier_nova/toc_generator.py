@@ -28,6 +28,7 @@ import re
 from .source_profiler import SourceProfile
 from .utils import split_text_into_chunks, split_paragraphs
 from .embeddings import EmbeddingStore
+from phansora.shared.ai.deepseek import chat_model
 
 
 # --- Standard dossier sections (used as scaffolding) ---
@@ -88,7 +89,7 @@ class TocGenerator:
             print(f"[TOC] Processing chunk {idx}/{len(chunks)} for headings...")
             prompt = toc_prompt_template.format(chunk=chunk)
             response = self.client.chat.completions.create(
-                model="deepseek-chat",
+                model=chat_model("DOSSIER_MODEL"),
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt},
@@ -194,7 +195,7 @@ class TocGenerator:
         )
 
         response = self.client.chat.completions.create(
-            model="deepseek-chat",
+            model=chat_model("DOSSIER_MODEL"),
             messages=[
                 {"role": "system", "content": "You are a helpful assistant building a dossier TOC."},
                 {"role": "user", "content": organize_prompt},
@@ -267,7 +268,7 @@ class TocGenerator:
         )
 
         response = self.client.chat.completions.create(
-            model="deepseek-chat",
+            model=chat_model("DOSSIER_MODEL"),
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": final_prompt},

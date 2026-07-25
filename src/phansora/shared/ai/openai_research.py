@@ -85,7 +85,8 @@ class OpenAIResearchConfig:
 
     @classmethod
     def from_env(cls) -> "OpenAIResearchConfig":
-        model = _env("OPENAI_MODEL", "gpt-5-nano")
+        from .models import resolve_model
+        model = resolve_model("CHRONO_MODEL", provider="openai")
         return cls(
             api_key=(os.getenv("OPENAI_API_KEY") or "").strip(),
             base_url=_env("OPENAI_BASE_URL", ""),

@@ -155,7 +155,34 @@ async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
     except TerminalError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise TerminalError(f"OCR failed for scanned PDF: {exc}") from exc
+        log.exception("OCR failed for scanned PDF (project %s)", pid)
+        raise TerminalError(_ocr_error_message(exc)) from exc
+
+
+def _ocr_error_message(exc: Exception) -> str:
+    """Turn an OCR failure into something the reader can act on.
+
+    Tesseract is a SYSTEM dependency (the `pytesseract` wheel is only a wrapper), so a host
+    that skipped it fails at the first scanned PDF with an internal message — "tesseract is
+    not installed or it's not in your PATH. See README file" — which tells the reader of a
+    book nothing. Name the two setup faults explicitly instead; anything else keeps the
+    original text, which is usually a genuine per-document problem.
+    """
+    detail = str(exc).strip()
+    name = type(exc).__name__
+
+    if name == "TesseractNotFoundError" or "not installed or it's not in your PATH" in detail:
+        return (
+            "This PDF is scanned, and text recognition isn't available on the server right "
+            "now. Please contact support — the Tesseract OCR engine needs to be installed."
+        )
+    # Engine present but no language data: tessdata ships empty on some distros.
+    if "traineddata" in detail or "Error opening data file" in detail:
+        return (
+            "This PDF is scanned, and the server is missing the OCR language data needed to "
+            "read it. Please contact support — the Tesseract English language pack is missing."
+        )
+    return f"OCR failed for scanned PDF: {detail}"
 
 
 # --------------------------------------------------------------- phase: analyze
