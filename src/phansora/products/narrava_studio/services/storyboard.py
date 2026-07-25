@@ -13,6 +13,7 @@ the narration's end. That keeps the placeholders aligned with the narration unde
 """
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Dict, List
 
@@ -35,9 +36,27 @@ _SYSTEM = (
     "For each scene, give the exact narration text it covers (verbatim, in order, with no "
     "gaps or overlaps so the pieces concatenate back to the original), a one-line rationale "
     "for why the visual changes there, whether it wants a still image or motion footage, "
-    "3-6 concrete media SEARCH TERMS an editor would type to find the shot — each term MUST "
-    "be 3 words or fewer, because longer queries return far fewer stock results — and 2-3 "
-    "short VISUAL IDEAS describing what to show. "
+    "5-10 STOCK-MEDIA SEARCH TERMS, and 2-3 short VISUAL IDEAS describing what to show. "
+    "\n\n"
+    "The SEARCH TERMS are typed into stock media sites (Pixabay, Pexels, Unsplash, Wikimedia "
+    "Commons), so write them the way someone SEARCHES, not the way you would describe the "
+    "scene. Rules for every term: "
+    "(1) 1-3 common English words — never a phrase from the narration; "
+    "(2) name a VISIBLE subject, object, place, or setting that a camera could point at; "
+    "(3) no abstract concepts, emotions, time spans, or storytelling language; "
+    "(4) prefer plain, common wording that returns MANY results over precise wording that "
+    "returns none. "
+    "\n"
+    'Example narration: "In the shadowed edges of European folklore, where dense forests '
+    'swallowed light and abandoned mines echoed with unseen movement, stories of goblins '
+    'endured for centuries." '
+    "\n"
+    "GOOD terms: goblin, dark forest, misty forest, abandoned mine, forest at night, "
+    "medieval village, ancient castle, cave tunnel. "
+    "\n"
+    "BAD terms: european folklore woods, shadowed edges of folklore, unseen movement, "
+    "stories of goblins endured. "
+    "\n\n"
     'Respond with ONLY JSON of the form: {"scenes":[{"text":"...","rationale":"...",'
     '"media_type":"image|video","search_terms":["..."],"visual_ideas":["..."]}]}'
 )
@@ -80,7 +99,7 @@ def _ask_llm(text: str, max_scenes: int) -> List[Dict[str, Any]]:
             "text": span,
             "rationale": str(s.get("rationale") or "").strip()[:280],
             "media_type": "video" if str(s.get("media_type") or "").lower() == "video" else "image",
-            "search_terms": _str_list(s.get("search_terms"), limit=6, max_words=3),
+            "search_terms": _search_terms(s.get("search_terms")),
             "visual_ideas": _str_list(s.get("visual_ideas"), limit=3),
         })
         if len(cleaned) >= max_scenes:
@@ -95,7 +114,7 @@ def _fallback_scene(text: str) -> Dict[str, Any]:
         "text": text,
         "rationale": "Whole-narration placeholder — regenerate for a finer pass.",
         "media_type": "image",
-        "search_terms": script.extract_keywords(text, limit=5),
+        "search_terms": script.extract_keywords(text, limit=8),
         "visual_ideas": [],
     }
 
@@ -139,24 +158,60 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float) -> List[StoryboardScene
             end_sec=round(end, 2),
             rationale=s["rationale"],
             media_type=s["media_type"],
-            search_terms=s["search_terms"] or script.extract_keywords(s["text"], limit=5),
+            search_terms=s["search_terms"] or script.extract_keywords(s["text"], limit=8),
             visual_ideas=s["visual_ideas"],
         ))
     return out
 
 
-def _str_list(value: Any, *, limit: int, max_words: int | None = None) -> List[str]:
+def _str_list(value: Any, *, limit: int) -> List[str]:
     if not isinstance(value, list):
         return []
     out: List[str] = []
     for item in value:
         s = str(item or "").strip()
-        # Search terms are capped to `max_words` — stock providers return far fewer results
-        # for long queries, so a 6-word AI term is trimmed to its first few words.
-        if s and max_words:
-            s = " ".join(s.split()[:max_words])
         if s:
             out.append(s[:80])
         if len(out) >= limit:
+            break
+    return out
+
+
+# Words that carry no visual meaning on a stock site — a term made only of these (or one
+# that ends on one after trimming) is useless as a query.
+_CONNECTORS = {
+    "of", "the", "a", "an", "in", "on", "at", "with", "and", "or", "for", "to", "from",
+    "by", "into", "over", "under", "as", "that", "this", "these", "those", "its", "their",
+}
+_MAX_TERM_WORDS = 3
+_MAX_TERMS = 10
+
+
+def _search_terms(value: Any) -> List[str]:
+    """Normalize the model's search terms into things a stock media site can actually match.
+
+    The prompt asks for 1-3 plain words, but models still slip in narration phrases. Trimming
+    such a phrase to its first 3 words can strand a connector ("shadowed edges of"), which
+    searches worse than useless — so trailing/leading connectors are stripped and anything
+    left empty (or purely connectors) is dropped. Deduped case-insensitively.
+    """
+    raw = _str_list(value, limit=_MAX_TERMS * 2)  # over-fetch: cleaning discards some
+    out: List[str] = []
+    seen: set = set()
+    for term in raw:
+        words = re.sub(r"[^\w\s'-]", " ", term).split()[:_MAX_TERM_WORDS]
+        while words and words[0].lower() in _CONNECTORS:
+            words.pop(0)
+        while words and words[-1].lower() in _CONNECTORS:
+            words.pop()
+        if not words:
+            continue
+        cleaned = " ".join(words)
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+        if len(out) >= _MAX_TERMS:
             break
     return out
