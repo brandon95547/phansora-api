@@ -126,6 +126,9 @@ async def search_media(req: MediaSearchRequest):
             segment_id="search",
             media_type=req.media_type,
             limit=req.limit,
+            # Interactive search reports "no results" itself — a fake placeholder tile
+            # would look like a real result the editor could place.
+            allow_placeholder=False,
         ),
     )
     return MediaSearchResponse(clips=clips)

@@ -46,18 +46,40 @@ def _timeout() -> float:
     return float(config.get_settings().narrava_media_timeout_s)
 
 
+def _page(limit: int) -> int:
+    """How many results to ask a single provider for. Each provider is asked for the full
+    limit (not limit/N) so the grid still fills when the others return little; capped at 50,
+    which sits under every provider's own per-page maximum."""
+    return max(3, min(int(limit or 1), 50))
+
+
+# Providers that need a follow-up request per hit (NASA, Internet Archive) resolve those
+# in parallel — serially, a 32-result page would mean 32 round-trips back to back.
+_RESOLVE_WORKERS = 12
+# Internet Archive's metadata endpoint is slow (~5s/item), so a full page of hits takes
+# ~23s to resolve even in parallel. Cap how many we resolve: the other providers fill the
+# rest of the grid, and IA still contributes a solid share without stalling the search.
+_ARCHIVE_RESOLVE_MAX = 12
+
+
 def search_media(
     query: str,
     *,
     segment_id: str,
     media_type: str = "image",
     limit: int = 1,
+    allow_placeholder: bool = True,
 ) -> List[MediaClip]:
-    """Return up to ``limit`` fair-use clips for ``query`` (best-effort, never raises)."""
+    """Return up to ``limit`` fair-use clips for ``query`` (best-effort, never raises).
+
+    ``allow_placeholder`` controls the empty case: the timeline builder needs *something*
+    per beat, so it keeps the placeholder; interactive search passes False and gets an
+    empty list, which the UI reports as "no results" rather than a fake tile.
+    """
     query = (query or "").strip()
     settings = config.get_settings()
     if not query or settings.narrava_media_provider == "placeholder":
-        return [_placeholder(query, segment_id=segment_id, media_type=media_type)]
+        return [_placeholder(query, segment_id=segment_id, media_type=media_type)] if allow_placeholder else []
 
     want_video = media_type == "video"
     providers = _providers_for(want_video)
@@ -69,7 +91,7 @@ def search_media(
         if merged:
             return merged[:limit]
 
-    return [_placeholder(query, segment_id=segment_id, media_type=media_type)]
+    return [_placeholder(query, segment_id=segment_id, media_type=media_type)] if allow_placeholder else []
 
 
 # ── provider fan-out + merge ─────────────────────────────────────────────────
@@ -154,7 +176,7 @@ def _pixabay_images(query: str, *, segment_id: str, limit: int) -> List[MediaCli
     resp = httpx.get(
         "https://pixabay.com/api/",
         params={"key": _key("PIXABAY_API_KEY"), "q": query, "image_type": "photo",
-                "per_page": max(3, min(limit, 20)), "safesearch": "true"},
+                "per_page": _page(limit), "safesearch": "true"},
         timeout=_timeout(), headers=_UA,
     )
     resp.raise_for_status()
@@ -178,7 +200,7 @@ def _pixabay_videos(query: str, *, segment_id: str, limit: int) -> List[MediaCli
     resp = httpx.get(
         "https://pixabay.com/api/videos/",
         params={"key": _key("PIXABAY_API_KEY"), "q": query,
-                "per_page": max(3, min(limit, 20)), "safesearch": "true"},
+                "per_page": _page(limit), "safesearch": "true"},
         timeout=_timeout(), headers=_UA,
     )
     resp.raise_for_status()
@@ -204,7 +226,7 @@ def _pixabay_videos(query: str, *, segment_id: str, limit: int) -> List[MediaCli
 def _pexels_images(query: str, *, segment_id: str, limit: int) -> List[MediaClip]:
     resp = httpx.get(
         "https://api.pexels.com/v1/search",
-        params={"query": query, "per_page": max(3, min(limit, 20))},
+        params={"query": query, "per_page": _page(limit)},
         timeout=_timeout(), headers={**_UA, "Authorization": _key("PEXELS_API_KEY")},
     )
     resp.raise_for_status()
@@ -228,7 +250,7 @@ def _pexels_images(query: str, *, segment_id: str, limit: int) -> List[MediaClip
 def _pexels_videos(query: str, *, segment_id: str, limit: int) -> List[MediaClip]:
     resp = httpx.get(
         "https://api.pexels.com/videos/search",
-        params={"query": query, "per_page": max(3, min(limit, 20))},
+        params={"query": query, "per_page": _page(limit)},
         timeout=_timeout(), headers={**_UA, "Authorization": _key("PEXELS_API_KEY")},
     )
     resp.raise_for_status()
@@ -278,41 +300,42 @@ def _nasa_videos(query: str, *, segment_id: str, limit: int) -> List[MediaClip]:
 def _nasa(query: str, *, segment_id: str, limit: int, media_type: str) -> List[MediaClip]:
     resp = httpx.get(
         _NASA_SEARCH,
-        params={"q": query, "media_type": media_type, "page_size": max(3, min(limit, 20))},
+        params={"q": query, "media_type": media_type, "page_size": _page(limit)},
         timeout=_timeout(), headers=_UA,
     )
     resp.raise_for_status()
     items = ((resp.json() or {}).get("collection") or {}).get("items") or []
 
+    items = items[:limit]
+    if not items:
+        return []
+
+    # Video items only expose their playable file through a per-item manifest — resolve
+    # those in parallel, or a full page of results would mean that many serial round-trips.
+    resolved: List[Optional[str]] = [None] * len(items)
+    if media_type != "image":
+        with ThreadPoolExecutor(max_workers=min(len(items), _RESOLVE_WORKERS)) as pool:
+            resolved = list(pool.map(lambda it: _nasa_asset(it.get("href"), (".mp4",)), items))
+
     out: List[MediaClip] = []
-    for it in items[:limit]:
+    for it, asset_url in zip(items, resolved):
         data = (it.get("data") or [{}])[0]
         title = data.get("title") or query
         nasa_id = data.get("nasa_id")
         # `links` carries the preview thumbnail without another request.
         thumb = next((l.get("href") for l in (it.get("links") or []) if l.get("href")), "")
-        if media_type == "image":
-            url = thumb
-            if not url:
-                continue
-            out.append(_clip(
-                segment_id=segment_id, type="image", url=url, thumbnail_url=thumb,
-                source="NASA", license="Public Domain (NASA)",
-                license_url=f"https://images.nasa.gov/details/{quote(nasa_id)}" if nasa_id else None,
-                attribution=f"{data.get('center') or 'NASA'} — NASA Image and Video Library",
-                title=title, query=query,
-            ))
-        else:
-            url = _nasa_asset(it.get("href"), (".mp4",))
-            if not url:
-                continue
-            out.append(_clip(
-                segment_id=segment_id, type="video", url=url, thumbnail_url=thumb,
-                source="NASA", license="Public Domain (NASA)",
-                license_url=f"https://images.nasa.gov/details/{quote(nasa_id)}" if nasa_id else None,
-                attribution=f"{data.get('center') or 'NASA'} — NASA Image and Video Library",
-                title=title, query=query,
-            ))
+        url = thumb if media_type == "image" else asset_url
+        if not url:
+            continue
+        out.append(_clip(
+            segment_id=segment_id,
+            type="image" if media_type == "image" else "video",
+            url=url, thumbnail_url=thumb,
+            source="NASA", license="Public Domain (NASA)",
+            license_url=f"https://images.nasa.gov/details/{quote(nasa_id)}" if nasa_id else None,
+            attribution=f"{data.get('center') or 'NASA'} — NASA Image and Video Library",
+            title=title, query=query,
+        ))
     return out
 
 
@@ -382,7 +405,7 @@ def _archive(query: str, *, segment_id: str, limit: int, want_video: bool) -> Li
         params={
             "q": q,
             "fl[]": ["identifier", "title", "creator", "licenseurl"],
-            "rows": max(3, min(limit, 15)), "page": 1, "output": "json",
+            "rows": _page(limit), "page": 1, "output": "json",
         },
         timeout=_timeout(), headers=_UA,
     )
@@ -393,11 +416,14 @@ def _archive(query: str, *, segment_id: str, limit: int, want_video: bool) -> Li
 
     exts = (".mp4", ".m4v", ".ogv") if want_video else (".jpg", ".jpeg", ".png")
     # Resolve each item's file list in parallel — one HTTP call per hit otherwise serializes.
-    with ThreadPoolExecutor(max_workers=min(len(docs), 6)) as pool:
-        resolved = list(pool.map(lambda d: _ia_file(d.get("identifier"), exts), docs[:limit]))
+    # Bounded by _ARCHIVE_RESOLVE_MAX: this endpoint is slow enough that a full page would
+    # stall the whole (parallel) fan-out behind it.
+    docs = docs[:min(limit, _ARCHIVE_RESOLVE_MAX)]
+    with ThreadPoolExecutor(max_workers=min(len(docs), _RESOLVE_WORKERS)) as pool:
+        resolved = list(pool.map(lambda d: _ia_file(d.get("identifier"), exts), docs))
 
     out: List[MediaClip] = []
-    for doc, url in zip(docs[:limit], resolved):
+    for doc, url in zip(docs, resolved):
         if not url:
             continue
         creator = doc.get("creator") or "Internet Archive"
@@ -440,7 +466,7 @@ def _wikimedia_images(query: str, *, segment_id: str, limit: int) -> List[MediaC
         "https://commons.wikimedia.org/w/api.php",
         params={
             "action": "query", "format": "json", "generator": "search",
-            "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": max(3, min(limit, 20)),
+            "gsrsearch": query, "gsrnamespace": 6, "gsrlimit": _page(limit),
             "prop": "imageinfo", "iiprop": "url|extmetadata|mime", "iiurlwidth": 800,
         },
         timeout=_timeout(), headers=_UA,
