@@ -337,6 +337,12 @@ def _nasa_asset(manifest_url: Optional[str], exts: tuple) -> Optional[str]:
     return _safe_url(picks[0])
 
 
+# Characters that must survive percent-encoding so a URL keeps its structure. Kept as a
+# module constant rather than inline: it contains a quote character, and a backslash inside
+# an f-string expression is a SyntaxError on Python 3.10 (the runtime prod uses).
+_URL_SAFE = "/?&=%#+,;@!$~*'()[]"
+
+
 def _safe_url(url: str) -> str:
     """NASA asset paths contain raw spaces (e.g. ".../NASA Aims to Land.../collection.json"),
     which HTTP clients reject outright — percent-encode the path while leaving the URL's
@@ -344,9 +350,10 @@ def _safe_url(url: str) -> str:
     url = url.replace("http://", "https://", 1) if url.startswith("http://") else url
     scheme, sep, rest = url.partition("://")
     if not sep:
-        return quote(url, safe="/:?&=%#+,;@!$~*'()[]")
+        return quote(url, safe=":" + _URL_SAFE)
     host, slash, path = rest.partition("/")
-    return f"{scheme}://{host}{slash}{quote(path, safe='/?&=%#+,;@!$~*\'()[]')}"
+    encoded = quote(path, safe=_URL_SAFE)
+    return f"{scheme}://{host}{slash}{encoded}"
 
 
 # ── Internet Archive (keyless) ───────────────────────────────────────────────
