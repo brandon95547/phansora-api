@@ -76,9 +76,10 @@ def check_tesseract() -> Tuple[bool, str]:
     ok, detail = _binary("tesseract", ["--version"])
     if not ok:
         return False, detail
-    # The engine alone is not enough: on RHEL the base package ships an EMPTY tessdata dir,
-    # so OCR installs "successfully" and then dies on the first page with
-    # "Error opening data file .../eng.traineddata".
+    # The engine alone is not always enough — on Debian the language data is a separate
+    # package, and without it OCR installs "successfully" then dies on the first page with
+    # "Error opening data file .../eng.traineddata". (On EL8 the engine package already
+    # contains eng.traineddata, so there the langpack must NOT be installed — see below.)
     langs = _run(["tesseract", "--list-langs"]) or ""
     have = {ln.strip() for ln in langs.splitlines() if ln.strip() and " " not in ln.strip()}
     if "eng" not in have:
@@ -90,7 +91,9 @@ CHECKS: List[Check] = [
     Check(
         "tesseract", "OCR for scanned PDFs (Book Alchemy, SpokenVerse)", True, check_tesseract,
         {
-            "rhel": "dnf install -y tesseract tesseract-langpack-eng",
+            # EL8's engine package bundles eng.traineddata; adding tesseract-langpack-eng
+            # aborts the transaction with a file conflict over that exact path.
+            "rhel": "dnf install -y tesseract",
             "debian": "apt install -y tesseract-ocr tesseract-ocr-eng",
             "macos": "brew install tesseract",
         },

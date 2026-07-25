@@ -35,7 +35,10 @@ def required_key_name() -> str:
 
 # ── OpenAI (GPT-5 Nano) ──────────────────────────────────────────────────────
 def _openai_model() -> str:
-    return (os.getenv("OPENAI_MODEL") or "gpt-5-nano").split("#", 1)[0].strip() or "gpt-5-nano"
+    # NARRAVA_MODEL > OPENAI_MODEL > default (see phansora.shared.ai.models).
+    from phansora.shared.ai.models import resolve_model
+
+    return resolve_model("NARRAVA_MODEL", provider="openai")
 
 
 def _openai_text(system: str, user: str, *, max_output_tokens: int, json_mode: bool) -> str:
@@ -64,7 +67,7 @@ def _deepseek_text(system: str, user: str, *, max_output_tokens: int, json_mode:
 
     from phansora.shared.ai.deepseek import DeepSeekChatConfig
 
-    cfg = DeepSeekChatConfig.from_env()
+    cfg = DeepSeekChatConfig.from_env(product_var="NARRAVA_MODEL")
     payload: Dict[str, Any] = {
         "model": cfg.model,
         "temperature": 0.7 if not json_mode else 0,

@@ -5,7 +5,7 @@
 # Env vars (via .env):
 #   DEEPSEEK_CHAT_BASE_URL=https://api.deepseek.com
 #   DEEPSEEK_CHAT_API_KEY=...
-#   DEEPSEEK_CHAT_MODEL=deepseek-chat   (or whatever your provider uses)
+#   DEEPSEEK_CHAT_MODEL=deepseek-v4-flash   (or whatever your provider uses)
 #
 # Python deps:
 #   python -m pip install aiohttp python-dotenv
@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+
+from .models import DEFAULT_DEEPSEEK_MODEL, resolve_model
 
 
 DEFAULT_CLEAN_PROMPT = """
@@ -47,6 +49,22 @@ OUTPUT:
 - Return plain text only. No markdown.
 """.strip()
 
+# Model names + the per-product override chain live in shared.ai.models (see that module for
+# the resolution order). Re-exported here because callers already import from this one.
+DEFAULT_CHAT_MODEL = DEFAULT_DEEPSEEK_MODEL
+
+
+def chat_model(product_var: str | None = None) -> str:
+    """The DeepSeek model this deployment should use, for an optional product override.
+
+    Single source of truth for callers that talk to DeepSeek through an OpenAI-compatible
+    client and so don't build a DeepSeekChatConfig. Hardcoding the name at call sites is what
+    left Dossier Nova broken when the `deepseek-chat` alias was retired — the .env everything
+    else reads couldn't reach it.
+    """
+    return resolve_model(product_var, provider="deepseek")
+
+
 @dataclass(frozen=True)
 class DeepSeekChatConfig:
     base_url: str
@@ -62,8 +80,11 @@ class DeepSeekChatConfig:
     def from_env(
         *,
         default_base_url: str = "https://api.deepseek.com",
-        default_model: str = "deepseek-chat",
+        default_model: str = DEFAULT_CHAT_MODEL,
+        product_var: Optional[str] = None,
     ) -> "DeepSeekChatConfig":
+        """``product_var`` names this product's model override (e.g. "BOOK_ALCHEMY_MODEL");
+        when set it beats DEEPSEEK_MODEL. See shared.ai.models for the full order."""
         # Canonical vars are DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL
         # (shared with Dossier Nova). The legacy DEEPSEEK_CHAT_* names are still
         # honored as a fallback so existing deployments keep working.
@@ -75,11 +96,7 @@ class DeepSeekChatConfig:
         api_key = (
             os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY") or ""
         ).strip()
-        model = (
-            os.getenv("DEEPSEEK_MODEL")
-            or os.getenv("DEEPSEEK_CHAT_MODEL")
-            or default_model
-        ).strip()
+        model = resolve_model(product_var, provider="deepseek") or default_model
 
         if not api_key:
             raise RuntimeError(

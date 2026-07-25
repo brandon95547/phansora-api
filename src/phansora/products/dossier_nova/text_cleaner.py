@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from phansora.shared.ai.deepseek import chat_model
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +153,7 @@ def _clean_chunk(chunk: str, client: Any) -> str | None:
     """
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=chat_model("DOSSIER_MODEL"),
             messages=[
                 {"role": "system", "content": _CLEANUP_SYSTEM_PROMPT},
                 {

@@ -43,6 +43,55 @@ runs on any recent driver via CUDA minor-version compatibility. Note: the vLLM/T
 acceleration is CUDA-only; on CPU set `COSYVOICE2_USE_VLLM=0`/`_USE_TRT=0` (minutes/gen).
 For a CPU-only host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`.
 
+### System dependencies (NOT installed by pip)
+
+`requirements.txt` only covers PyPI. Several features are Python *wrappers* around
+system programs — `pytesseract` is a thin shim over the `tesseract` binary, and the
+audio pipeline shells out to `ffmpeg`/`ffprobe`. A box missing these installs cleanly,
+boots cleanly, and then fails the first time a user touches that feature, so install
+them when provisioning:
+
+| Binary | Needed for | Fails with |
+| --- | --- | --- |
+| `tesseract` (+ `eng` data) | OCR of **scanned PDFs** — Book Alchemy, SpokenVerse | `tesseract is not installed or it's not in your PATH` |
+| `ffmpeg` | audio concat / transcode / loudness — **every** render | `ffmpeg not found. Install it system-wide` |
+| `ffprobe` | media duration probing (ships with ffmpeg) | durations silently read as 0 |
+
+```bash
+# RHEL / CentOS 8 (prod) — see the language-data note below
+dnf install -y tesseract
+
+# Debian / Ubuntu
+apt install -y tesseract-ocr tesseract-ocr-eng ffmpeg
+
+# macOS
+brew install tesseract ffmpeg
+```
+
+**Language data differs by distro — this bites.** On EL8 the `tesseract` package already
+contains `/usr/share/tesseract/tessdata/eng.traineddata`, so adding
+`tesseract-langpack-eng` aborts the whole transaction with a file conflict over that path
+(and installs *nothing*). On Debian the opposite holds: the data really is a separate
+package. Don't guess — install, then confirm `eng` is listed:
+
+```bash
+tesseract --version && tesseract --list-langs
+```
+
+`ffmpeg` is not in the EL8 base repos; prod currently runs a static build in
+`/usr/local/bin` (not RPM-managed). If you need to install it there, it comes from
+RPM Fusion (`ffmpeg-4.4.8` in `rpmfusion-free-updates`).
+
+Verify a box has everything — run this on a **freshly provisioned host, before
+`make install`** (it needs only the system `python3`, and works on 3.6):
+
+```bash
+make doctor     # reports each dependency + the install command for this distro; exits non-zero if any are missing
+```
+
+CosyVoice2 is a fourth non-pip dependency (a git checkout, not a package) — see
+[TTS engine — CosyVoice2 (prod)](#tts-engine--cosyvoice2-prod) below.
+
 ### Local dev on Mac
 
 `make install` pins the Linux CUDA torch wheel, which won't install on macOS. Use:

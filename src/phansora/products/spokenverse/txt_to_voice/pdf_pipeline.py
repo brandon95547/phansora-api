@@ -64,7 +64,7 @@ class PdfConverter:
         load_dotenv(dotenv_path=runtime_root() / ".env")
 
         self.cfg = cfg or PdfToTxtConfig()
-        self.chat_cfg = DeepSeekChatConfig.from_env()
+        self.chat_cfg = DeepSeekChatConfig.from_env(product_var="SPOKENVERSE_OCR_MODEL")
 
         self.ocr_cfg = TesseractOCRConfig(
             lang=self.cfg.tesseract_lang,

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from typing import Dict, List, Optional
+from phansora.shared.ai.deepseek import chat_model
 
 # The four-level confidence rubric shown to the model and used to normalize output.
 CONFIDENCE_LEVELS = ("Very High", "High", "Medium", "Low")
@@ -161,7 +162,7 @@ def synthesize_dossier(
 
     try:
         response = client.chat.completions.create(
-            model="deepseek-chat",
+            model=chat_model("DOSSIER_MODEL"),
             messages=[
                 {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

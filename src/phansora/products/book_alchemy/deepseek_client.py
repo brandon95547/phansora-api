@@ -33,11 +33,11 @@ MAX_JSON_TOKENS = 8000
 
 class DeepSeekClient:
     def __init__(self, cfg: Optional[DeepSeekChatConfig] = None) -> None:
-        self.cfg = cfg or DeepSeekChatConfig.from_env()
+        self.cfg = cfg or DeepSeekChatConfig.from_env(product_var="BOOK_ALCHEMY_MODEL")
 
     @classmethod
     def from_env(cls) -> "DeepSeekClient":
-        return cls(DeepSeekChatConfig.from_env())
+        return cls(DeepSeekChatConfig.from_env(product_var="BOOK_ALCHEMY_MODEL"))
 
     async def chat(
         self,

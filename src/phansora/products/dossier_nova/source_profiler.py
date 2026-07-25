@@ -20,6 +20,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+from phansora.shared.ai.deepseek import chat_model
 
 
 @dataclass
@@ -109,7 +110,7 @@ def profile_sources(
 
         try:
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model=chat_model("DOSSIER_MODEL"),
                 messages=[
                     {"role": "system", "content": _PROFILE_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},

@@ -58,8 +58,8 @@ def _parse_json(raw: str) -> Dict[str, Any]:
 class DeepSeekConfig:
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-chat"
-    reasoning_model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
+    reasoning_model: str = "deepseek-v4-flash"
     reason_max_tokens: int = 8000
     search_max_tokens: int = 1024
     timeout_s: int = 120
@@ -67,7 +67,8 @@ class DeepSeekConfig:
     @classmethod
     def from_env(cls) -> "DeepSeekConfig":
         base = (os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com").rstrip("/")
-        model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
+        from .models import resolve_model
+        model = resolve_model("CHRONO_MODEL", provider="deepseek")
         return cls(
             api_key=(os.getenv("DEEPSEEK_API_KEY") or "").strip(),
             base_url=base,

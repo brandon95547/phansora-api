@@ -4,11 +4,15 @@
 #   Tesseract OCR — required to read SCANNED PDFs (SpokenVerse's pdf pipeline and, through
 #   it, Book Alchemy). requirements.txt only carries `pytesseract`, which is a thin wrapper
 #   around the `tesseract` BINARY; without it the first scanned PDF fails with "tesseract is
-#   not installed or it's not in your PATH". The language pack is a SEPARATE package — the
-#   base install ships an empty tessdata dir, so OCR still fails without it.
-#     RHEL/CentOS 8 (prod):  dnf install -y tesseract tesseract-langpack-eng
+#   not installed or it's not in your PATH".
+#     RHEL/CentOS 8 (prod):  dnf install -y tesseract
 #     Debian/Ubuntu (dev):   apt install -y tesseract-ocr tesseract-ocr-eng
-#   Verify with:             tesseract --version && tesseract --list-langs
+#     macOS:                 brew install tesseract
+#   NOTE: on EL8 the engine package already contains eng.traineddata, so do NOT also install
+#   tesseract-langpack-eng — both own /usr/share/tesseract/tessdata/eng.traineddata and dnf
+#   aborts with a file conflict. Debian is the opposite: the language data IS a separate
+#   package there. Either way, verify what actually landed:
+#     tesseract --version && tesseract --list-langs   # must list `eng`
 #   Run `make doctor` on a freshly provisioned box to find these before users do.
 .PHONY: help doctor install install-dev install-tts install-mac dev run worker test compile clean
 
