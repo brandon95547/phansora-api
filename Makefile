@@ -1,4 +1,14 @@
 # Phansora API — developer tasks
+#
+# SYSTEM DEPENDENCIES (not installable by pip — a fresh host needs these separately):
+#   Tesseract OCR — required to read SCANNED PDFs (SpokenVerse's pdf pipeline and, through
+#   it, Book Alchemy). requirements.txt only carries `pytesseract`, which is a thin wrapper
+#   around the `tesseract` BINARY; without it the first scanned PDF fails with "tesseract is
+#   not installed or it's not in your PATH". The language pack is a SEPARATE package — the
+#   base install ships an empty tessdata dir, so OCR still fails without it.
+#     RHEL/CentOS 8 (prod):  dnf install -y tesseract tesseract-langpack-eng
+#     Debian/Ubuntu (dev):   apt install -y tesseract-ocr tesseract-ocr-eng
+#   Verify with:             tesseract --version && tesseract --list-langs
 .PHONY: help install install-dev install-tts install-mac dev run worker test compile clean
 
 VENV   ?= .venv
