@@ -15,6 +15,7 @@ Phase cursor (``book_alchemy_projects.phase``):
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any, Optional
 
@@ -30,8 +31,27 @@ log = logging.getLogger("book_alchemy.pipeline")
 
 KINDS = ["concept", "definition", "framework", "example", "conclusion"]
 MAX_REGEN = 2                 # re-script attempts before flagging a session
-MAX_CHUNKS_PER_SESSION = 10   # cap source excerpts fed into one script prompt
-MAX_CONCEPTS_FOR_CURRICULUM = 60   # per kind, after de-duplication
+
+# --- Listening budget ---------------------------------------------------------
+# Book Alchemy adapts a work; it does not expand it. Lesson count is therefore a
+# function of how much source there is — never of how many topics it touches. A
+# source that fits one comfortable sitting becomes exactly one lesson, and that
+# decision is made here in code rather than left to the model.
+WORDS_PER_MINUTE = 150           # narration pace
+TARGET_LESSON_MINUTES = 14       # comfortable default sitting
+MAX_LESSON_MINUTES = 20          # a part longer than this gets split
+MIN_LESSON_MINUTES = 8           # below this, merging beats splitting
+TARGET_LESSON_WORDS = WORDS_PER_MINUTE * TARGET_LESSON_MINUTES   # 2100
+MAX_LESSON_WORDS = WORDS_PER_MINUTE * MAX_LESSON_MINUTES         # 3000
+MIN_LESSON_WORDS = WORDS_PER_MINUTE * MIN_LESSON_MINUTES         # 1200
+
+# Narration length relative to its own source segments: parity, not expansion.
+# Under the floor means information was dropped; over the ceiling means padding.
+DENSITY_MIN = 0.85
+DENSITY_MAX = 1.15
+
+MAX_TOPICS_PER_SEGMENT = 5        # detail carried into the segmentation prompt
+MAX_SEGMENT_DIGEST_CHARS = 60_000 # keep that prompt inside the context window
 
 
 class TerminalError(Exception):
@@ -205,6 +225,13 @@ def _concepts_from_extraction(extracted: Any, *, source_chunk_id: int) -> list[d
 
 # --------------------------------------------------------------- phase: curriculum
 async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
+    """Cut the work into the fewest comfortable parts.
+
+    The result is a *contiguous partition* of the source segments: lessons run in
+    source order, every segment lands in exactly one lesson, and none is dropped.
+    That is what stops the same material being narrated twice and stops source
+    text going missing because no concept title happened to reference it.
+    """
     pid = int(project["id"])
 
     # Idempotent: if sessions already exist, advance.
@@ -212,65 +239,247 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
         await db.set_project(pid, phase="sessions", stage="Creating sessions", progress=55)
         return
 
-    concept_rows = await db.get_concepts(pid)
-    if not concept_rows:
-        raise TerminalError("No concepts could be extracted from the source material.")
+    chunks = await db.get_all_chunks(pid)
+    if not chunks:
+        raise TerminalError("No readable source segments were found.")
 
-    title_to_chunks: dict[str, list[int]] = {}
-    # Dedupe concepts by (kind, lowercased title), merging their source chunk
-    # ids. Big books repeat the same concept across many chunks; without this the
-    # curriculum prompt (and the model's echoed output) balloon and truncate.
-    merged: dict[tuple[str, str], dict] = {}
-    for row in concept_rows:
-        content = _as_dict(row["content"])
-        title = str(content.get("title") or "").strip()
-        body = str(content.get("body") or "").strip()
-        if title:
-            title_to_chunks.setdefault(title.lower(), [])
-            title_to_chunks[title.lower()].extend(list(row["source_chunk_ids"] or []))
-        key = (row["kind"], title.lower())
-        existing = merged.get(key)
-        if existing:
-            if not existing["body"] and body:
-                existing["body"] = body[:200]
-        else:
-            merged[key] = {"kind": row["kind"], "title": title, "body": body[:200]}
+    digests = await _chunk_digests(pid, chunks)
+    source_words = sum(d["words"] for d in digests)
+    min_lessons, suggested, max_lessons = _lesson_budget(source_words)
 
-    grouped: dict[str, list[dict]] = {k: [] for k in KINDS}
-    for item in merged.values():
-        grouped[item["kind"]].append({"title": item["title"], "body": item["body"]})
-    grouped = {k: v[:MAX_CONCEPTS_FOR_CURRICULUM] for k, v in grouped.items() if v}
+    if max_lessons == 1:
+        # Short enough for one sitting. Decided here, not by the model: a source
+        # that covers several topics is still one lesson.
+        log.info("Project %s: %s source words -> single lesson", pid, source_words)
+        entries = [{
+            "start": 0,
+            "title": str(project.get("name") or "").strip() or "Full text",
+            "summary": "",
+            "topics": [t for d in digests for t in d["topics"]],
+        }]
+    else:
+        raw = await client.chat_json(
+            system=prompts.SEGMENT_SYSTEM,
+            user=prompts.segment_user(
+                _trim_digests(digests),
+                min_lessons=min_lessons,
+                suggested_lessons=suggested,
+                max_lessons=max_lessons,
+                max_lesson_words=MAX_LESSON_WORDS,
+            ),
+            max_output_tokens=8000,
+        )
+        entries = _entries_from_plan(raw, segment_count=len(digests), max_lessons=max_lessons)
 
-    plan = await client.chat_json(
-        system=prompts.CURRICULUM_SYSTEM,
-        user=prompts.curriculum_user(grouped),
-        max_output_tokens=8000,
+    lessons = _resolve_lessons(entries, digests)
+    log.info(
+        "Project %s: %s source words -> %s lesson(s) (suggested %s, max %s)",
+        pid, source_words, len(lessons), suggested, max_lessons,
     )
-    sessions = plan.get("sessions") if isinstance(plan, dict) else None
-    if not sessions:
-        raise TerminalError("Could not generate a curriculum from the source material.")
 
-    for i, s in enumerate(sessions, start=1):
-        if not isinstance(s, dict):
-            continue
-        concept_titles = [str(t).lower() for t in (s.get("concept_titles") or [])]
-        chunk_ids: list[int] = []
-        for t in concept_titles:
-            chunk_ids.extend(title_to_chunks.get(t, []))
-        chunk_ids = _dedupe(chunk_ids)[:MAX_CHUNKS_PER_SESSION]
+    for lesson in lessons:
         await db.create_session(
             project_id=pid,
-            ordinal=int(s.get("ordinal") or i),
-            title=str(s.get("title") or f"Session {i}"),
-            summary=str(s.get("summary") or ""),
-            outline=s.get("outline") or [],
-            source_chunk_ids=chunk_ids,
+            ordinal=lesson["ordinal"],
+            title=lesson["title"],
+            summary=lesson["summary"],
+            outline=lesson["topics"],
+            source_chunk_ids=[
+                int(chunks[i]["id"]) for i in range(lesson["start"], lesson["end"] + 1)
+            ],
         )
 
+    plan = {
+        "work_title": project.get("name"),
+        "source_words": source_words,
+        "lesson_count": len(lessons),
+        "sessions": [
+            {
+                "ordinal": l["ordinal"],
+                "title": l["title"],
+                "summary": l["summary"],
+                "topics": l["topics"],
+                "segment_range": [l["start"], l["end"]],
+                "source_words": l["words"],
+            }
+            for l in lessons
+        ],
+    }
     await db.set_project(
         pid, curriculum=plan, phase="sessions",
         stage="Creating sessions", progress=55,
     )
+
+
+def _lesson_budget(source_words: int) -> tuple[int, int, int]:
+    """(minimum, suggested, maximum) lesson count for a source of this length.
+
+    A source that fits one comfortable sitting returns (1, 1, 1) — the caller
+    then skips the segmentation model entirely, so a short work can never be
+    split into a multi-lesson "course"."""
+    if source_words <= MAX_LESSON_WORDS:
+        return 1, 1, 1
+    minimum = max(1, math.ceil(source_words / MAX_LESSON_WORDS))
+    maximum = max(minimum, math.ceil(source_words / MIN_LESSON_WORDS))
+    suggested = min(maximum, max(minimum, math.ceil(source_words / TARGET_LESSON_WORDS)))
+    return minimum, suggested, maximum
+
+
+async def _chunk_digests(project_id: int, chunks: list[Any]) -> list[dict]:
+    """One planning line per source segment: where it sits, how long it is, and
+    what the analyze phase indexed in it. Used only to place lesson boundaries."""
+    by_chunk: dict[int, list[str]] = {}
+    for row in await db.get_concepts(project_id):
+        title = str(_as_dict(row["content"]).get("title") or "").strip()
+        if not title:
+            continue
+        for cid in (row["source_chunk_ids"] or []):
+            topics = by_chunk.setdefault(int(cid), [])
+            if title not in topics and len(topics) < MAX_TOPICS_PER_SEGMENT:
+                topics.append(title)
+
+    return [
+        {
+            "ordinal": i,
+            "chapter": c["chapter"],
+            "words": _word_count(c["text"]),
+            "topics": by_chunk.get(int(c["id"]), []),
+        }
+        for i, c in enumerate(chunks)
+    ]
+
+
+def _trim_digests(digests: list[dict]) -> list[dict]:
+    """Shrink the planning digest until the segmentation prompt fits in context.
+
+    Long books have too many segments to describe in full. Detail is dropped
+    before segments are — boundaries can still be placed on chapter and length
+    alone, but a missing segment would silently lose source text."""
+    trimmed = digests
+    for limit in (MAX_TOPICS_PER_SEGMENT, 3, 2, 1, 0):
+        trimmed = [{**d, "topics": d["topics"][:limit]} for d in digests]
+        if sum(len(str(d["topics"])) + 40 for d in trimmed) <= MAX_SEGMENT_DIGEST_CHARS:
+            break
+    return trimmed
+
+
+def _entries_from_plan(raw: Any, *, segment_count: int, max_lessons: int) -> list[dict]:
+    """Pull lesson start-points out of the model's plan, sanitized.
+
+    Only ``start_segment`` is trusted as structure; the ranges themselves are
+    derived in :func:`_resolve_lessons` so coverage can be guaranteed."""
+    entries: list[dict] = []
+    sessions = raw.get("sessions") if isinstance(raw, dict) else None
+    for s in sessions or []:
+        if not isinstance(s, dict):
+            continue
+        try:
+            start = int(s.get("start_segment"))
+        except (TypeError, ValueError):
+            continue
+        entries.append({
+            "start": max(0, min(segment_count - 1, start)),
+            "title": str(s.get("title") or "").strip(),
+            "summary": str(s.get("summary") or "").strip(),
+            "topics": [str(t).strip() for t in (s.get("topics") or []) if str(t).strip()],
+        })
+
+    entries.sort(key=lambda e: e["start"])
+    deduped: list[dict] = []
+    seen: set[int] = set()
+    for entry in entries:
+        if entry["start"] in seen:
+            continue
+        seen.add(entry["start"])
+        deduped.append(entry)
+
+    if not deduped:
+        deduped = [{"start": 0, "title": "", "summary": "", "topics": []}]
+    deduped[0]["start"] = 0          # the work always starts at its first segment
+    return deduped[:max_lessons]
+
+
+def _resolve_lessons(entries: list[dict], digests: list[dict]) -> list[dict]:
+    """Turn start-points into a complete, non-overlapping cover of the segments.
+
+    Each lesson runs from its own start to the segment before the next one, the
+    last runs to the end, and any lesson longer than ``MAX_LESSON_WORDS`` is
+    split on segment boundaries (which also keeps each script inside the model's
+    output-token ceiling)."""
+    total = len(digests)
+    ranges: list[dict] = []
+    for i, entry in enumerate(entries):
+        start = entry["start"]
+        end = (entries[i + 1]["start"] - 1) if i + 1 < len(entries) else total - 1
+        if end < start:                       # degenerate ordering; fold away
+            continue
+        ranges.append({**entry, "end": end})
+
+    if not ranges:
+        ranges = [{"start": 0, "end": total - 1, "title": "", "summary": "", "topics": []}]
+    ranges[0]["start"] = 0
+    ranges[-1]["end"] = total - 1
+
+    lessons: list[dict] = []
+    for r in ranges:
+        for piece in _split_to_length(r, digests):
+            lessons.append(piece)
+
+    for i, lesson in enumerate(lessons, start=1):
+        lesson["ordinal"] = i
+        lesson["words"] = _range_words(digests, lesson["start"], lesson["end"])
+        if not lesson["title"]:
+            lesson["title"] = f"Part {i}"
+        if not lesson["topics"]:
+            lesson["topics"] = [
+                t for d in digests[lesson["start"]: lesson["end"] + 1] for t in d["topics"]
+            ]
+    return lessons
+
+
+def _split_to_length(rng: dict, digests: list[dict]) -> list[dict]:
+    """Split one range into contiguous parts that each fit MAX_LESSON_WORDS."""
+    words = _range_words(digests, rng["start"], rng["end"])
+    span = rng["end"] - rng["start"] + 1
+    if words <= MAX_LESSON_WORDS or span <= 1:
+        return [dict(rng)]
+
+    parts = max(2, math.ceil(words / MAX_LESSON_WORDS))
+    per_part = words / parts
+    out: list[dict] = []
+    start = rng["start"]
+    running = 0
+    for i in range(rng["start"], rng["end"] + 1):
+        running += digests[i]["words"]
+        last_segment = i == rng["end"]
+        parts_left = parts - len(out)
+        segments_left = rng["end"] - i
+        # Close this part once it has its share, but never leave a later part empty.
+        if last_segment or (running >= per_part and parts_left > 1 and segments_left >= parts_left - 1):
+            out.append({
+                "start": start,
+                "end": i,
+                "title": rng["title"],
+                "summary": rng["summary"],
+                "topics": [],       # refilled from the segments actually covered
+            })
+            start, running = i + 1, 0
+            if len(out) == parts and not last_segment:
+                out[-1]["end"] = rng["end"]
+                break
+
+    for i, piece in enumerate(out):
+        if i and piece["title"]:
+            piece["title"] = f"{piece['title']} (part {i + 1})"
+    return out
+
+
+def _range_words(digests: list[dict], start: int, end: int) -> int:
+    return sum(d["words"] for d in digests[start: end + 1])
+
+
+def _word_count(text: Any) -> int:
+    return len(str(text or "").split())
 
 
 # --------------------------------------------------------------- phase: sessions (script + validate)
@@ -304,19 +513,49 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         )
         return
 
+    # Density target: the narration carries this part's information at roughly
+    # the length the author used for it. Coming in short means content was
+    # dropped; running long means filler was added.
+    source_words = sum(_word_count(c["text"]) for c in chunk_dicts)
+    min_words = max(60, int(source_words * DENSITY_MIN))
+    max_words = max(min_words + 40, int(source_words * DENSITY_MAX))
+    # ~1.4 tokens per word, plus headroom, capped at the DeepSeek output ceiling.
+    token_budget = min(8000, int(max_words * 1.7) + 400)
+
     script = ""
     validation = {"supported": False, "flagged": [], "notes": ""}
+    feedback: Optional[list] = None
     regen = 0
-    while regen <= MAX_REGEN:
+    for attempt in range(MAX_REGEN + 1):
+        regen = attempt
         script = await client.chat(
             system=prompts.SCRIPT_SYSTEM,
-            user=prompts.script_user(sess["title"], outline, chunk_dicts),
-            max_output_tokens=4000,
+            user=prompts.script_user(
+                sess["title"], outline, chunk_dicts,
+                source_words=source_words,
+                min_words=min_words,
+                max_words=max_words,
+                feedback=feedback,
+            ),
+            max_output_tokens=token_budget,
+            # A retry must not reproduce the rejected script verbatim. The
+            # feedback already changes the prompt; a little temperature helps the
+            # model leave a phrasing it has settled on. (At temperature 0 with an
+            # unchanged prompt, the old loop regenerated the identical script.)
+            temperature=0.0 if attempt == 0 else 0.3,
         )
         validation = await validate_script(client, script=script, chunks=chunk_dicts)
-        if validation["supported"]:
+        if script.strip() and validation["supported"]:
             break
-        regen += 1
+        feedback = validation.get("flagged") or []
+
+    written = _word_count(script)
+    if script.strip() and not (min_words <= written <= max_words):
+        log.info(
+            "Project %s session %s: %s narration words against a %s-%s target "
+            "(%s source words)",
+            pid, sess["ordinal"], written, min_words, max_words, source_words,
+        )
 
     await db.set_session(
         sess["id"],
@@ -445,15 +684,6 @@ def _as_list(value: Any) -> list:
         except Exception:  # noqa: BLE001
             return []
     return []
-
-
-def _dedupe(items: list[int]) -> list[int]:
-    seen, out = set(), []
-    for i in items:
-        if i not in seen:
-            seen.add(i)
-            out.append(i)
-    return out
 
 
 def _now():
