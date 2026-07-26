@@ -141,6 +141,25 @@ class StoryboardScene(BaseModel):
     rationale: str = ""             # one line: why the visual changes here
     media_type: Literal["image", "video"] = "image"
     search_terms: List[str] = Field(default_factory=list)
+    # What the viewer sees, written to stand alone in front of an image/video generator:
+    # subject, action, environment, mood, framing, period detail — and never the narration
+    # restated. This is the scene's actual content; `text` is the audio it sits over.
+    visual_prompt: str = ""
+    # Superseded by visual_prompt. Kept so projects saved before it, and any model that
+    # still answers in the old shape, keep rendering.
+    visual_ideas: List[str] = Field(default_factory=list)
+
+
+# ── One scene's visual direction, with no re-cutting and no timing ───────────
+class SceneSuggestRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class SceneSuggestResponse(BaseModel):
+    rationale: str = ""
+    media_type: Literal["image", "video"] = "image"
+    search_terms: List[str] = Field(default_factory=list)
+    visual_prompt: str = ""
     visual_ideas: List[str] = Field(default_factory=list)
 
 

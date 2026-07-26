@@ -1,10 +1,13 @@
 """AI Storyboard — a documentary editor's first visual pass over the narration.
 
-Given the narration text and its real rendered duration on the timeline, an LLM
-decides where the VISUAL should change based on the flow of the story — a new idea,
-person, place, event, time period, or visual concept — NOT fixed intervals or every
-sentence. Each returned scene carries media suggestions (search terms + visual ideas)
-that the editor's sidebar turns into real fair-use results on demand.
+Edit to ideas, not sentences. The unit is a VISUAL BEAT: a stretch of narration over which
+the viewer's mental picture does not change. One sentence often holds several beats and is
+split mid-sentence; several sentences often share one beat and are not split at all. Cuts
+never fall on a fixed interval or on a full stop for its own sake.
+
+Each beat carries a written description of the picture, complete enough for an image or
+video generator to render from it alone, plus search terms the editor's sidebar turns into
+real fair-use results on demand.
 
 The model never guesses seconds — it chooses WHERE in the text a visual should change,
 and the audio decides WHEN. Each scene is anchored back into the real narration text to
@@ -26,41 +29,70 @@ from .align import WORD_RE as _WORD_RE, normalize as _normalize
 
 logger = logging.getLogger("narrava-studio.storyboard")
 
-# Below this, a scene is too short to be a distinct shot — merge it into the previous
-# one so the editor isn't handed a strip of one-second placeholders.
-_MIN_SCENE_SEC = 1.5
-
-# How often a finished documentary actually changes picture. A first pass that leaves one
-# image up for the whole narration is a slide, not a storyboard: real cutting is far denser
-# than a writer expects, and B-roll under narration turns over every few seconds. The model
-# is asked to aim for _TARGET_SHOT_SEC, and any scene that still outruns _MAX_SHOT_SEC is
-# split at its sentence boundaries afterwards so the rhythm does not depend on it complying.
+# Documentary pacing. A visual beat averages 4-6 seconds; a fast run of facts can turn over
+# every 3-4, a heavy or dramatic moment can hold 6-10, and nothing sits past 10. These are
+# the shape of the edit, not a metronome — where the cut falls is decided by where the
+# picture changes, and only the outer bounds are enforced here.
 _TARGET_SHOT_SEC = 5.0
 _MAX_SHOT_SEC = 10.0
+
+# The fastest pace worth cutting to when re-cutting a long stretch; below this the beats
+# stop reading as separate images and start reading as a flicker.
+_MIN_REFINED_SHOT_SEC = 3.0
+
+# Below this a placeholder is a flash rather than a shot, so it folds into the one before
+# it. Kept under the 3-4s "fast factual" floor on purpose: a deliberate quick cutaway is
+# the editor's call to make, and this only catches the degenerate cases.
+_MIN_SCENE_SEC = 2.0
 
 # How far ahead of a word's measured start to place the cut that belongs to it. Covers the
 # late bias in whisper's word timestamps; see _clock_for.
 _CUT_LEAD_SEC = 0.12
 
-_SYSTEM = (
-    "You are an experienced documentary editor planning the VISUALS for a narration. "
-    "You are given the full narration script. Break it into an ordered list of scenes, "
-    "where each scene is a stretch of narration that a single shot or image would cover. "
-    "Change the visual wherever the narration gives you a reason to: a new idea, person, "
-    "place, event, time period, or visual concept. "
-    "PACING MATTERS AS MUCH AS MEANING. A finished documentary holds a shot for a few "
-    "seconds and then moves; one image left up for thirty seconds reads as a dead frame and "
-    "is the single most common mistake in a first pass. Cut on meaning rather than on a "
-    "stopwatch, but keep actively looking for the next reason to cut — if a stretch of "
-    "narration is running long under one visual, find the beat inside it where the picture "
-    "could change. "
-    "The first scene must cover the very beginning of the narration. "
-    "For each scene, give the exact narration text it covers (verbatim, in order, with no "
-    "gaps or overlaps so the pieces concatenate back to the original, and with NO scene "
-    "number, label or prefix in front of it), a one-line rationale "
-    "for why the visual changes there, whether it wants a still image or motion footage, "
-    "5-10 STOCK-MEDIA SEARCH TERMS, and 2-3 short VISUAL IDEAS describing what to show. "
-    "\n\n"
+# The editing philosophy, stated the way a director would state it. The rules that matter
+# most are the two the model gets wrong by default: it will cut on full stops unless told
+# not to, and it will describe the narration back to you instead of describing a picture.
+_EDIT_RULES = (
+    "EDIT TO IDEAS, NOT SENTENCES. This is the whole job. After every phrase, ask: has the "
+    "viewer's mental image changed? If it has, start a new scene. If it has not, stay on "
+    "the one you are on.\n"
+    "  - A single sentence usually carries more than one image. SPLIT IT, mid-sentence, at "
+    "the exact word where the picture turns. Do not wait for the full stop.\n"
+    "  - Several sentences that describe the same image are ONE scene. Do not start a new "
+    "scene merely because a sentence ended.\n"
+    "  - Never cut on a fixed interval, and never cut because a scene 'feels due'.\n"
+    "  - A new scene means: a new place, person, object, action, event, time period, or a "
+    "new idea the viewer would picture differently.\n"
+    "  - Cut where the phrase can breathe. Splitting mid-sentence is right; splitting "
+    "mid-phrase is not. Never break between an article, preposition, conjunction or "
+    "adjective and the word it belongs to. WRONG: \"the concerns behind the\" / "
+    "\"allegations disappear\". RIGHT: \"the concerns behind the allegations\" / "
+    "\"do not disappear\". Read your split points aloud — if the first half ends on a word "
+    "left dangling, move the cut.\n"
+    "\n"
+    "PACING. A scene averages 4-6 seconds of narration. A fast run of facts can turn over "
+    "every 3-4 seconds; a heavy, emotional or dramatic moment can hold for 6-10. Nothing "
+    "may sit longer than 10 seconds — if a stretch is running long under one image, there "
+    "is a beat inside it you have not found yet. Let the pacing vary with the material; "
+    "an evenly-spaced storyboard is a sign you cut on the clock instead of the meaning.\n"
+)
+
+# The `visual` field is the deliverable — it is handed to an image/video generator with no
+# other context, so it has to stand alone, and it must never be the narration restated.
+_VISUAL_RULES = (
+    "The `visual` field is what the viewer SEES. It is handed to an image or video "
+    "generator with nothing else to go on, so it must stand entirely on its own. Describe, "
+    "in one or two sentences: the primary subject; the action taking place; the "
+    "environment or location; the mood and atmosphere; camera framing where it helps "
+    "(wide, close-up, overhead, tracking); and period-accurate clothing, architecture and "
+    "objects whenever the subject is historical.\n"
+    "NEVER quote, paraphrase or narrate the script in the `visual` field. Describe the "
+    "picture, not the words. 'A story spreading faster than facts' is not a picture. "
+    "'Close-up of a phone screen as a headline is shared, reshared and multiplies across a "
+    "feed, cold blue light on a face in a darkened room' is a picture.\n"
+)
+
+_SEARCH_RULES = (
     "The SEARCH TERMS are typed into stock media sites (Pixabay, Pexels, Unsplash, Wikimedia "
     "Commons), so write them the way someone SEARCHES, not the way you would describe the "
     "scene. Rules for every term: "
@@ -68,20 +100,36 @@ _SYSTEM = (
     "(2) name a VISIBLE subject, object, place, or setting that a camera could point at; "
     "(3) no abstract concepts, emotions, time spans, or storytelling language; "
     "(4) prefer plain, common wording that returns MANY results over precise wording that "
-    "returns none. "
-    "\n"
+    "returns none.\n"
     'Example narration: "In the shadowed edges of European folklore, where dense forests '
     'swallowed light and abandoned mines echoed with unseen movement, stories of goblins '
-    'endured for centuries." '
-    "\n"
+    'endured for centuries."\n'
     "GOOD terms: goblin, dark forest, misty forest, abandoned mine, forest at night, "
-    "medieval village, ancient castle, cave tunnel. "
-    "\n"
+    "medieval village, ancient castle, cave tunnel.\n"
     "BAD terms: european folklore woods, shadowed edges of folklore, unseen movement, "
-    "stories of goblins endured. "
-    "\n\n"
-    'Respond with ONLY JSON of the form: {"scenes":[{"text":"...","rationale":"...",'
-    '"media_type":"image|video","search_terms":["..."],"visual_ideas":["..."]}]}'
+    "stories of goblins endured.\n"
+)
+
+_FIELDS = (
+    "For each scene give:\n"
+    "  text          the narration this visual covers — VERBATIM, in order, with no gaps "
+    "and no overlaps, so the pieces concatenate back into the original script exactly. It "
+    "may begin and end mid-sentence; that is normal and expected. No scene numbers, labels "
+    "or prefixes.\n"
+    "  visual        the picture, per the rules above.\n"
+    "  rationale     one short line: why the picture changes here.\n"
+    "  media_type    \"image\" for a still, \"video\" for motion footage.\n"
+    "  search_terms  5-10 stock-media queries, per the rules above.\n"
+)
+
+_SYSTEM = (
+    "You are an experienced documentary editor deciding what the viewer sees while a "
+    "narration plays. You are given the script. Break it into visual beats and describe "
+    "the picture for each one.\n\n"
+    + _EDIT_RULES + "\n" + _FIELDS + "\n" + _VISUAL_RULES + "\n" + _SEARCH_RULES + "\n"
+    "The first scene must cover the very beginning of the narration.\n\n"
+    'Respond with ONLY JSON of the form: {"scenes":[{"text":"...","visual":"...",'
+    '"rationale":"...","media_type":"image|video","search_terms":["..."]}]}'
 )
 
 
@@ -107,25 +155,119 @@ def build_storyboard(
 
 
 def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
-    # The model cannot pace shots without knowing how long the narration runs — asked
+    # The model cannot pace beats without knowing how long the narration runs — asked
     # blind it returns a handful of chapter-sized scenes whatever the length. Give it the
-    # duration and the shot count that implies.
+    # duration and the beat count that implies, as a sanity check on its own pacing rather
+    # than as a quota to fill.
     target = max(1, min(max_scenes, round(total / _TARGET_SHOT_SEC)))
     user = (
-        f"This narration runs about {total:.0f} seconds. Plan roughly {target} scenes "
-        f"(never more than {max_scenes}) — that is a visual change about every "
-        f"{_TARGET_SHOT_SEC:.0f} seconds, which is the pace a documentary cuts at. "
-        f"Returning only a few long scenes for a {total:.0f}-second narration is wrong.\n\n"
+        f"This narration runs about {total:.0f} seconds of speech. At documentary pace that "
+        f"is roughly {target} visual beats (never more than {max_scenes}). Use it as a check "
+        f"on your own pacing, not a quota: cut where the picture changes, and if you find "
+        f"yourself far under that number you are holding images too long.\n\n"
         f"NARRATION:\n{text}"
     )
+    return _scenes_from(_ask_json(user, max_scenes), max_scenes)
+
+
+def _ask_json(user: str, scene_budget: int, system: str = None) -> Any:
+    """One JSON call, sized for how much writing the answer needs."""
+    # Each scene now carries a written visual, so the ceiling has to scale with the count
+    # or a long narration gets truncated mid-array and parses to nothing.
+    budget = min(16000, 1500 + scene_budget * 320)
     try:
-        data = llm.generate_json(_SYSTEM, user, max_output_tokens=3000)
+        return llm.generate_json(system or _SYSTEM, user, max_output_tokens=budget)
     except Exception:  # noqa: BLE001 — any LLM/parse failure degrades to one scene
-        return []
+        logger.exception("Storyboard LLM call failed")
+        return None
+
+
+# Second pass. The first pass has to guess how long its beats run — it has the words but
+# not the voice. Once the narration is measured we know exactly, so anything still holding
+# too long goes back to the editor WITH its real duration attached. Finding the beat inside
+# a long stretch is a judgement about meaning, and belongs to the thing that understands
+# meaning; the mechanical splitter below is only there for when this cannot answer.
+_REFINE_SYSTEM = (
+    "You are an experienced documentary editor. Each stretch of narration below is "
+    "currently covered by a SINGLE image, and has been measured against the recorded "
+    "voice — the exact number of seconds it holds the screen is given. Every one of them "
+    "holds too long. Find the visual beats inside each stretch and break it up.\n\n"
+    + _EDIT_RULES + "\n" + _FIELDS + "\n" + _VISUAL_RULES + "\n" + _SEARCH_RULES + "\n"
+    "Within a stretch your scenes must cover its text completely and in order, verbatim, "
+    "with no gaps or overlaps; the first scene begins at the stretch's first word. Splitting "
+    "mid-sentence is expected — that is usually where the picture actually turns.\n\n"
+    'Respond with ONLY JSON of the form: {"stretches":[{"id":1,"scenes":[{"text":"...",'
+    '"visual":"...","rationale":"...","media_type":"image|video","search_terms":["..."]}]}]}'
+)
+
+# Beyond this many over-long stretches, re-asking costs more than it returns and the prompt
+# stops being a focused question. The mechanical splitter takes the rest.
+_MAX_REFINE_STRETCHES = 12
+
+
+def _refine_long(
+    full_text: str,
+    scenes: List[Dict[str, Any]],
+    spans: List[List[int]],
+    clock: "_Clock",
+) -> Tuple[List[Dict[str, Any]], List[List[int]]]:
+    """Re-cut the scenes that measure too long, by asking rather than by regex."""
+    lengths = [clock.at(b) - clock.at(a) for a, b in spans]
+    targets = [i for i, sec in enumerate(lengths) if sec > _MAX_SHOT_SEC]
+    if not targets:
+        return scenes, spans
+    if len(targets) > _MAX_REFINE_STRETCHES:
+        logger.info("Storyboard: %d over-long scenes, more than one question's worth — "
+                    "leaving them to the splitter", len(targets))
+        return scenes, spans
+
+    parts, budget = [], 0
+    for n, i in enumerate(targets, start=1):
+        a, b = spans[i]
+        parts.append(f"STRETCH {n} ({lengths[i]:.1f} seconds):\n{full_text[a:b].strip()}")
+        budget += max(2, round(lengths[i] / _TARGET_SHOT_SEC))
+    data = _ask_json("\n\n".join(parts), budget, system=_REFINE_SYSTEM)
+
+    by_stretch: Dict[int, List[Dict[str, Any]]] = {}
+    for entry in (data.get("stretches") if isinstance(data, dict) else None) or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            sid = int(entry.get("id"))
+        except (TypeError, ValueError):
+            continue
+        # No more beats than the fastest documentary pace would justify for its length.
+        idx = targets[sid - 1] if 0 < sid <= len(targets) else None
+        if idx is None:
+            continue
+        sub = _scenes_from(entry, max(2, round(lengths[idx] / _MIN_REFINED_SHOT_SEC)))
+        if len(sub) >= 2:
+            by_stretch[sid] = sub
+
+    out_scenes: List[Dict[str, Any]] = []
+    out_spans: List[List[int]] = []
+    for i, (scene, (a, b)) in enumerate(zip(scenes, spans)):
+        sub = by_stretch.get(targets.index(i) + 1) if i in targets else None
+        # Anchoring the sub-beats INSIDE the parent's own text keeps them from wandering
+        # off into a similar phrase elsewhere in the narration.
+        placed = _anchor_spans(full_text[a:b], sub) if sub else None
+        if not placed or len(placed) < 2:
+            out_scenes.append(scene)
+            out_spans.append([a, b])
+            continue
+        for sub_scene, sub_a, sub_b in placed:
+            out_scenes.append(sub_scene)
+            out_spans.append([a + sub_a, a + sub_b])
+
+    logger.info("Storyboard: re-cut %d over-long scene(s) into %d",
+                len(by_stretch), len(out_scenes) - len(scenes) + len(by_stretch))
+    return out_scenes, out_spans
+
+
+def _scenes_from(data: Any, limit: int) -> List[Dict[str, Any]]:
     scenes = data.get("scenes") if isinstance(data, dict) else None
     if not isinstance(scenes, list):
         return []
-
     cleaned: List[Dict[str, Any]] = []
     for s in scenes:
         if not isinstance(s, dict):
@@ -133,16 +275,31 @@ def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
         span = str(s.get("text") or "").strip()
         if not span:
             continue
-        cleaned.append({
-            "text": span,
-            "rationale": str(s.get("rationale") or "").strip()[:280],
-            "media_type": "video" if str(s.get("media_type") or "").lower() == "video" else "image",
-            "search_terms": _search_terms(s.get("search_terms")),
-            "visual_ideas": _str_list(s.get("visual_ideas"), limit=3),
-        })
-        if len(cleaned) >= max_scenes:
+        cleaned.append(_clean_scene(s, span))
+        if len(cleaned) >= limit:
             break
     return cleaned
+
+
+def _clean_scene(s: Dict[str, Any], span: str) -> Dict[str, Any]:
+    return {
+        "text": span,
+        "visual_prompt": _visual_prompt(s.get("visual")),
+        "rationale": str(s.get("rationale") or "").strip()[:280],
+        "media_type": "video" if str(s.get("media_type") or "").lower() == "video" else "image",
+        "search_terms": _search_terms(s.get("search_terms")),
+        # Superseded by visual_prompt; still read so a model that answers in the old shape
+        # (or an older saved project being re-suggested) does not come back empty-handed.
+        "visual_ideas": _str_list(s.get("visual_ideas"), limit=3),
+    }
+
+
+def _visual_prompt(value: Any) -> str:
+    """The generator-facing description. A list is accepted and joined — models hand back
+    ["subject", "mood", ...] often enough that rejecting it would lose real work."""
+    if isinstance(value, list):
+        value = ". ".join(str(v).strip() for v in value if str(v).strip())
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:900]
 
 
 def _fallback_scene(text: str) -> Dict[str, Any]:
@@ -150,11 +307,35 @@ def _fallback_scene(text: str) -> Dict[str, Any]:
     with heuristic search terms is still a useful (if coarse) first pass."""
     return {
         "text": text,
+        "visual_prompt": "",
         "rationale": "Whole-narration placeholder — regenerate for a finer pass.",
         "media_type": "image",
         "search_terms": script.extract_keywords(text, limit=8),
         "visual_ideas": [],
     }
+
+
+def suggest_for_span(text: str) -> Dict[str, Any]:
+    """Visual direction for one already-placed scene — no timing, no re-cutting.
+
+    The storyboard sidebar's "regenerate this scene" wants better suggestions for a
+    placeholder whose position is already correct. Routing that through build_storyboard
+    would demand word timings it has no way to supply, and would re-cut a scene the user
+    did not ask to re-cut.
+    """
+    span = (text or "").strip()
+    if not span:
+        return _fallback_scene("")
+    user = (
+        "This is ONE scene of a documentary that is already cut — do not split it and do "
+        "not change its text. Return exactly one scene, with `text` copied back verbatim, "
+        "and give it the best visual direction and search terms you can.\n\n"
+        f"NARRATION FOR THIS SCENE:\n{span}"
+    )
+    scenes = _scenes_from(_ask_json(user, 1), 1)
+    if not scenes:
+        return _fallback_scene(span)
+    return {**scenes[0], "text": span}  # its text is fixed; only the direction is new
 
 
 def _lay_out(
@@ -185,11 +366,14 @@ def _lay_out(
     if merged_spans:
         merged_spans[-1][1] = len(full_text)  # the last scene always runs to the end
 
-    # Split anything still longer than a shot. Same visual subject, so the search terms and
-    # visual ideas carry over — the editor just gets a slot per shot instead of one image
-    # asked to hold the screen for half a minute, which is how a real cut list is built.
-    # Deterministic, so the pacing holds even when the model returns three scenes for a
-    # four-minute narration.
+    # Anything still holding too long goes back to the editor with its measured duration —
+    # finding the beat inside a long stretch is a judgement about meaning.
+    merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock)
+
+    # Last resort only. If the re-cut did not happen or did not go far enough, split on
+    # grammar so no placeholder sits on screen indefinitely. This cuts on sentences and
+    # clauses, which is exactly what the edit is not supposed to do, so it is a floor under
+    # the worst case rather than part of the design.
     shots: List[Dict[str, Any]] = []
     shot_bounds: List[List[float]] = []
     for s, (start_ch, end_ch) in zip(merged, merged_spans):
@@ -197,11 +381,21 @@ def _lay_out(
             # The anchored span is what is actually spoken here; the model's own `text` is
             # only a fallback for a scene we could not place in the narration.
             text = full_text[a_ch:b_ch].strip() or s["text"]
-            shots.append({**s, "text": text} if n == 0 else {
-                **s, "text": text,
-                "rationale": "Same subject as the previous shot — vary the angle or framing "
-                             "so the picture keeps moving.",
-            })
+            if n == 0:
+                shots.append({**s, "text": text})
+            else:
+                # A grammar-split continuation inherits the visual it was cut out of, which
+                # would render as the same picture twice. Say so, in the field the generator
+                # actually reads, so the second slot at least varies.
+                visual = s.get("visual_prompt") or ""
+                shots.append({
+                    **s, "text": text,
+                    "visual_prompt": (visual + " Alternative angle or framing of the same "
+                                               "subject.").strip() if visual else visual,
+                    "rationale": "Continues the previous shot's subject — this one was split "
+                                 "on grammar to keep it off the screen too long, so give it a "
+                                 "different angle or replace it.",
+                })
             shot_bounds.append([clock.at(a_ch), clock.at(b_ch)])
     if shot_bounds:
         shot_bounds[0][0] = 0.0
@@ -222,7 +416,8 @@ def _lay_out(
             rationale=s["rationale"],
             media_type=s["media_type"],
             search_terms=s["search_terms"] or script.extract_keywords(s["text"], limit=8),
-            visual_ideas=s["visual_ideas"],
+            visual_prompt=s.get("visual_prompt", ""),
+            visual_ideas=s.get("visual_ideas") or [],
         ))
     return out
 

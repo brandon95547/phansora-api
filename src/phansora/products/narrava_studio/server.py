@@ -29,6 +29,8 @@ from .config import get_settings  # noqa: E402
 from .models import (  # noqa: E402
     MediaSearchRequest,
     MediaSearchResponse,
+    SceneSuggestRequest,
+    SceneSuggestResponse,
     ScriptGenerateRequest,
     ScriptGenerateResponse,
     SegmentRequest,
@@ -150,6 +152,31 @@ async def build_timeline(req: TimelineBuildRequest):
         ),
     )
     return TimelineBuildResponse(timeline=result)
+
+
+@app.post("/scene/suggest", response_model=SceneSuggestResponse)
+async def suggest_scene(req: SceneSuggestRequest):
+    """Fresh visual direction for ONE placeholder that is already correctly placed.
+
+    Deliberately not /storyboard: that one re-cuts the narration and demands measured word
+    timings, neither of which makes sense when the user is asking "give me better ideas for
+    this shot" about a scene whose position is already right.
+    """
+    _ensure_llm()
+    try:
+        suggestion = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: storyboard.suggest_for_span(req.text),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Scene suggestion failed")
+        raise HTTPException(status_code=502, detail=f"Scene suggestion failed: {exc}")
+    return SceneSuggestResponse(
+        rationale=suggestion.get("rationale", ""),
+        media_type=suggestion.get("media_type", "image"),
+        search_terms=suggestion.get("search_terms", []),
+        visual_prompt=suggestion.get("visual_prompt", ""),
+        visual_ideas=suggestion.get("visual_ideas", []),
+    )
 
 
 @app.post("/narration/align")
