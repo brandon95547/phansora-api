@@ -28,7 +28,20 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger("narrava-studio.align")
 
-_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+# THE tokenizer for narration text — storyboard.py imports this rather than keeping its own,
+# because the two must agree on the word COUNT exactly or the timings are rejected as
+# mismatched. Curly apostrophes are in the class and normalised away below: a script written
+# by an LLM says "didn’t" while whisper transcribes "didn't", and splitting the first into
+# "didn" + "t" both changed the count and stopped every contraction from matching.
+WORD_RE = re.compile(r"[A-Za-z0-9'’]+")
+_WORD_RE = WORD_RE
+
+
+
+def normalize(word: str) -> str:
+    """Lowercase, and one apostrophe to rule them all."""
+    return word.lower().replace("’", "'")
+
 
 _MODEL = None
 _MODEL_NAME: Optional[str] = None
@@ -108,7 +121,7 @@ def _heard(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, f
     out: List[Tuple[str, float, float]] = []
     for segment in segments:
         for word in (getattr(segment, "words", None) or []):
-            tokens = _WORD_RE.findall(str(getattr(word, "word", "")).lower())
+            tokens = [normalize(t) for t in _WORD_RE.findall(str(getattr(word, "word", "")))]
             if not tokens:
                 continue
             start, end = float(word.start), float(word.end)
@@ -129,7 +142,7 @@ def word_times(
     The result is positional: element i belongs to the i-th match of the word pattern over
     ``full_text``, which is the same walk the storyboard uses to locate its scenes.
     """
-    said = [m.group(0).lower() for m in _WORD_RE.finditer(full_text or "")]
+    said = [normalize(m.group(0)) for m in _WORD_RE.finditer(full_text or "")]
     if not said:
         raise AlignmentFailed("There are no words in this narration script to time.")
 

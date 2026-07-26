@@ -6,11 +6,11 @@ person, place, event, time period, or visual concept — NOT fixed intervals or 
 sentence. Each returned scene carries media suggestions (search terms + visual ideas)
 that the editor's sidebar turns into real fair-use results on demand.
 
-Timing is computed here, deterministically: the model never guesses seconds. Each
-scene is anchored back into the real narration text, its span costed as speech time
-plus the pauses that span actually contains, and those costs scaled onto
-``total_duration_sec`` so the first scene starts at 0 and the last ends exactly at
-the narration's end. That keeps the placeholders aligned with the voice under them.
+The model never guesses seconds — it chooses WHERE in the text a visual should change,
+and the audio decides WHEN. Each scene is anchored back into the real narration text to
+get a character offset, and measured word timings (services/align.py) turn that offset
+into a second. Without those timings nothing is laid out at all: a placeholder that is
+only nearly on the voice is the bug, not a cheaper version of the right answer.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import StoryboardScene
 from . import llm, script
+from .align import WORD_RE as _WORD_RE, normalize as _normalize
 
 logger = logging.getLogger("narrava-studio.storyboard")
 
@@ -36,6 +37,10 @@ _MIN_SCENE_SEC = 1.5
 # split at its sentence boundaries afterwards so the rhythm does not depend on it complying.
 _TARGET_SHOT_SEC = 5.0
 _MAX_SHOT_SEC = 10.0
+
+# How far ahead of a word's measured start to place the cut that belongs to it. Covers the
+# late bias in whisper's word timestamps; see _clock_for.
+_CUT_LEAD_SEC = 0.12
 
 _SYSTEM = (
     "You are an experienced documentary editor planning the VISUALS for a narration. "
@@ -87,8 +92,8 @@ def build_storyboard(
     word_times: Optional[List[Tuple[float, float]]] = None,
 ) -> List[StoryboardScene]:
     """``word_times`` is one (start, end) per word of ``full_text``, measured from the
-    rendered audio (see services/align.py). Given it, every boundary sits on a real word;
-    without it the layout estimates, which is close but not frame-accurate."""
+    rendered audio (see services/align.py). Required: without it, or with a count that does
+    not match the script, this raises NarrationNotTimed rather than approximating."""
     text = (full_text or "").strip()
     total = max(0.1, float(total_duration_sec or 0.0))
     if not text:
@@ -273,7 +278,15 @@ def _clock_for(
             f"against {len(starts)} in the script)."
         )
 
-    marks = [(o, float(t[0])) for o, t in zip(starts, word_times)]
+    # Cut a hair BEFORE the word, not on it. Whisper derives word starts from cross-attention
+    # and they run slightly late — measured against real narration the boundary landed inside
+    # the first phoneme, so the picture changed a beat after the word it belongs to. An early
+    # cut is invisible; a late one is the thing you notice. Never earlier than the previous
+    # word's start, so the order of the shots cannot change.
+    marks: List[Tuple[int, float]] = []
+    for i, (offset, span) in enumerate(zip(starts, word_times)):
+        floor = marks[-1][1] if marks else 0.0
+        marks.append((offset, max(floor, float(span[0]) - _CUT_LEAD_SEC)))
     # Sentinels so an offset anywhere in the text — including before the first word and
     # after the last — interpolates instead of falling off the end.
     marks = [(0, 0.0)] + [m for m in marks if m[0] > 0] + [(len(full_text), total)]
@@ -286,17 +299,63 @@ def _clock_for(
 # instead, which is what an editor does rather than sit on a dead frame. Splitting by
 # estimated speech cost rather than by count keeps shots even when the sentences are not.
 _SENTENCE_END_RE = re.compile(r'[.!?…]+["\'”’)\]]*\s+')
-_CLAUSE_END_RE = re.compile(r'[,;:—–]+\s+')
+# A dash is a clause break whether or not it is spaced — "messages—mostly" is written tight
+# far more often than not, and requiring the space meant a long sentence hinging on one had
+# nowhere to cut and sat on screen past the ceiling. Comma/semicolon/colon still need the
+# space so "1,000" is not mistaken for a break.
+_CLAUSE_END_RE = re.compile(r'(?:[,;:]+\s+|\s*[—–]+\s*)')
 
 
-def _split_keeping_text(text: str, pattern: "re.Pattern") -> List[str]:
+# Periods that end a word without ending a sentence. Cutting the picture inside "Washington,
+# D.C. pizzeria" puts a shot boundary in the middle of a noun phrase — measured right, edited
+# wrong.
+_ABBREVIATIONS = {
+    "mr", "mrs", "ms", "dr", "prof", "rev", "sr", "jr", "st", "mt", "ft",
+    "vs", "etc", "eg", "ie", "al", "approx", "est", "fig", "vol", "no",
+    "inc", "ltd", "co", "corp", "dept", "gov", "sen", "rep", "gen", "capt", "sgt", "lt", "col",
+}
+_TRAILING_WORD_RE = re.compile(r"([A-Za-z]+)$")
+
+
+def _is_sentence_end(text: str, match: "re.Match") -> bool:
+    """Whether a full stop really closes a sentence."""
+    # A lowercase word after it means the sentence carried on ("D.C. pizzeria", "vs. the").
+    following = text[match.end():match.end() + 1]
+    if following and following.islower():
+        return False
+    word = _TRAILING_WORD_RE.search(text[:match.start()])
+    if not word:
+        return True
+    token = word.group(1)
+    # A single letter before the stop is an initial or part of an acronym, never a sentence.
+    return len(token) > 1 and token.lower() not in _ABBREVIATIONS
+
+
+_INITIAL_AHEAD_RE = re.compile(r"^[A-Z]\.|^[A-Z]$")
+
+
+def _is_clause_break(text: str, match: "re.Match") -> bool:
+    """Whether a comma really separates clauses.
+
+    "Washington, D.C." is one place, not two, and a shot that starts on "D.C. pizzeria"
+    reads as a machine that cannot hear. Anything followed by an initial stays joined.
+    """
+    return not _INITIAL_AHEAD_RE.match(text[match.end():match.end() + 2])
+
+
+def _split_keeping_text(text: str, pattern: "re.Pattern", accept=None) -> List[str]:
     """Split on ``pattern`` WITHOUT discarding it. ``"".join(result) == text`` exactly —
     re.split() would swallow the separator, and a separator here is a closing quote or a
     paragraph break: punctuation the reader sees and silence the layout has to charge for.
+
+    ``accept(text, match)`` can reject a candidate boundary, which is how a full stop that
+    is only an abbreviation stays out of the cut list.
     """
     out: List[str] = []
     last = 0
     for m in pattern.finditer(text):
+        if accept and not accept(text, m):
+            continue
         out.append(text[last:m.end()])
         last = m.end()
     if last < len(text):
@@ -311,16 +370,16 @@ def _unit_offsets(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> 
     dead frame — without it, a scene of one sprawling sentence and three short ones could
     never be brought under the limit."""
     text = full_text[start_ch:end_ch]
-    pieces = _split_keeping_text(text, _SENTENCE_END_RE)
+    pieces = _split_keeping_text(text, _SENTENCE_END_RE, _is_sentence_end)
     if len(pieces) < 2:
-        pieces = _split_keeping_text(text, _CLAUSE_END_RE)
+        pieces = _split_keeping_text(text, _CLAUSE_END_RE, _is_clause_break)
 
     offsets: List[int] = []
     cursor = start_ch
     for piece in pieces:
         # How long this piece really holds the screen, straight off the measured clock.
         if clock.at(cursor + len(piece)) - clock.at(cursor) > _MAX_SHOT_SEC:
-            clauses = _split_keeping_text(piece, _CLAUSE_END_RE)
+            clauses = _split_keeping_text(piece, _CLAUSE_END_RE, _is_clause_break)
             if len(clauses) > 1:
                 for clause in clauses:
                     offsets.append(cursor)
@@ -374,7 +433,6 @@ def _shots(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> List[Tu
 # and the next IS that scene. Every character then belongs to exactly one scene: no gaps,
 # no overlaps, nothing counted twice, and the placeholder shows the words spoken under it.
 
-_WORD_RE = re.compile(r"[A-Za-z0-9']+")
 _ANCHOR_WORDS = 6  # long enough to be unique in a narration, short enough to survive a paraphrase
 
 
@@ -386,7 +444,7 @@ def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[Tuple[Di
     given a zero-length slot: the model invented it, and a placeholder sitting over no
     narration at all is worse than one fewer visual change.
     """
-    words = [(m.group(0).lower(), m.start()) for m in _WORD_RE.finditer(full_text)]
+    words = [(_normalize(m.group(0)), m.start()) for m in _WORD_RE.finditer(full_text)]
     lowered = [w for w, _ in words]
 
     # Character offset where each scene starts. The search only ever moves forward, so a
@@ -397,7 +455,7 @@ def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[Tuple[Di
         if i == 0:
             placed.append((0, s))  # the first scene always covers the start of the narration
             continue
-        needle = [m.group(0).lower() for m in _WORD_RE.finditer(s["text"])][:_ANCHOR_WORDS]
+        needle = [_normalize(m.group(0)) for m in _WORD_RE.finditer(s["text"])][:_ANCHOR_WORDS]
         at = _find_words(lowered, needle, cursor) if needle else -1
         if at < 0:
             continue
