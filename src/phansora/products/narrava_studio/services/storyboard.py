@@ -213,8 +213,12 @@ def _lay_out(
             id=f"sb_{uuid.uuid4().hex[:8]}",
             index=i,
             text=s["text"],
-            start_sec=round(start, 2),
-            end_sec=round(end, 2),
+            # Milliseconds, not centiseconds: rounding a boundary to 2dp moves it by up to
+            # 5ms, and it rounds UP as readily as down — which lands it just inside the word
+            # the clock had deliberately placed it in front of. Cosmetic precision is not
+            # worth breaking the one invariant this whole file exists to hold.
+            start_sec=round(start, 3),
+            end_sec=round(end, 3),
             rationale=s["rationale"],
             media_type=s["media_type"],
             search_terms=s["search_terms"] or script.extract_keywords(s["text"], limit=8),
@@ -278,15 +282,24 @@ def _clock_for(
             f"against {len(starts)} in the script)."
         )
 
-    # Cut a hair BEFORE the word, not on it. Whisper derives word starts from cross-attention
-    # and they run slightly late — measured against real narration the boundary landed inside
-    # the first phoneme, so the picture changed a beat after the word it belongs to. An early
-    # cut is invisible; a late one is the thing you notice. Never earlier than the previous
-    # word's start, so the order of the shots cannot change.
+    # Cut a hair BEFORE the word, not on it: whisper derives word starts from
+    # cross-attention and they run slightly late, so cutting exactly on the timestamp put
+    # the boundary inside the first phoneme and the picture changed a beat late.
+    #
+    # But only ever back into SILENCE. Word timings are frequently contiguous — the voice
+    # runs "trafficking" straight into "with" with no gap at all — and there the lead has
+    # nowhere to go, so taking it anyway moves the cut into the end of the previous word.
+    # That is the same defect in the other direction, and it is the one you actually see:
+    # the placeholder changes while the voice is still finishing the word before it.
     marks: List[Tuple[int, float]] = []
-    for i, (offset, span) in enumerate(zip(starts, word_times)):
-        floor = marks[-1][1] if marks else 0.0
-        marks.append((offset, max(floor, float(span[0]) - _CUT_LEAD_SEC)))
+    previous_end = 0.0
+    for offset, span in zip(starts, word_times):
+        start, end = float(span[0]), float(span[1])
+        mark = max(previous_end, start - _CUT_LEAD_SEC)
+        if marks and mark < marks[-1][1]:
+            mark = marks[-1][1]  # never go backwards
+        marks.append((offset, min(mark, start)))
+        previous_end = max(previous_end, end)
     # Sentinels so an offset anywhere in the text — including before the first word and
     # after the last — interpolates instead of falling off the end.
     marks = [(0, 0.0)] + [m for m in marks if m[0] > 0] + [(len(full_text), total)]
