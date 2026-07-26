@@ -25,17 +25,30 @@ from . import llm, script
 # one so the editor isn't handed a strip of one-second placeholders.
 _MIN_SCENE_SEC = 1.5
 
+# How often a finished documentary actually changes picture. A first pass that leaves one
+# image up for the whole narration is a slide, not a storyboard: real cutting is far denser
+# than a writer expects, and B-roll under narration turns over every few seconds. The model
+# is asked to aim for _TARGET_SHOT_SEC, and any scene that still outruns _MAX_SHOT_SEC is
+# split at its sentence boundaries afterwards so the rhythm does not depend on it complying.
+_TARGET_SHOT_SEC = 5.0
+_MAX_SHOT_SEC = 10.0
+
 _SYSTEM = (
     "You are an experienced documentary editor planning the VISUALS for a narration. "
     "You are given the full narration script. Break it into an ordered list of scenes, "
     "where each scene is a stretch of narration that a single shot or image would cover. "
-    "Start a new scene ONLY where an editor would naturally change the visual: when the "
-    "narration introduces a new idea, person, place, event, time period, or visual "
-    "concept. Do NOT cut on a fixed interval and do NOT start a new scene for every "
-    "sentence — a scene often spans several sentences that share one visual subject. "
+    "Change the visual wherever the narration gives you a reason to: a new idea, person, "
+    "place, event, time period, or visual concept. "
+    "PACING MATTERS AS MUCH AS MEANING. A finished documentary holds a shot for a few "
+    "seconds and then moves; one image left up for thirty seconds reads as a dead frame and "
+    "is the single most common mistake in a first pass. Cut on meaning rather than on a "
+    "stopwatch, but keep actively looking for the next reason to cut — if a stretch of "
+    "narration is running long under one visual, find the beat inside it where the picture "
+    "could change. "
     "The first scene must cover the very beginning of the narration. "
     "For each scene, give the exact narration text it covers (verbatim, in order, with no "
-    "gaps or overlaps so the pieces concatenate back to the original), a one-line rationale "
+    "gaps or overlaps so the pieces concatenate back to the original, and with NO scene "
+    "number, label or prefix in front of it), a one-line rationale "
     "for why the visual changes there, whether it wants a still image or motion footage, "
     "5-10 STOCK-MEDIA SEARCH TERMS, and 2-3 short VISUAL IDEAS describing what to show. "
     "\n\n"
@@ -69,17 +82,24 @@ def build_storyboard(full_text: str, total_duration_sec: float, max_scenes: int 
     if not text:
         return []
 
-    raw_scenes = _ask_llm(text, max_scenes)
+    raw_scenes = _ask_llm(text, max_scenes, total)
     if not raw_scenes:
         raw_scenes = [_fallback_scene(text)]
 
     return _lay_out(raw_scenes, total, text)
 
 
-def _ask_llm(text: str, max_scenes: int) -> List[Dict[str, Any]]:
+def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
+    # The model cannot pace shots without knowing how long the narration runs — asked
+    # blind it returns a handful of chapter-sized scenes whatever the length. Give it the
+    # duration and the shot count that implies.
+    target = max(1, min(max_scenes, round(total / _TARGET_SHOT_SEC)))
     user = (
-        f"Plan at most {max_scenes} scenes for this narration. Keep scenes substantial — "
-        f"prefer fewer, meaningful visual changes over many tiny ones.\n\nNARRATION:\n{text}"
+        f"This narration runs about {total:.0f} seconds. Plan roughly {target} scenes "
+        f"(never more than {max_scenes}) — that is a visual change about every "
+        f"{_TARGET_SHOT_SEC:.0f} seconds, which is the pace a documentary cuts at. "
+        f"Returning only a few long scenes for a {total:.0f}-second narration is wrong.\n\n"
+        f"NARRATION:\n{text}"
     )
     try:
         data = llm.generate_json(_SYSTEM, user, max_output_tokens=3000)
@@ -160,8 +180,25 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float, full_text: str) -> List
     if merged_bounds:
         merged_bounds[-1][1] = total  # guard against drift from merges
 
+    # Split anything still longer than a shot. Same visual subject, so the search terms and
+    # visual ideas carry over — the editor just gets a slot per shot instead of one image
+    # asked to hold the screen for half a minute, which is how a real cut list is built.
+    # Deterministic, so the pacing holds even when the model returns three scenes for a
+    # four-minute narration.
+    shots: List[Dict[str, Any]] = []
+    shot_bounds: List[List[float]] = []
+    for s, (start, end) in zip(merged, merged_bounds):
+        pieces = _shots(s["text"], start, end)
+        for n, (text, a, b) in enumerate(pieces):
+            shots.append({**s, "text": text} if n == 0 else {
+                **s, "text": text,
+                "rationale": "Same subject as the previous shot — vary the angle or framing "
+                             "so the picture keeps moving.",
+            })
+            shot_bounds.append([a, b])
+
     out: List[StoryboardScene] = []
-    for i, (s, (start, end)) in enumerate(zip(merged, merged_bounds)):
+    for i, (s, (start, end)) in enumerate(zip(shots, shot_bounds)):
         out.append(StoryboardScene(
             id=f"sb_{uuid.uuid4().hex[:8]}",
             index=i,
@@ -173,6 +210,95 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float, full_text: str) -> List
             search_terms=s["search_terms"] or script.extract_keywords(s["text"], limit=8),
             visual_ideas=s["visual_ideas"],
         ))
+    return out
+
+
+# ── cutting a long scene into shots ──────────────────────────────────────────
+# A sentence is the smallest place a visual can change without fighting the narration, so
+# that is where the cuts go; a sentence too long to be one shot is cut at its clauses
+# instead, which is what an editor does rather than sit on a dead frame. Splitting by
+# estimated speech cost rather than by count keeps shots even when the sentences are not.
+_SENTENCE_END_RE = re.compile(r'[.!?…]+["\'”’)\]]*\s+')
+_CLAUSE_END_RE = re.compile(r'[,;:—–]+\s+')
+
+
+def _split_keeping_text(text: str, pattern: "re.Pattern") -> List[str]:
+    """Split on ``pattern`` WITHOUT discarding it. ``"".join(result) == text`` exactly —
+    re.split() would swallow the separator, and a separator here is a closing quote or a
+    paragraph break: punctuation the reader sees and silence the layout has to charge for.
+    """
+    out: List[str] = []
+    last = 0
+    for m in pattern.finditer(text):
+        out.append(text[last:m.end()])
+        last = m.end()
+    if last < len(text):
+        out.append(text[last:])
+    return [p for p in out if p.strip()]
+
+
+def _units(text: str, span: float) -> List[str]:
+    """The pieces a scene may be cut into: sentences, and clauses where a sentence is by
+    itself long enough to hold the screen past the ceiling. Cutting inside a long sentence
+    is what an editor does rather than sit on a dead frame — and without this a scene made
+    of one sprawling sentence and three short ones could never be split under the limit."""
+    units = _split_keeping_text(text, _SENTENCE_END_RE)
+    if len(units) < 2:
+        return _split_keeping_text(text, _CLAUSE_END_RE)
+
+    budget = sum(_speech_seconds(u) for u in units) or 1.0
+    out: List[str] = []
+    for unit in units:
+        if _speech_seconds(unit) / budget * span > _MAX_SHOT_SEC:
+            pieces = _split_keeping_text(unit, _CLAUSE_END_RE)
+            out.extend(pieces if len(pieces) > 1 else [unit])
+        else:
+            out.append(unit)
+    return out
+
+
+def _shots(text: str, start: float, end: float) -> List[tuple]:
+    """``[(text, start, end)]`` for one scene — itself if it is already shot-length."""
+    span = end - start
+    if span <= _MAX_SHOT_SEC:
+        return [(text, start, end)]
+    units = _units(text, span)
+    if len(units) < 2:
+        return [(text, start, end)]  # nothing to cut on without fighting the narration
+
+    # Cost each unit, then convert straight to seconds on this scene's span so the grouping
+    # can be driven by the thing that actually matters — how long a shot sits on screen.
+    costs = [_speech_seconds(u) for u in units]
+    budget = sum(costs) or 1.0
+    seconds = [c / budget * span for c in costs]
+
+    # Close a shot once it has run about a target's worth, or as soon as one more unit
+    # would push it past the maximum. That enforces the ceiling directly rather than
+    # hoping an even split lands under it.
+    groups: List[tuple] = []
+    current: List[str] = []
+    running = 0.0
+    for unit, sec in zip(units, seconds):
+        if current and (running >= _TARGET_SHOT_SEC or running + sec > _MAX_SHOT_SEC):
+            groups.append((current, running))
+            current, running = [], 0.0
+        current.append(unit)
+        running += sec
+    if current:
+        # A final sliver folds back into the shot before it rather than flashing on screen —
+        # unless that would push the merged shot over the ceiling we just enforced.
+        if groups and running < _MIN_SCENE_SEC and groups[-1][1] + running <= _MAX_SHOT_SEC:
+            tail, tail_secs = groups[-1]
+            groups[-1] = (tail + current, tail_secs + running)
+        else:
+            groups.append((current, running))
+
+    out: List[tuple] = []
+    cursor = start
+    for i, (group, secs) in enumerate(groups):
+        stop = end if i == len(groups) - 1 else round(cursor + secs, 2)
+        out.append(("".join(group).strip(), cursor, max(stop, cursor)))
+        cursor = stop
     return out
 
 
@@ -237,14 +363,20 @@ def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[tuple]:
 
 
 def _find_words(hay: List[str], needle: List[str], start: int) -> int:
-    """Index in ``hay`` at or after ``start`` where ``needle`` begins, shrinking the needle
-    from the tail until it matches — a scene whose last quoted words were paraphrased
-    should still anchor on the ones that weren't. -1 when nothing matches."""
+    """Index in ``hay`` at or after ``start`` where ``needle`` begins. -1 if nothing matches.
+
+    Every window of the needle is tried, longest first, so the anchor survives junk at
+    EITHER end: a label the model prefixed ("Scene 3: In the age of…") as readily as a
+    paraphrased tail. Only shrinking from the tail — which is what this did first — meant
+    one stray prefix made every probe start on a word that is nowhere in the narration,
+    and the whole storyboard collapsed onto a single placeholder.
+    """
     for size in range(len(needle), 1, -1):
-        probe = needle[:size]
-        for i in range(start, len(hay) - size + 1):
-            if hay[i:i + size] == probe:
-                return i
+        for offset in range(0, len(needle) - size + 1):
+            probe = needle[offset:offset + size]
+            for i in range(start, len(hay) - size + 1):
+                if hay[i:i + size] == probe:
+                    return i
     return -1
 
 
