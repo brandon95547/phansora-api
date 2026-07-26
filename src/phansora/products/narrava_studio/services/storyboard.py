@@ -226,6 +226,10 @@ def _lay_out(
 # above cannot tell which one it is holding.
 
 
+class NarrationNotTimed(ValueError):
+    """The narration has no measured word timings, so there is nothing honest to lay out."""
+
+
 class _Clock:
     """Linear interpolation over ``(char_offset, second)`` marks, one per word."""
 
@@ -255,37 +259,25 @@ def _clock_for(
     word_times: Optional[List[Tuple[float, float]]],
 ) -> _Clock:
     starts = [m.start() for m in _WORD_RE.finditer(full_text)]
+    if not word_times:
+        raise NarrationNotTimed(
+            "This storyboard has no measured word timings for the narration, so its "
+            "placeholders cannot be placed on the voice."
+        )
+    if len(word_times) != len(starts):
+        # A length mismatch means the timings were measured against different text. Using
+        # them positionally would put every scene on the wrong word — quietly, and in a way
+        # only visible after the user has filled the placeholders.
+        raise NarrationNotTimed(
+            f"The narration timings do not match the script ({len(word_times)} timed words "
+            f"against {len(starts)} in the script)."
+        )
 
-    if word_times and len(word_times) == len(starts):
-        marks = [(o, float(t[0])) for o, t in zip(starts, word_times)]
-    else:
-        if word_times:
-            # A length mismatch means the timings were aligned against different text.
-            # Using them positionally would put every scene on the wrong word.
-            logger.warning(
-                "Narrava storyboard: %d word timings for %d narration words — ignoring them "
-                "and estimating instead", len(word_times), len(starts),
-            )
-        marks = _estimated_marks(full_text, starts, total)
-
+    marks = [(o, float(t[0])) for o, t in zip(starts, word_times)]
     # Sentinels so an offset anywhere in the text — including before the first word and
     # after the last — interpolates instead of falling off the end.
     marks = [(0, 0.0)] + [m for m in marks if m[0] > 0] + [(len(full_text), total)]
     return _Clock(marks, total)
-
-
-def _estimated_marks(full_text: str, starts: List[int], total: float) -> List[Tuple[int, float]]:
-    """Where each word falls if the voice speaks at the modelled rate and pauses."""
-    marks: List[Tuple[int, float]] = []
-    running = 0.0
-    previous = 0
-    for start in starts:
-        running += _speech_seconds(full_text[previous:start])
-        marks.append((start, running))
-        previous = start
-    running += _speech_seconds(full_text[previous:])
-    scale = (total / running) if running > 0 else 0.0
-    return [(o, t * scale) for o, t in marks]
 
 
 # ── cutting a long scene into shots ──────────────────────────────────────────
@@ -312,24 +304,31 @@ def _split_keeping_text(text: str, pattern: "re.Pattern") -> List[str]:
     return [p for p in out if p.strip()]
 
 
-def _units(text: str, span: float) -> List[str]:
-    """The pieces a scene may be cut into: sentences, and clauses where a sentence is by
-    itself long enough to hold the screen past the ceiling. Cutting inside a long sentence
-    is what an editor does rather than sit on a dead frame — and without this a scene made
-    of one sprawling sentence and three short ones could never be split under the limit."""
-    units = _split_keeping_text(text, _SENTENCE_END_RE)
-    if len(units) < 2:
-        return _split_keeping_text(text, _CLAUSE_END_RE)
+def _unit_offsets(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> List[int]:
+    """Character offsets inside ``[start_ch, end_ch)`` where a cut could land: sentence
+    ends, plus the clauses of any sentence that by itself would hold the screen past the
+    ceiling. Cutting inside a long sentence is what an editor does rather than sit on a
+    dead frame — without it, a scene of one sprawling sentence and three short ones could
+    never be brought under the limit."""
+    text = full_text[start_ch:end_ch]
+    pieces = _split_keeping_text(text, _SENTENCE_END_RE)
+    if len(pieces) < 2:
+        pieces = _split_keeping_text(text, _CLAUSE_END_RE)
 
-    budget = sum(_speech_seconds(u) for u in units) or 1.0
-    out: List[str] = []
-    for unit in units:
-        if _speech_seconds(unit) / budget * span > _MAX_SHOT_SEC:
-            pieces = _split_keeping_text(unit, _CLAUSE_END_RE)
-            out.extend(pieces if len(pieces) > 1 else [unit])
-        else:
-            out.append(unit)
-    return out
+    offsets: List[int] = []
+    cursor = start_ch
+    for piece in pieces:
+        # How long this piece really holds the screen, straight off the measured clock.
+        if clock.at(cursor + len(piece)) - clock.at(cursor) > _MAX_SHOT_SEC:
+            clauses = _split_keeping_text(piece, _CLAUSE_END_RE)
+            if len(clauses) > 1:
+                for clause in clauses:
+                    offsets.append(cursor)
+                    cursor += len(clause)
+                continue
+        offsets.append(cursor)
+        cursor += len(piece)
+    return offsets
 
 
 def _shots(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> List[Tuple[int, int]]:
@@ -339,19 +338,9 @@ def _shots(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> List[Tu
     if span <= _MAX_SHOT_SEC:
         return [(start_ch, end_ch)]
 
-    text = full_text[start_ch:end_ch]
-    units = _units(text, span)
-    if len(units) < 2:
+    offsets = _unit_offsets(full_text, start_ch, end_ch, clock)
+    if len(offsets) < 2:
         return [(start_ch, end_ch)]  # nothing to cut on without fighting the narration
-
-    # Units concatenate back to the text exactly, so their lengths give the character
-    # offset each one begins at — and the clock turns that into the second the voice
-    # reaches it. The grouping below is therefore driven by real screen time.
-    offsets: List[int] = []
-    cursor = start_ch
-    for unit in units:
-        offsets.append(cursor)
-        cursor += len(unit)
     offsets.append(end_ch)
 
     # Close a shot once it has run about a target's worth, or as soon as one more unit
@@ -452,38 +441,6 @@ def _find_words(hay: List[str], needle: List[str], start: int) -> int:
                 if hay[i:i + size] == probe:
                     return i
     return -1
-
-
-# ── how long a span takes to say ─────────────────────────────────────────────
-# Word share was the other half of the drift: it charges nothing for the silence the voice
-# puts at a full stop or a paragraph break, so that silence got smeared evenly across every
-# word in the narration and pushed each boundary progressively later than the audio. Cost a
-# span as speech time PLUS the pauses it actually contains and the silence stays in the
-# scene that owns it. Characters rather than words, too — "a" and "extraordinarily" do not
-# take the same time to say.
-_CHARS_PER_SEC = 15.0     # ≈150 wpm of ordinary English prose
-_PAUSE_SENTENCE = 0.40    # . ! ? …
-_PAUSE_CLAUSE = 0.18      # , ; : — –
-_PAUSE_PARAGRAPH = 0.75   # on top of the sentence stop that usually precedes it
-
-_SENTENCE_RE = re.compile(r"[.!?…]+")
-_CLAUSE_RE = re.compile(r"[,;:—–]")
-_PARAGRAPH_RE = re.compile(r"\n\s*\n")
-_WHITESPACE_RE = re.compile(r"\s+")
-
-
-def _speech_seconds(text: str) -> float:
-    """Rough seconds to speak ``text``. The absolute number does not matter — every span is
-    scaled onto the narration's real measured duration — only that spans are costed
-    relative to each other the way the voice actually renders them."""
-    if not text or not text.strip():
-        return 0.0
-    return (
-        len(_WHITESPACE_RE.sub(" ", text.strip())) / _CHARS_PER_SEC
-        + len(_SENTENCE_RE.findall(text)) * _PAUSE_SENTENCE
-        + len(_CLAUSE_RE.findall(text)) * _PAUSE_CLAUSE
-        + len(_PARAGRAPH_RE.findall(text)) * _PAUSE_PARAGRAPH
-    )
 
 
 def _str_list(value: Any, *, limit: int) -> List[str]:

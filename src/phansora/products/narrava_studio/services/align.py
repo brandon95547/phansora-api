@@ -9,8 +9,13 @@ the script the user wrote, giving every word of the script a real second.
 
 The transcript never matches the script exactly (mis-hearings, numbers written as digits,
 dropped filler), so the two are matched as sequences and the words in between are
-interpolated. Everything here fails soft: no model, an unreadable file, or a transcript
-that does not resemble the script all return None, and the caller keeps its estimate.
+interpolated.
+
+Nothing here falls back. A storyboard whose placeholders are *nearly* on the voice is not
+a cheaper version of a correct one — it is the bug, and one that only shows up after the
+user has dropped media into forty placeholders. So every failure raises: no model, an
+unreadable clip, a transcript that does not resemble the script. The caller reports it and
+the user fixes the cause.
 """
 from __future__ import annotations
 
@@ -35,6 +40,18 @@ _MODEL_LOCK = Lock()
 _MIN_MATCH_RATIO = 0.6
 
 
+class AlignmentUnavailable(RuntimeError):
+    """The machinery isn't there — no faster-whisper, no model, a broken backend.
+
+    Separate from AlignmentFailed because the fixes are different: this one is the
+    operator's (install it, point at a model), and it is the same for every request.
+    """
+
+
+class AlignmentFailed(ValueError):
+    """The audio and the script don't correspond, so no honest timing can come out of it."""
+
+
 def _load_model():
     """faster-whisper, loaded once per process.
 
@@ -48,7 +65,13 @@ def _load_model():
     with _MODEL_LOCK:
         if _MODEL is not None and _MODEL_NAME == name:
             return _MODEL
-        from faster_whisper import WhisperModel  # lazy — the API must still boot without it
+        try:
+            from faster_whisper import WhisperModel  # lazy — the API still boots without it
+        except Exception as exc:  # noqa: BLE001
+            raise AlignmentUnavailable(
+                "faster-whisper is not installed on the API host, so narration cannot be "
+                "timed. Install the API requirements and restart it."
+            ) from exc
 
         kwargs = {
             "device": os.getenv("WHISPER_DEVICE", "cpu"),
@@ -57,7 +80,12 @@ def _load_model():
         threads = os.getenv("WHISPER_CPU_THREADS", "").strip()
         if threads.isdigit():
             kwargs["cpu_threads"] = max(1, int(threads))
-        _MODEL = WhisperModel(name, **kwargs)
+        try:
+            _MODEL = WhisperModel(name, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — a bad model name or no download
+            raise AlignmentUnavailable(
+                f"The speech model '{name}' could not be loaded on the API host: {exc}"
+            ) from exc
         _MODEL_NAME = name
         return _MODEL
 
@@ -95,24 +123,29 @@ def word_times(
     *,
     language: Optional[str] = None,
     total_duration_sec: Optional[float] = None,
-) -> Optional[List[Tuple[float, float]]]:
-    """One ``(start, end)`` per word of ``full_text``, or None if it cannot be aligned.
+) -> List[Tuple[float, float]]:
+    """One ``(start, end)`` per word of ``full_text``. Raises rather than approximating.
 
     The result is positional: element i belongs to the i-th match of the word pattern over
     ``full_text``, which is the same walk the storyboard uses to locate its scenes.
     """
     said = [m.group(0).lower() for m in _WORD_RE.finditer(full_text or "")]
     if not said:
-        return None
+        raise AlignmentFailed("There are no words in this narration script to time.")
 
     try:
         heard = _heard(audio_path, language)
-    except Exception:  # noqa: BLE001 — a missing model or unreadable file is not fatal
-        logger.exception("Narration alignment failed; falling back to the estimate")
-        return None
+    except AlignmentUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable clip
+        raise AlignmentFailed(
+            f"The narration audio could not be read for timing: {exc}"
+        ) from exc
     if not heard:
-        logger.warning("Narration alignment heard nothing in %s", audio_path)
-        return None
+        raise AlignmentFailed(
+            "No speech was found in the narration audio, so the storyboard has nothing to "
+            "time itself against."
+        )
 
     matcher = SequenceMatcher(None, said, [w for w, _, _ in heard], autojunk=False)
     times: List[Optional[Tuple[float, float]]] = [None] * len(said)
@@ -124,13 +157,15 @@ def word_times(
 
     ratio = matched / len(said)
     if ratio < _MIN_MATCH_RATIO:
-        logger.warning(
-            "Narration alignment rejected: only %.0f%% of the script was found in the "
-            "audio — treating them as different recordings", ratio * 100,
+        raise AlignmentFailed(
+            f"Only {ratio * 100:.0f}% of the script was heard in the narration audio, so "
+            "they are not the same recording. Re-voice the narration so the audio on the "
+            "timeline matches the script, then build the storyboard again."
         )
-        return None
 
     filled = _fill_gaps(times, total_duration_sec)
+    if filled is None:
+        raise AlignmentFailed("The narration audio produced no usable word timings.")
     logger.info("Narration aligned: %d words, %.0f%% heard directly", len(said), ratio * 100)
     return filled
 

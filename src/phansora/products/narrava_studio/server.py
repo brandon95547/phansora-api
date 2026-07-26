@@ -163,8 +163,11 @@ async def align_narration(
 
     Kept separate from /storyboard rather than folded into it: the timings are useful on
     their own (captions, subtitles, a word-accurate scrubber) and this way the storyboard
-    endpoint stays a plain JSON call. Never fails the caller — an unalignable clip comes
-    back ``aligned: false`` and the storyboard estimates instead.
+    endpoint stays a plain JSON call.
+
+    Failure is an error, not a degraded result. 503 means the host cannot do this at all
+    and an operator has to fix it; 422 means this particular audio and script do not go
+    together and the user has to.
     """
     suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
     fd, temp_path = tempfile.mkstemp(prefix="narrava_align_", suffix=suffix)
@@ -181,15 +184,18 @@ async def align_narration(
                 total_duration_sec=total_duration_sec,
             ),
         )
-    except Exception:  # noqa: BLE001 — the storyboard has a working fallback; do not 500
-        logger.exception("Narration alignment failed")
-        times = None
+    except align.AlignmentUnavailable as exc:
+        logger.error("Narration alignment unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except align.AlignmentFailed as exc:
+        logger.warning("Narration alignment failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
     finally:
         try:
             os.unlink(temp_path)
         except OSError:
             pass
-    return {"aligned": times is not None, "words": times or []}
+    return {"aligned": True, "words": times}
 
 
 @app.post("/storyboard", response_model=StoryboardResponse)
@@ -207,6 +213,10 @@ async def build_storyboard(req: StoryboardRequest):
                 word_times=req.word_times,
             ),
         )
+    except storyboard.NarrationNotTimed as exc:
+        # Placeholders that are only nearly on the voice are the bug, so an untimed
+        # narration is refused rather than approximated.
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Storyboard build failed")
         raise HTTPException(status_code=502, detail=f"Storyboard build failed: {exc}")
