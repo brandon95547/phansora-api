@@ -14,12 +14,16 @@ the narration's end. That keeps the placeholders aligned with the voice under th
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
-from typing import Any, Dict, List
+from bisect import bisect_right
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import StoryboardScene
 from . import llm, script
+
+logger = logging.getLogger("narrava-studio.storyboard")
 
 # Below this, a scene is too short to be a distinct shot — merge it into the previous
 # one so the editor isn't handed a strip of one-second placeholders.
@@ -76,7 +80,15 @@ _SYSTEM = (
 )
 
 
-def build_storyboard(full_text: str, total_duration_sec: float, max_scenes: int = 24) -> List[StoryboardScene]:
+def build_storyboard(
+    full_text: str,
+    total_duration_sec: float,
+    max_scenes: int = 24,
+    word_times: Optional[List[Tuple[float, float]]] = None,
+) -> List[StoryboardScene]:
+    """``word_times`` is one (start, end) per word of ``full_text``, measured from the
+    rendered audio (see services/align.py). Given it, every boundary sits on a real word;
+    without it the layout estimates, which is close but not frame-accurate."""
     text = (full_text or "").strip()
     total = max(0.1, float(total_duration_sec or 0.0))
     if not text:
@@ -86,7 +98,7 @@ def build_storyboard(full_text: str, total_duration_sec: float, max_scenes: int 
     if not raw_scenes:
         raw_scenes = [_fallback_scene(text)]
 
-    return _lay_out(raw_scenes, total, text)
+    return _lay_out(raw_scenes, total, text, word_times)
 
 
 def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
@@ -140,45 +152,33 @@ def _fallback_scene(text: str) -> Dict[str, Any]:
     }
 
 
-def _lay_out(scenes: List[Dict[str, Any]], total: float, full_text: str) -> List[StoryboardScene]:
-    """Anchor each scene into the real narration, cost its span as speech + pauses, then
-    scale those costs onto ``total``. First starts at 0; last ends at total. Scenes shorter
-    than the minimum are merged into their predecessor."""
-    placed = _anchor_spans(full_text, scenes) or [(scenes[0], full_text)]
-    costs = [_speech_seconds(span) for _, span in placed]
-    budget = sum(costs)
-    if budget <= 0:
-        # Nothing anchored at all (punctuation-only narration, say) — an even split is
-        # still better than collapsing every scene onto zero.
-        costs = [1.0] * len(costs)
-        budget = float(len(costs)) or 1.0
+def _lay_out(
+    scenes: List[Dict[str, Any]],
+    total: float,
+    full_text: str,
+    word_times: Optional[List[Tuple[float, float]]] = None,
+) -> List[StoryboardScene]:
+    """Anchor each scene into the real narration, then read its bounds off the clock.
 
-    # Provisional [start, end] by cumulative share of the estimated speech time.
-    bounds: List[List[float]] = []
-    cursor = 0.0
-    for i, c in enumerate(costs):
-        start = cursor
-        end = total if i == len(costs) - 1 else round(start + (c / budget) * total, 2)
-        bounds.append([start, max(end, start)])
-        cursor = end
+    Every boundary in here — scene and shot alike — is a character offset in the narration
+    turned into a second by the same clock, so the measured and estimated paths can never
+    produce differently-shaped output. First starts at 0; last ends at total.
+    """
+    clock = _clock_for(full_text, total, word_times)
+    placed = _anchor_spans(full_text, scenes) or [(scenes[0], 0, len(full_text))]
 
     # Merge too-short scenes forward into the previous one (keeping the earlier scene's
-    # metadata — it owns the visual — and extending its end).
+    # metadata — it owns the visual — and extending its span).
     merged: List[Dict[str, Any]] = []
-    merged_bounds: List[List[float]] = []
-    for (s, span), (start, end) in zip(placed, bounds):
-        # The anchored span is what is actually spoken here; the model's own `text` is only
-        # a fallback for a scene we could not place in the narration. Costed raw above,
-        # stored trimmed — the trailing break is timing, not something to show in a caption.
-        text = span.strip() or s["text"]
-        if merged and (end - start) < _MIN_SCENE_SEC:
-            merged_bounds[-1][1] = end
-            merged[-1]["text"] = f"{merged[-1]['text']} {text}".strip()
+    merged_spans: List[List[int]] = []
+    for s, start_ch, end_ch in placed:
+        if merged and (clock.at(end_ch) - clock.at(start_ch)) < _MIN_SCENE_SEC:
+            merged_spans[-1][1] = end_ch
         else:
-            merged.append({**s, "text": text})
-            merged_bounds.append([start, end])
-    if merged_bounds:
-        merged_bounds[-1][1] = total  # guard against drift from merges
+            merged.append(dict(s))
+            merged_spans.append([start_ch, end_ch])
+    if merged_spans:
+        merged_spans[-1][1] = len(full_text)  # the last scene always runs to the end
 
     # Split anything still longer than a shot. Same visual subject, so the search terms and
     # visual ideas carry over — the editor just gets a slot per shot instead of one image
@@ -187,15 +187,20 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float, full_text: str) -> List
     # four-minute narration.
     shots: List[Dict[str, Any]] = []
     shot_bounds: List[List[float]] = []
-    for s, (start, end) in zip(merged, merged_bounds):
-        pieces = _shots(s["text"], start, end)
-        for n, (text, a, b) in enumerate(pieces):
+    for s, (start_ch, end_ch) in zip(merged, merged_spans):
+        for n, (a_ch, b_ch) in enumerate(_shots(full_text, start_ch, end_ch, clock)):
+            # The anchored span is what is actually spoken here; the model's own `text` is
+            # only a fallback for a scene we could not place in the narration.
+            text = full_text[a_ch:b_ch].strip() or s["text"]
             shots.append({**s, "text": text} if n == 0 else {
                 **s, "text": text,
                 "rationale": "Same subject as the previous shot — vary the angle or framing "
                              "so the picture keeps moving.",
             })
-            shot_bounds.append([a, b])
+            shot_bounds.append([clock.at(a_ch), clock.at(b_ch)])
+    if shot_bounds:
+        shot_bounds[0][0] = 0.0
+        shot_bounds[-1][1] = total
 
     out: List[StoryboardScene] = []
     for i, (s, (start, end)) in enumerate(zip(shots, shot_bounds)):
@@ -211,6 +216,76 @@ def _lay_out(scenes: List[Dict[str, Any]], total: float, full_text: str) -> List
             visual_ideas=s["visual_ideas"],
         ))
     return out
+
+
+# ── the clock: a character offset in the narration -> a second on the timeline ───────
+# One question, asked by everything downstream, answered two ways. Given measured word
+# times it reports where the voice actually is. Without them it falls back to modelling how
+# long the text takes to say. Routing both through the same interface is what stops the
+# measured and estimated paths from drifting into different behaviour — the layout code
+# above cannot tell which one it is holding.
+
+
+class _Clock:
+    """Linear interpolation over ``(char_offset, second)`` marks, one per word."""
+
+    def __init__(self, marks: List[Tuple[int, float]], total: float):
+        self._offsets = [o for o, _ in marks]
+        self._times = [t for _, t in marks]
+        self._total = total
+
+    def at(self, offset: int) -> float:
+        i = bisect_right(self._offsets, offset) - 1
+        if i < 0:
+            return 0.0
+        if i >= len(self._offsets) - 1:
+            return self._times[-1]
+        o0, o1 = self._offsets[i], self._offsets[i + 1]
+        t0, t1 = self._times[i], self._times[i + 1]
+        if o1 <= o0:
+            return t0
+        # Within a word we can only assume characters take even time; the marks either side
+        # are real, so the error is bounded by one word either way.
+        return round(t0 + (t1 - t0) * ((offset - o0) / (o1 - o0)), 3)
+
+
+def _clock_for(
+    full_text: str,
+    total: float,
+    word_times: Optional[List[Tuple[float, float]]],
+) -> _Clock:
+    starts = [m.start() for m in _WORD_RE.finditer(full_text)]
+
+    if word_times and len(word_times) == len(starts):
+        marks = [(o, float(t[0])) for o, t in zip(starts, word_times)]
+    else:
+        if word_times:
+            # A length mismatch means the timings were aligned against different text.
+            # Using them positionally would put every scene on the wrong word.
+            logger.warning(
+                "Narrava storyboard: %d word timings for %d narration words — ignoring them "
+                "and estimating instead", len(word_times), len(starts),
+            )
+        marks = _estimated_marks(full_text, starts, total)
+
+    # Sentinels so an offset anywhere in the text — including before the first word and
+    # after the last — interpolates instead of falling off the end.
+    marks = [(0, 0.0)] + [m for m in marks if m[0] > 0] + [(len(full_text), total)]
+    return _Clock(marks, total)
+
+
+def _estimated_marks(full_text: str, starts: List[int], total: float) -> List[Tuple[int, float]]:
+    """Where each word falls if the voice speaks at the modelled rate and pauses."""
+    marks: List[Tuple[int, float]] = []
+    running = 0.0
+    previous = 0
+    for start in starts:
+        running += _speech_seconds(full_text[previous:start])
+        marks.append((start, running))
+        previous = start
+    running += _speech_seconds(full_text[previous:])
+    scale = (total / running) if running > 0 else 0.0
+    return [(o, t * scale) for o, t in marks]
 
 
 # ── cutting a long scene into shots ──────────────────────────────────────────
@@ -257,49 +332,48 @@ def _units(text: str, span: float) -> List[str]:
     return out
 
 
-def _shots(text: str, start: float, end: float) -> List[tuple]:
-    """``[(text, start, end)]`` for one scene — itself if it is already shot-length."""
+def _shots(full_text: str, start_ch: int, end_ch: int, clock: _Clock) -> List[Tuple[int, int]]:
+    """``[(start_char, end_char)]`` for one scene — itself if it is already shot-length."""
+    start, end = clock.at(start_ch), clock.at(end_ch)
     span = end - start
     if span <= _MAX_SHOT_SEC:
-        return [(text, start, end)]
+        return [(start_ch, end_ch)]
+
+    text = full_text[start_ch:end_ch]
     units = _units(text, span)
     if len(units) < 2:
-        return [(text, start, end)]  # nothing to cut on without fighting the narration
+        return [(start_ch, end_ch)]  # nothing to cut on without fighting the narration
 
-    # Cost each unit, then convert straight to seconds on this scene's span so the grouping
-    # can be driven by the thing that actually matters — how long a shot sits on screen.
-    costs = [_speech_seconds(u) for u in units]
-    budget = sum(costs) or 1.0
-    seconds = [c / budget * span for c in costs]
+    # Units concatenate back to the text exactly, so their lengths give the character
+    # offset each one begins at — and the clock turns that into the second the voice
+    # reaches it. The grouping below is therefore driven by real screen time.
+    offsets: List[int] = []
+    cursor = start_ch
+    for unit in units:
+        offsets.append(cursor)
+        cursor += len(unit)
+    offsets.append(end_ch)
 
     # Close a shot once it has run about a target's worth, or as soon as one more unit
     # would push it past the maximum. That enforces the ceiling directly rather than
     # hoping an even split lands under it.
-    groups: List[tuple] = []
-    current: List[str] = []
-    running = 0.0
-    for unit, sec in zip(units, seconds):
-        if current and (running >= _TARGET_SHOT_SEC or running + sec > _MAX_SHOT_SEC):
-            groups.append((current, running))
-            current, running = [], 0.0
-        current.append(unit)
-        running += sec
-    if current:
-        # A final sliver folds back into the shot before it rather than flashing on screen —
-        # unless that would push the merged shot over the ceiling we just enforced.
-        if groups and running < _MIN_SCENE_SEC and groups[-1][1] + running <= _MAX_SHOT_SEC:
-            tail, tail_secs = groups[-1]
-            groups[-1] = (tail + current, tail_secs + running)
-        else:
-            groups.append((current, running))
+    cuts: List[int] = [offsets[0]]
+    opened = start
+    for i in range(1, len(offsets) - 1):
+        here, nxt = clock.at(offsets[i]), clock.at(offsets[i + 1])
+        if (here - opened) >= _TARGET_SHOT_SEC or (nxt - opened) > _MAX_SHOT_SEC:
+            cuts.append(offsets[i])
+            opened = here
+    cuts.append(end_ch)
 
-    out: List[tuple] = []
-    cursor = start
-    for i, (group, secs) in enumerate(groups):
-        stop = end if i == len(groups) - 1 else round(cursor + secs, 2)
-        out.append(("".join(group).strip(), cursor, max(stop, cursor)))
-        cursor = stop
-    return out
+    # A final sliver folds back into the shot before it rather than flashing on screen —
+    # unless that would push the merged shot back over the ceiling we just enforced.
+    if len(cuts) > 2:
+        last_start, last_end = clock.at(cuts[-2]), clock.at(cuts[-1])
+        if (last_end - last_start) < _MIN_SCENE_SEC and (last_end - clock.at(cuts[-3])) <= _MAX_SHOT_SEC:
+            del cuts[-2]
+
+    return [(a, b) for a, b in zip(cuts, cuts[1:]) if b > a]
 
 
 # ── anchoring the model's scenes back into the narration ─────────────────────
@@ -315,9 +389,9 @@ _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 _ANCHOR_WORDS = 6  # long enough to be unique in a narration, short enough to survive a paraphrase
 
 
-def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[tuple]:
-    """Pair each scene with the slice of ``full_text`` it covers — in order, contiguous,
-    and together covering the whole narration exactly once.
+def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], int, int]]:
+    """``(scene, start_char, end_char)`` for each scene — in order, contiguous, and
+    together covering the whole narration exactly once.
 
     A scene whose opening words appear nowhere in the narration is DROPPED rather than
     given a zero-length slot: the model invented it, and a placeholder sitting over no
@@ -353,11 +427,11 @@ def _anchor_spans(full_text: str, scenes: List[Dict[str, Any]]) -> List[tuple]:
     if deduped:
         deduped[0] = (0, deduped[0][1])
 
-    # Spans are raw, not stripped: the whitespace at a span's tail is where the paragraph
-    # break lives, and the voice really does stop there. Strip it and that pause is charged
-    # to nobody, putting every later boundary early by the breaks that came before it.
+    # Character offsets, not text: the whitespace at a span's tail is where the paragraph
+    # break lives and the voice really does stop there, so the clock has to see it. Handing
+    # back a trimmed string would charge that pause to nobody.
     return [
-        (s, full_text[start:(deduped[i + 1][0] if i + 1 < len(deduped) else len(full_text))])
+        (s, start, (deduped[i + 1][0] if i + 1 < len(deduped) else len(full_text)))
         for i, (start, s) in enumerate(deduped)
     ]
 

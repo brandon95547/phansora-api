@@ -15,12 +15,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import tempfile
+from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from .config import get_settings  # noqa: E402
@@ -36,7 +38,7 @@ from .models import (  # noqa: E402
     TimelineBuildRequest,
     TimelineBuildResponse,
 )
-from .services import llm, media, script, storyboard, timeline, voices  # noqa: E402
+from .services import align, llm, media, script, storyboard, timeline, voices  # noqa: E402
 
 logger = logging.getLogger("narrava-studio")
 
@@ -150,6 +152,46 @@ async def build_timeline(req: TimelineBuildRequest):
     return TimelineBuildResponse(timeline=result)
 
 
+@app.post("/narration/align")
+async def align_narration(
+    file: UploadFile = File(...),
+    full_text: str = Form(...),
+    language: Optional[str] = Form(None),
+    total_duration_sec: Optional[float] = Form(None),
+):
+    """Measured word timings for a rendered narration, for /storyboard to lay scenes on.
+
+    Kept separate from /storyboard rather than folded into it: the timings are useful on
+    their own (captions, subtitles, a word-accurate scrubber) and this way the storyboard
+    endpoint stays a plain JSON call. Never fails the caller — an unalignable clip comes
+    back ``aligned: false`` and the storyboard estimates instead.
+    """
+    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
+    fd, temp_path = tempfile.mkstemp(prefix="narrava_align_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        times = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: align.word_times(
+                temp_path,
+                full_text,
+                language=language,
+                total_duration_sec=total_duration_sec,
+            ),
+        )
+    except Exception:  # noqa: BLE001 — the storyboard has a working fallback; do not 500
+        logger.exception("Narration alignment failed")
+        times = None
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+    return {"aligned": times is not None, "words": times or []}
+
+
 @app.post("/storyboard", response_model=StoryboardResponse)
 async def build_storyboard(req: StoryboardRequest):
     """AI first visual pass: narration -> media-placeholder scenes at story-flow
@@ -162,6 +204,7 @@ async def build_storyboard(req: StoryboardRequest):
                 req.full_text,
                 total_duration_sec=req.total_duration_sec,
                 max_scenes=req.max_scenes,
+                word_times=req.word_times,
             ),
         )
     except Exception as exc:  # noqa: BLE001

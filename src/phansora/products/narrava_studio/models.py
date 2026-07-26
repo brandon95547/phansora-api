@@ -1,7 +1,7 @@
 """Pydantic request/response models for Narrava Studio."""
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -121,9 +121,15 @@ class MediaSearchResponse(BaseModel):
 class StoryboardRequest(BaseModel):
     full_text: str = Field(..., min_length=3, max_length=20000)
     # The narration's real rendered length on the timeline; scene times are laid
-    # out proportionally across it (the model never guesses seconds).
+    # out across it (the model never guesses seconds).
     total_duration_sec: float = Field(..., gt=0, le=36000)
     max_scenes: int = Field(default=24, ge=1, le=80)
+    # Measured (start, end) per word of full_text, from POST /narration/align. With these
+    # every boundary sits on a real word; without them the layout models how long the text
+    # takes to say, which is close but drifts by a word or two — visible once a scene is
+    # only a few seconds long. Must be positionally 1:1 with full_text's words or it is
+    # ignored, since a mismatch would put every scene on the wrong word.
+    word_times: Optional[List[Tuple[float, float]]] = Field(default=None)
 
 
 class StoryboardScene(BaseModel):
