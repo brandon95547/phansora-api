@@ -19,10 +19,15 @@ class VoicePreset(BaseModel):
 # ── Script generation ────────────────────────────────────────────────────────
 class ScriptGenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=3, max_length=4000)
-    # Narration voice/style flavour the writer should target.
+    # What KIND of piece this is: documentary, explainer, story, promotional, educational.
     style: str = "documentary"
     tone: Optional[str] = None
     target_duration_sec: Optional[int] = Field(default=None, ge=10, le=3600)
+    # The documentary's house style (see services/styles.DOC_STYLES) — the SAME value the
+    # storyboard is built with, so the words and the pictures come out of one description
+    # of the film. Bounded string rather than a Literal for the same reason as below: an
+    # unknown name writes unstyled instead of 422-ing over a creative preference.
+    doc_style: Optional[str] = Field(default=None, max_length=40)
 
 
 class ScriptSegment(BaseModel):
@@ -130,9 +135,10 @@ class StoryboardRequest(BaseModel):
     # only a few seconds long. Must be positionally 1:1 with full_text's words or it is
     # ignored, since a mismatch would put every scene on the wrong word.
     word_times: Optional[List[Tuple[float, float]]] = Field(default=None)
-    # House visual style (see services/storyboard.STYLES): dresses the pictures, never the
-    # cut. A plain bounded string rather than a Literal on purpose — an unknown name falls
-    # back to unstyled, where a Literal would 422 the whole build over a creative preference.
+    # The documentary's house style (see services/styles.DOC_STYLES) — the same value the
+    # narration was written under. A plain bounded string rather than a Literal on purpose:
+    # an unknown name falls back to unstyled, where a Literal would 422 the whole build
+    # over a creative preference.
     style: Optional[str] = Field(default=None, max_length=40)
 
 
@@ -168,14 +174,16 @@ class SceneIdea(BaseModel):
 # ── One scene's visual direction, with no re-cutting and no timing ───────────
 class SceneSuggestRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
-    # How many alternatives to write. The sidebar asks for 5; the ceiling keeps one
-    # request from turning into an unbounded generation.
-    count: int = Field(default=5, ge=1, le=8)
+    # How many alternatives to write. The sidebar asks for 3 — five made the call slow
+    # enough to time out at the proxy, and the fourth and fifth were rarely looked at. The
+    # ceiling keeps one request from turning into an unbounded generation.
+    count: int = Field(default=3, ge=1, le=8)
     # Prompts the client already has on screen. Given these, the model diversifies against
     # them instead of rewording them — which is what makes a top-up round worth making.
     have: List[str] = Field(default_factory=list, max_length=8)
-    # Same house style the storyboard was built under, so a scene's alternatives match the
-    # rest of the film rather than reverting to neutral the moment you ask for more.
+    # Same house style the narration and the storyboard were made under, so a scene's
+    # alternatives match the rest of the film rather than reverting to neutral the moment
+    # you ask for more.
     style: Optional[str] = Field(default=None, max_length=40)
 
 

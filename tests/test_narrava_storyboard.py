@@ -75,7 +75,7 @@ def test_style_block_falls_back_to_unstyled(monkeypatch):
 
     for value in (None, "", "   ", "nonsense"):
         assert storyboard._style_block(value) == ""
-    assert storyboard._style_block("CINEMATIC").startswith("VISUAL STYLE — Cinematic")
+    assert storyboard._style_block("CINEMATIC").startswith("DOCUMENTARY STYLE — Cinematic")
 
 
 def test_style_reaches_the_ideas_prompt(monkeypatch):
@@ -91,16 +91,49 @@ def test_style_reaches_the_ideas_prompt(monkeypatch):
     monkeypatch.setattr(storyboard.llm, "generate_json", fake)
     storyboard.suggest_for_span("The port never truly sleeps.", count=2, style="dark")
 
-    assert seen["user"].startswith("VISUAL STYLE — Dark / Suspense")
-    # The one instruction that keeps a mood from becoming a pacing change.
-    assert "must not change where you cut" in seen["user"]
+    assert seen["user"].startswith("DOCUMENTARY STYLE — Dark / Suspense")
+    # The style may shape the pictures and how fast they turn over, but the spans are what
+    # every placeholder's position is anchored to — so it is told where its authority ends.
+    assert "must still be the narration verbatim" in seen["user"]
+
+
+def test_narration_and_storyboard_read_the_same_style(monkeypatch):
+    """One choice, two prompts. A film written investigative and shot cinematic is the
+    failure the shared registry exists to prevent, so both blocks must name the same style
+    from the same entry."""
+    from phansora.products.narrava_studio.services import styles
+
+    assert styles.visual_block("historical").startswith("DOCUMENTARY STYLE — Historical")
+    assert styles.narration_block("historical").startswith("DOCUMENTARY STYLE — Historical")
+    # Unknown and missing write unstyled on both sides rather than raising.
+    for value in (None, "", "   ", "nonsense"):
+        assert styles.visual_block(value) == ""
+        assert styles.narration_block(value) == ""
+
+
+def test_doc_style_reaches_the_script_writer(monkeypatch):
+    """The narration is written in the house style, not just shot in it."""
+    from phansora.products.narrava_studio.services import script
+
+    seen = {}
+
+    def fake(system, user, **kwargs):
+        seen["user"] = user
+        return "The port never truly sleeps."
+
+    monkeypatch.setattr(script.llm, "generate_text", fake)
+    script.generate_script("A port at night", style="documentary", doc_style="dark")
+
+    assert seen["user"].startswith("DOCUMENTARY STYLE — Dark / Suspense")
+    # The brief still reaches it — the style frames the request, it does not replace it.
+    assert "A port at night" in seen["user"]
 
 
 def test_style_does_not_move_the_placeholders(monkeypatch):
-    """The whole contract of the feature: it dresses the pictures, it does not re-cut.
+    """The style reaches the model, never the layout.
 
-    Same scenes in, same spans out — the style must never reach the part of the build that
-    decides where a placeholder starts and ends.
+    Same scenes in, same spans out — where a placeholder starts and ends is arithmetic over
+    the model's spans and the measured clock, and the style must not enter it.
     """
     from phansora.products.narrava_studio.services import storyboard
 

@@ -17,7 +17,7 @@ from typing import List
 
 from .. import config
 from ..models import Script, ScriptSegment
-from . import llm
+from . import llm, styles
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 # Split on sentence-ending punctuation followed by whitespace. Good enough for
@@ -145,9 +145,20 @@ def generate_script(
     style: str = "documentary",
     tone: str | None = None,
     target_duration_sec: int | None = None,
+    doc_style: str | None = None,
     wpm: int | None = None,
 ) -> Script:
-    """Prompt -> narrator-formatted script, then segmented into timed beats."""
+    """Prompt -> narrator-formatted script, then segmented into timed beats.
+
+    Two different "styles", which is confusing enough to be worth spelling out:
+
+      ``style``      what KIND of piece this is — documentary, explainer, story,
+                     promotional, educational.
+      ``doc_style``  the house style the whole film is made in (services/styles.py):
+                     cinematic, investigative, historical, and so on. The storyboard is
+                     built from the same value, which is what keeps the words and the
+                     pictures reading as one film. Unknown or missing writes unstyled.
+    """
     settings = config.get_settings()
     wpm = wpm or settings.narrava_words_per_minute
 
@@ -160,7 +171,9 @@ def generate_script(
             f"Target length: about {target_duration_sec} seconds of narration "
             f"(~{target_words} words). Stay close to this length."
         )
-    user = "\n".join(instructions)
+    # The house style leads the message: it is the frame the brief is written inside, and
+    # a model reads the top of a user turn as the standing instruction for the rest of it.
+    user = styles.narration_block(doc_style) + "\n".join(instructions)
 
     body = llm.generate_text(_SCRIPT_SYSTEM, user, max_output_tokens=2500).strip()
     body = _strip_artifacts(body)

@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..models import StoryboardScene
 from . import llm, script
+from . import styles as doc_styles
 from .align import WORD_RE as _WORD_RE, normalize as _normalize
 
 logger = logging.getLogger("narrava-studio.storyboard")
@@ -122,104 +123,16 @@ _FIELDS = (
     "  search_terms  5-10 stock-media queries, per the rules above.\n"
 )
 
-# ── Visual style ─────────────────────────────────────────────────────────────
-# The house style the pictures are dressed in. It rides in the USER message rather than the
-# system prompt because it is request-scoped, exactly like the narration and the avoid-list:
-# the system prompts stay the stable statement of HOW TO EDIT, and nothing about the edit
-# changes when the style does.
+# ── House style ──────────────────────────────────────────────────────────────
+# The style is chosen once for the whole documentary, next to the documentary type, and the
+# same entry is read by the script writer (services/script.py) and by every call below. It
+# lives in services/styles.py rather than here precisely because it is no longer the
+# storyboard's private setting: two copies of the direction would be two films.
 #
-# Each entry names visual concepts, mood, camera treatment and presentation, because a style
-# given as one adjective ("cinematic") moves the output far less than one given as the
-# concrete things a camera would be pointed at.
-STYLES: Dict[str, Dict[str, str]] = {
-    "cinematic": {
-        "label": "Cinematic",
-        "guidance": (
-            "Feature-documentary polish. Composed, deliberate frames with shallow depth of "
-            "field and strong foreground/background separation; golden-hour or motivated "
-            "practical light; wide anamorphic-feeling establishing shots and slow push-ins "
-            "or tracking moves. Mood is emotive and elevated — the subject treated as story "
-            "rather than as record. Favour texture, silhouette and atmosphere (haze, dust, "
-            "rain, backlight) over literal illustration of the words."
-        ),
-    },
-    "investigative": {
-        "label": "Investigative",
-        "guidance": (
-            "The look of a current-affairs investigation. Observational framing that feels "
-            "captured rather than staged: documents, ledgers, records, screens, evidence "
-            "boards, signage, building exteriors, doorways, and long-lens shots from across "
-            "a street. Cool, neutral, slightly desaturated light. Mood is sober and "
-            "probing. Favour the concrete artefact — the file, the receipt, the nameplate — "
-            "over anything symbolic."
-        ),
-    },
-    "historical": {
-        "label": "Historical",
-        "guidance": (
-            "Period reconstruction and archive. Grainy monochrome or faded colour stock, "
-            "archival footage and stills, sepia photographs, maps, letters, newsprint and "
-            "museum artefacts; period-correct clothing, architecture, vehicles and objects "
-            "in every frame. Static frames or slow moves across stills. Mood is "
-            "authoritative and elegiac. Never allow a modern object, vehicle or garment "
-            "into a historical shot."
-        ),
-    },
-    "educational": {
-        "label": "Educational",
-        "guidance": (
-            "Clear explanatory visuals. Bright, evenly lit, uncluttered frames with a "
-            "single unambiguous subject; diagrams, cutaways, scale models, demonstrations, "
-            "labelled close-ups and clean overhead shots of a process. Neutral or bright "
-            "backgrounds. Mood is calm, friendly and legible. Prefer the plainly readable "
-            "image to the atmospheric one — if the viewer has to decode the picture, it is "
-            "the wrong picture."
-        ),
-    },
-    "dark": {
-        "label": "Dark / Suspense",
-        "guidance": (
-            "Suspense and unease. Low-key lighting with deep shadow and hard pools of "
-            "light; night, fog, rain, empty corridors, treelines, headlights, reflections "
-            "and half-seen movement. Tight or off-centre framing, obscured faces, slow "
-            "creeping moves. Desaturated palette of cold blues and sickly amber. Mood is "
-            "tense and withholding — show the edge of the thing rather than the thing."
-        ),
-    },
-    "news": {
-        "label": "News / Broadcast",
-        "guidance": (
-            "Broadcast news package. Straightforward, well-lit, immediately readable "
-            "shots: establishing exteriors, crowds, traffic, press conferences, government "
-            "and corporate buildings, and plain b-roll of the sector in question. "
-            "Eye-level framing, steady camera, neutral daylight or standard studio light. "
-            "Mood is impartial and current. Nothing stylised — the picture supports the "
-            "fact rather than interpreting it."
-        ),
-    },
-}
-
-
-def _style_block(style: Optional[str]) -> str:
-    """The style preamble for a user message, or "" when no known style was asked for.
-
-    Unknown and missing values both fall back to no style rather than erroring: the style is
-    a creative preference, and refusing to build a storyboard because a client sent a name
-    this version does not know would be a worse answer than building it unstyled.
-    """
-    entry = STYLES.get((style or "").strip().lower())
-    if not entry:
-        return ""
-    # Said explicitly because it is the one way this feature could do damage: the style is
-    # about the PICTURE, and a model given a mood will otherwise start pacing to it — cutting
-    # faster for suspense, slower for cinematic — which would move every placeholder.
-    return (
-        f"VISUAL STYLE — {entry['label']}.\n"
-        f"{entry['guidance']}\n"
-        "This governs only how each picture LOOKS and what it shows. It must not change "
-        "where you cut, how long a scene runs, or which narration a scene covers — decide "
-        "the edit exactly as instructed, then dress it in this style.\n\n"
-    )
+# Re-exported under the names this module has always used, so nothing downstream (or in the
+# tests) has to care where the registry moved to.
+STYLES = doc_styles.DOC_STYLES
+_style_block = doc_styles.visual_block
 
 
 _SYSTEM = (
@@ -244,8 +157,10 @@ def build_storyboard(
     rendered audio (see services/align.py). Required: without it, or with a count that does
     not match the script, this raises NarrationNotTimed rather than approximating.
 
-    ``style`` is one of STYLES and dresses the pictures only — the cut and the layout below
-    are driven by the text and the clock, neither of which it touches."""
+    ``style`` is one of STYLES — the documentary's house style, the same one the narration
+    was written in. It reaches the model, where it shapes what the pictures show and how
+    fast they turn over; it never reaches the layout below, which is arithmetic over the
+    model's spans and the measured clock."""
     text = (full_text or "").strip()
     total = max(0.1, float(total_duration_sec or 0.0))
     if not text:
@@ -428,7 +343,12 @@ def _fallback_scene(text: str) -> Dict[str, Any]:
 # ── Alternative pictures for one scene ───────────────────────────────────────
 # The sidebar shows one idea at a time and steps between them with arrows, so what it
 # needs is several DIFFERENT answers to the same question — not one answer elaborated.
-_MIN_IDEAS = 5
+#
+# Three, not five. Every extra idea is another few hundred reasoning tokens on a call the
+# sidebar fires the moment a scene is opened, and the long ones were timing out at the
+# proxy — which the editor sees as "the narration service isn't responding" on a scene that
+# would have been fine with three. Arrowing past three is rare; waiting is not.
+_MIN_IDEAS = 3
 _MAX_IDEAS = 8
 
 _IDEAS_SYSTEM = (
@@ -491,7 +411,7 @@ def _clean_ideas(value: Any, *, span: str, limit: int) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         # 400, not _visual_prompt's 900: five long paragraphs per scene is a lot of project
-        # JSON, and a tighter line is easier to compare when you are scanning five of them.
+        # JSON, and a tighter line is easier to compare when you are scanning several.
         prompt = _visual_prompt(item.get("visual") or item.get("visual_prompt"))[:400]
         terms = _search_terms(item.get("search_terms"))
         if not prompt and not terms:
