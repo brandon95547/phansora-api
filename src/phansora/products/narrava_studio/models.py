@@ -130,6 +130,10 @@ class StoryboardRequest(BaseModel):
     # only a few seconds long. Must be positionally 1:1 with full_text's words or it is
     # ignored, since a mismatch would put every scene on the wrong word.
     word_times: Optional[List[Tuple[float, float]]] = Field(default=None)
+    # House visual style (see services/storyboard.STYLES): dresses the pictures, never the
+    # cut. A plain bounded string rather than a Literal on purpose — an unknown name falls
+    # back to unstyled, where a Literal would 422 the whole build over a creative preference.
+    style: Optional[str] = Field(default=None, max_length=40)
 
 
 class StoryboardScene(BaseModel):
@@ -170,6 +174,9 @@ class SceneSuggestRequest(BaseModel):
     # Prompts the client already has on screen. Given these, the model diversifies against
     # them instead of rewording them — which is what makes a top-up round worth making.
     have: List[str] = Field(default_factory=list, max_length=8)
+    # Same house style the storyboard was built under, so a scene's alternatives match the
+    # rest of the film rather than reverting to neutral the moment you ask for more.
+    style: Optional[str] = Field(default=None, max_length=40)
 
 
 class SceneSuggestResponse(BaseModel):

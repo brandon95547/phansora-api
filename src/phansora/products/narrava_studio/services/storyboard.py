@@ -122,6 +122,106 @@ _FIELDS = (
     "  search_terms  5-10 stock-media queries, per the rules above.\n"
 )
 
+# ── Visual style ─────────────────────────────────────────────────────────────
+# The house style the pictures are dressed in. It rides in the USER message rather than the
+# system prompt because it is request-scoped, exactly like the narration and the avoid-list:
+# the system prompts stay the stable statement of HOW TO EDIT, and nothing about the edit
+# changes when the style does.
+#
+# Each entry names visual concepts, mood, camera treatment and presentation, because a style
+# given as one adjective ("cinematic") moves the output far less than one given as the
+# concrete things a camera would be pointed at.
+STYLES: Dict[str, Dict[str, str]] = {
+    "cinematic": {
+        "label": "Cinematic",
+        "guidance": (
+            "Feature-documentary polish. Composed, deliberate frames with shallow depth of "
+            "field and strong foreground/background separation; golden-hour or motivated "
+            "practical light; wide anamorphic-feeling establishing shots and slow push-ins "
+            "or tracking moves. Mood is emotive and elevated — the subject treated as story "
+            "rather than as record. Favour texture, silhouette and atmosphere (haze, dust, "
+            "rain, backlight) over literal illustration of the words."
+        ),
+    },
+    "investigative": {
+        "label": "Investigative",
+        "guidance": (
+            "The look of a current-affairs investigation. Observational framing that feels "
+            "captured rather than staged: documents, ledgers, records, screens, evidence "
+            "boards, signage, building exteriors, doorways, and long-lens shots from across "
+            "a street. Cool, neutral, slightly desaturated light. Mood is sober and "
+            "probing. Favour the concrete artefact — the file, the receipt, the nameplate — "
+            "over anything symbolic."
+        ),
+    },
+    "historical": {
+        "label": "Historical",
+        "guidance": (
+            "Period reconstruction and archive. Grainy monochrome or faded colour stock, "
+            "archival footage and stills, sepia photographs, maps, letters, newsprint and "
+            "museum artefacts; period-correct clothing, architecture, vehicles and objects "
+            "in every frame. Static frames or slow moves across stills. Mood is "
+            "authoritative and elegiac. Never allow a modern object, vehicle or garment "
+            "into a historical shot."
+        ),
+    },
+    "educational": {
+        "label": "Educational",
+        "guidance": (
+            "Clear explanatory visuals. Bright, evenly lit, uncluttered frames with a "
+            "single unambiguous subject; diagrams, cutaways, scale models, demonstrations, "
+            "labelled close-ups and clean overhead shots of a process. Neutral or bright "
+            "backgrounds. Mood is calm, friendly and legible. Prefer the plainly readable "
+            "image to the atmospheric one — if the viewer has to decode the picture, it is "
+            "the wrong picture."
+        ),
+    },
+    "dark": {
+        "label": "Dark / Suspense",
+        "guidance": (
+            "Suspense and unease. Low-key lighting with deep shadow and hard pools of "
+            "light; night, fog, rain, empty corridors, treelines, headlights, reflections "
+            "and half-seen movement. Tight or off-centre framing, obscured faces, slow "
+            "creeping moves. Desaturated palette of cold blues and sickly amber. Mood is "
+            "tense and withholding — show the edge of the thing rather than the thing."
+        ),
+    },
+    "news": {
+        "label": "News / Broadcast",
+        "guidance": (
+            "Broadcast news package. Straightforward, well-lit, immediately readable "
+            "shots: establishing exteriors, crowds, traffic, press conferences, government "
+            "and corporate buildings, and plain b-roll of the sector in question. "
+            "Eye-level framing, steady camera, neutral daylight or standard studio light. "
+            "Mood is impartial and current. Nothing stylised — the picture supports the "
+            "fact rather than interpreting it."
+        ),
+    },
+}
+
+
+def _style_block(style: Optional[str]) -> str:
+    """The style preamble for a user message, or "" when no known style was asked for.
+
+    Unknown and missing values both fall back to no style rather than erroring: the style is
+    a creative preference, and refusing to build a storyboard because a client sent a name
+    this version does not know would be a worse answer than building it unstyled.
+    """
+    entry = STYLES.get((style or "").strip().lower())
+    if not entry:
+        return ""
+    # Said explicitly because it is the one way this feature could do damage: the style is
+    # about the PICTURE, and a model given a mood will otherwise start pacing to it — cutting
+    # faster for suspense, slower for cinematic — which would move every placeholder.
+    return (
+        f"VISUAL STYLE — {entry['label']}.\n"
+        f"{entry['guidance']}\n"
+        "This governs only how each picture LOOKS and what it shows. It must not change "
+        "where you cut, how long a scene runs, or which narration a scene covers — decide "
+        "the edit exactly as instructed, then dress it in this style.\n\n"
+    )
+
+
 _SYSTEM = (
     "You are an experienced documentary editor deciding what the viewer sees while a "
     "narration plays. You are given the script. Break it into visual beats and describe "
@@ -138,29 +238,33 @@ def build_storyboard(
     total_duration_sec: float,
     max_scenes: int = 24,
     word_times: Optional[List[Tuple[float, float]]] = None,
+    style: Optional[str] = None,
 ) -> List[StoryboardScene]:
     """``word_times`` is one (start, end) per word of ``full_text``, measured from the
     rendered audio (see services/align.py). Required: without it, or with a count that does
-    not match the script, this raises NarrationNotTimed rather than approximating."""
+    not match the script, this raises NarrationNotTimed rather than approximating.
+
+    ``style`` is one of STYLES and dresses the pictures only — the cut and the layout below
+    are driven by the text and the clock, neither of which it touches."""
     text = (full_text or "").strip()
     total = max(0.1, float(total_duration_sec or 0.0))
     if not text:
         return []
 
-    raw_scenes = _ask_llm(text, max_scenes, total)
+    raw_scenes = _ask_llm(text, max_scenes, total, style)
     if not raw_scenes:
         raw_scenes = [_fallback_scene(text)]
 
-    return _lay_out(raw_scenes, total, text, word_times)
+    return _lay_out(raw_scenes, total, text, word_times, style=style)
 
 
-def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
+def _ask_llm(text: str, max_scenes: int, total: float, style: Optional[str] = None) -> List[Dict[str, Any]]:
     # The model cannot pace beats without knowing how long the narration runs — asked
     # blind it returns a handful of chapter-sized scenes whatever the length. Give it the
     # duration and the beat count that implies, as a sanity check on its own pacing rather
     # than as a quota to fill.
     target = max(1, min(max_scenes, round(total / _TARGET_SHOT_SEC)))
-    user = (
+    user = _style_block(style) + (
         f"This narration runs about {total:.0f} seconds of speech. At documentary pace that "
         f"is roughly {target} visual beats (never more than {max_scenes}). Use it as a check "
         f"on your own pacing, not a quota: cut where the picture changes, and if you find "
@@ -211,8 +315,13 @@ def _refine_long(
     scenes: List[Dict[str, Any]],
     spans: List[List[int]],
     clock: "_Clock",
+    style: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[List[int]]]:
-    """Re-cut the scenes that measure too long, by asking rather than by regex."""
+    """Re-cut the scenes that measure too long, by asking rather than by regex.
+
+    Styled too: this pass writes the `visual` for the sub-beats it creates, and a storyboard
+    where the re-cut scenes are unstyled and the rest are not would read as an inconsistency
+    in the edit rather than as the seam it actually is."""
     lengths = [clock.at(b) - clock.at(a) for a, b in spans]
     targets = [i for i, sec in enumerate(lengths) if sec > _MAX_SHOT_SEC]
     if not targets:
@@ -227,7 +336,7 @@ def _refine_long(
         a, b = spans[i]
         parts.append(f"STRETCH {n} ({lengths[i]:.1f} seconds):\n{full_text[a:b].strip()}")
         budget += max(2, round(lengths[i] / _TARGET_SHOT_SEC))
-    data = _ask_json("\n\n".join(parts), budget, system=_REFINE_SYSTEM)
+    data = _ask_json(_style_block(style) + "\n\n".join(parts), budget, system=_REFINE_SYSTEM)
 
     by_stretch: Dict[int, List[Dict[str, Any]]] = {}
     for entry in (data.get("stretches") if isinstance(data, dict) else None) or []:
@@ -342,7 +451,7 @@ _IDEAS_SYSTEM = (
 )
 
 
-def _ask_ideas(user: str, count: int) -> Any:
+def _ask_ideas(user: str, count: int, style: Optional[str] = None) -> Any:
     """The ideas call, sized per idea rather than per scene.
 
     The ceiling covers reasoning tokens as well as visible output, and a truncated array
@@ -354,7 +463,8 @@ def _ask_ideas(user: str, count: int) -> Any:
     does for the storyboard call — the alternative, handing the envelope to `_clean_ideas`,
     silently yields zero ideas for every scene however good the model's answer was.
     """
-    data = _ask_json(user, 1, system=_IDEAS_SYSTEM, budget=min(16000, 1500 + count * 400))
+    data = _ask_json(_style_block(style) + user, 1, system=_IDEAS_SYSTEM,
+                     budget=min(16000, 1500 + count * 400))
     return data.get("ideas") if isinstance(data, dict) else data
 
 
@@ -409,7 +519,8 @@ def _clean_ideas(value: Any, *, span: str, limit: int) -> List[Dict[str, Any]]:
     return out
 
 
-def suggest_for_span(text: str, count: int = _MIN_IDEAS, have: List[str] = None) -> Dict[str, Any]:
+def suggest_for_span(text: str, count: int = _MIN_IDEAS, have: List[str] = None,
+                     style: Optional[str] = None) -> Dict[str, Any]:
     """Alternative pictures for one already-placed scene — no timing, no re-cutting.
 
     The storyboard sidebar wants several options for a placeholder whose position is
@@ -439,7 +550,7 @@ def suggest_for_span(text: str, count: int = _MIN_IDEAS, have: List[str] = None)
             f"— propose {want} genuinely different ones:\n{listed}"
         )
 
-    ideas = _clean_ideas(_ask_ideas(user, want), span=span, limit=want)
+    ideas = _clean_ideas(_ask_ideas(user, want, style), span=span, limit=want)
     if not ideas:
         # The model failed or answered unusably. Say so rather than passing a fallback off
         # as a real result. Logged because the endpoint answers 200 either way: without this
@@ -465,6 +576,7 @@ def _lay_out(
     total: float,
     full_text: str,
     word_times: Optional[List[Tuple[float, float]]] = None,
+    style: Optional[str] = None,
 ) -> List[StoryboardScene]:
     """Anchor each scene into the real narration, then read its bounds off the clock.
 
@@ -490,7 +602,7 @@ def _lay_out(
 
     # Anything still holding too long goes back to the editor with its measured duration —
     # finding the beat inside a long stretch is a judgement about meaning.
-    merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock)
+    merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock, style=style)
 
     # Last resort only. If the re-cut did not happen or did not go far enough, split on
     # grammar so no placeholder sits on screen indefinitely. This cuts on sentences and

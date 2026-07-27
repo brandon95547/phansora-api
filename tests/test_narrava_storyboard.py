@@ -65,6 +65,70 @@ def test_suggest_for_span_degrades_when_the_model_fails(monkeypatch):
     assert out["degraded"] is True
 
 
+def test_style_block_falls_back_to_unstyled(monkeypatch):
+    """An unknown style builds unstyled rather than failing the request.
+
+    The style is a creative preference; refusing to build a storyboard because a client sent
+    a name this version does not know would be a worse answer than building it plain.
+    """
+    from phansora.products.narrava_studio.services import storyboard
+
+    for value in (None, "", "   ", "nonsense"):
+        assert storyboard._style_block(value) == ""
+    assert storyboard._style_block("CINEMATIC").startswith("VISUAL STYLE — Cinematic")
+
+
+def test_style_reaches_the_ideas_prompt(monkeypatch):
+    from phansora.products.narrava_studio.services import storyboard
+
+    seen = {}
+
+    def fake(system, user, **kwargs):
+        seen["user"] = user
+        return {"ideas": [{"visual": "A lighthouse in fog", "media_type": "image",
+                           "search_terms": ["lighthouse fog"]}]}
+
+    monkeypatch.setattr(storyboard.llm, "generate_json", fake)
+    storyboard.suggest_for_span("The port never truly sleeps.", count=2, style="dark")
+
+    assert seen["user"].startswith("VISUAL STYLE — Dark / Suspense")
+    # The one instruction that keeps a mood from becoming a pacing change.
+    assert "must not change where you cut" in seen["user"]
+
+
+def test_style_does_not_move_the_placeholders(monkeypatch):
+    """The whole contract of the feature: it dresses the pictures, it does not re-cut.
+
+    Same scenes in, same spans out — the style must never reach the part of the build that
+    decides where a placeholder starts and ends.
+    """
+    from phansora.products.narrava_studio.services import storyboard
+
+    text = ("The port never truly sleeps. Steam gave way to diesel, and diesel to the "
+            "container. And by the century end the cargo moved itself.")
+    word_times = [(i * 0.5, i * 0.5 + 0.5) for i in range(len(text.split()))]
+    total = len(text.split()) * 0.5
+
+    scenes = {"scenes": [
+        {"text": "The port never truly sleeps.", "visual": "A harbour at dawn.",
+         "rationale": "r", "media_type": "image", "search_terms": ["harbour"]},
+        {"text": "Steam gave way to diesel, and diesel to the container.",
+         "visual": "A container ship.", "rationale": "r", "media_type": "image",
+         "search_terms": ["container ship"]},
+        {"text": "And by the century end the cargo moved itself.",
+         "visual": "Automated cranes.", "rationale": "r", "media_type": "image",
+         "search_terms": ["crane"]},
+    ]}
+    monkeypatch.setattr(storyboard.llm, "generate_json", lambda *a, **k: scenes)
+
+    plain = storyboard.build_storyboard(text, total, max_scenes=6, word_times=word_times)
+    styled = storyboard.build_storyboard(text, total, max_scenes=6, word_times=word_times,
+                                         style="historical")
+
+    assert [(s.start_sec, s.end_sec) for s in plain] == [(s.start_sec, s.end_sec) for s in styled]
+    assert [s.text for s in plain] == [s.text for s in styled]
+
+
 def test_suggest_for_span_degrades_when_fewer_ideas_than_asked(monkeypatch):
     """Coming up short is degraded too — that is what lets the client try again."""
     from phansora.products.narrava_studio.services import storyboard

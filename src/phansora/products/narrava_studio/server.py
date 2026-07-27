@@ -165,7 +165,10 @@ async def suggest_scene(req: SceneSuggestRequest):
     _ensure_llm()
     try:
         suggestion = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: storyboard.suggest_for_span(req.text, count=req.count, have=req.have),
+            None,
+            lambda: storyboard.suggest_for_span(
+                req.text, count=req.count, have=req.have, style=req.style,
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Scene suggestion failed")
@@ -240,6 +243,7 @@ async def build_storyboard(req: StoryboardRequest):
                 total_duration_sec=req.total_duration_sec,
                 max_scenes=req.max_scenes,
                 word_times=req.word_times,
+                style=req.style,
             ),
         )
     except storyboard.NarrationNotTimed as exc:
