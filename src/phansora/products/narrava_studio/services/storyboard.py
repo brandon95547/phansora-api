@@ -170,11 +170,12 @@ def _ask_llm(text: str, max_scenes: int, total: float) -> List[Dict[str, Any]]:
     return _scenes_from(_ask_json(user, max_scenes), max_scenes)
 
 
-def _ask_json(user: str, scene_budget: int, system: str = None) -> Any:
+def _ask_json(user: str, scene_budget: int, system: str = None, budget: int = None) -> Any:
     """One JSON call, sized for how much writing the answer needs."""
     # Each scene now carries a written visual, so the ceiling has to scale with the count
-    # or a long narration gets truncated mid-array and parses to nothing.
-    budget = min(16000, 1500 + scene_budget * 320)
+    # or a long narration gets truncated mid-array and parses to nothing. `budget` lets a
+    # caller size it directly when the unit of work is not a scene (see _ask_ideas).
+    budget = budget or min(16000, 1500 + scene_budget * 320)
     try:
         return llm.generate_json(system or _SYSTEM, user, max_output_tokens=budget)
     except Exception:  # noqa: BLE001 — any LLM/parse failure degrades to one scene
@@ -315,27 +316,134 @@ def _fallback_scene(text: str) -> Dict[str, Any]:
     }
 
 
-def suggest_for_span(text: str) -> Dict[str, Any]:
-    """Visual direction for one already-placed scene — no timing, no re-cutting.
+# ── Alternative pictures for one scene ───────────────────────────────────────
+# The sidebar shows one idea at a time and steps between them with arrows, so what it
+# needs is several DIFFERENT answers to the same question — not one answer elaborated.
+_MIN_IDEAS = 5
+_MAX_IDEAS = 8
 
-    The storyboard sidebar's "regenerate this scene" wants better suggestions for a
-    placeholder whose position is already correct. Routing that through build_storyboard
-    would demand word timings it has no way to supply, and would re-cut a scene the user
-    did not ask to re-cut.
+_IDEAS_SYSTEM = (
+    "You are an experienced documentary editor. You are given ONE scene of a documentary "
+    "that is already cut, and the narration the viewer hears over it. Propose several "
+    "different pictures that could fill this one scene.\n\n"
+    "They are ALTERNATIVES, not a sequence. Each one stands alone as the entire shot and "
+    "the editor will choose exactly one, so make them genuinely different from each "
+    "other — a different subject, setting, era, scale, or camera treatment — never the "
+    "same picture reworded. Order them best-first.\n\n"
+    "For each idea give:\n"
+    "  visual        the picture, per the rules below.\n"
+    "  media_type    \"image\" for a still, \"video\" for motion footage.\n"
+    "  search_terms  5-10 stock-media queries for THAT idea specifically, per the rules "
+    "below. Two ideas must not carry the same terms — the terms are how the editor finds "
+    "that particular picture.\n\n"
+    + _VISUAL_RULES + "\n" + _SEARCH_RULES + "\n"
+    'Respond with ONLY JSON of the form: {"ideas":[{"visual":"...",'
+    '"media_type":"image|video","search_terms":["..."]}]}'
+)
+
+
+def _ask_ideas(user: str, count: int) -> Any:
+    """The ideas call, sized per idea rather than per scene.
+
+    The ceiling covers reasoning tokens as well as visible output, and a truncated array
+    parses to nothing rather than to fewer ideas — so this budgets generously. Roughly
+    400 tokens an idea against ~110 of visible text is deliberate headroom.
+    """
+    return _ask_json(user, 1, system=_IDEAS_SYSTEM, budget=min(16000, 1500 + count * 400))
+
+
+def _clean_ideas(value: Any, *, span: str, limit: int) -> List[Dict[str, Any]]:
+    """Normalize the model's ideas into SceneIdea shape, dropping near-duplicates.
+
+    The dedupe is an OR, not an AND: either the same normalized term set or the same
+    opening words is enough to drop one. Requiring both would only catch verbatim clones,
+    which is the case a model is least likely to produce — what it actually produces is
+    "archival newsreel of a crowd" next to "archival footage of a crowd", two arrow
+    positions that return the same media.
+    """
+    raw = value if isinstance(value, list) else []
+    out: List[Dict[str, Any]] = []
+    seen_terms: set = set()
+    seen_openings: set = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        # 400, not _visual_prompt's 900: five long paragraphs per scene is a lot of project
+        # JSON, and a tighter line is easier to compare when you are scanning five of them.
+        prompt = _visual_prompt(item.get("visual") or item.get("visual_prompt"))[:400]
+        terms = _search_terms(item.get("search_terms"))
+        if not prompt and not terms:
+            continue
+        # An idea with no terms would blank the media grid the moment the user arrows onto
+        # it, so derive some rather than discarding real direction.
+        if not terms:
+            terms = script.extract_keywords(prompt or span, limit=8)
+        if not terms:
+            continue
+        term_key = tuple(sorted(t.lower() for t in terms))
+        opening = " ".join(prompt.lower().split()[:6])
+        if term_key in seen_terms or (opening and opening in seen_openings):
+            continue
+        seen_terms.add(term_key)
+        if opening:
+            seen_openings.add(opening)
+        out.append({
+            "visual_prompt": prompt,
+            "search_terms": terms,
+            "media_type": "video" if str(item.get("media_type") or "").lower() == "video" else "image",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
+def suggest_for_span(text: str, count: int = _MIN_IDEAS, have: List[str] = None) -> Dict[str, Any]:
+    """Alternative pictures for one already-placed scene — no timing, no re-cutting.
+
+    The storyboard sidebar wants several options for a placeholder whose position is
+    already correct. Routing that through build_storyboard would demand word timings it
+    has no way to supply, and would re-cut a scene the user did not ask to re-cut.
+
+    The flat visual_prompt/media_type/search_terms in the result mirror ideas[0], so a
+    caller written before ideas existed reads exactly what it used to. `degraded` is the
+    honest signal: without it a total LLM outage returns the same shape as a good answer,
+    and the client would record "this scene only has one idea" permanently.
     """
     span = (text or "").strip()
     if not span:
-        return _fallback_scene("")
+        return {**_fallback_scene(""), "ideas": [], "degraded": True}
+
+    want = max(1, min(_MAX_IDEAS, int(count or _MIN_IDEAS)))
+    avoid = [str(h).strip() for h in (have or []) if str(h).strip()][:_MAX_IDEAS]
     user = (
         "This is ONE scene of a documentary that is already cut — do not split it and do "
-        "not change its text. Return exactly one scene, with `text` copied back verbatim, "
-        "and give it the best visual direction and search terms you can.\n\n"
+        f"not change its narration. Give me {want} different pictures that could fill it.\n\n"
         f"NARRATION FOR THIS SCENE:\n{span}"
     )
-    scenes = _scenes_from(_ask_json(user, 1), 1)
-    if not scenes:
-        return _fallback_scene(span)
-    return {**scenes[0], "text": span}  # its text is fixed; only the direction is new
+    if avoid:
+        listed = "\n".join(f"- {a}" for a in avoid)
+        user += (
+            "\n\nThe editor has already seen the ideas below. Do not repeat or reword them "
+            f"— propose {want} genuinely different ones:\n{listed}"
+        )
+
+    ideas = _clean_ideas(_ask_ideas(user, want), span=span, limit=want)
+    if not ideas:
+        # The model failed or answered unusably. Say so rather than passing a fallback off
+        # as a real result.
+        return {**_fallback_scene(span), "text": span, "ideas": [], "degraded": True}
+
+    first = ideas[0]
+    return {
+        "text": span,          # its text is fixed; only the direction is new
+        "visual_prompt": first["visual_prompt"],
+        "media_type": first["media_type"],
+        "search_terms": first["search_terms"],
+        "rationale": "",       # nothing renders it any more; kept so the field still exists
+        "visual_ideas": [],
+        "ideas": ideas,
+        "degraded": len(ideas) < want,
+    }
 
 
 def _lay_out(

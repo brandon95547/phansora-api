@@ -150,9 +150,26 @@ class StoryboardScene(BaseModel):
     visual_ideas: List[str] = Field(default_factory=list)
 
 
+# ── One candidate picture for a scene ────────────────────────────────────────
+# Ideas are ALTERNATIVES, not a sequence: the storyboard sidebar's arrows step between
+# them and the editor picks one. `search_terms` belong to the idea on screen — a different
+# picture wants a different query — which is why they travel together rather than sitting
+# on the scene.
+class SceneIdea(BaseModel):
+    visual_prompt: str = ""
+    search_terms: List[str] = Field(default_factory=list)
+    media_type: Literal["image", "video"] = "image"
+
+
 # ── One scene's visual direction, with no re-cutting and no timing ───────────
 class SceneSuggestRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
+    # How many alternatives to write. The sidebar asks for 5; the ceiling keeps one
+    # request from turning into an unbounded generation.
+    count: int = Field(default=5, ge=1, le=8)
+    # Prompts the client already has on screen. Given these, the model diversifies against
+    # them instead of rewording them — which is what makes a top-up round worth making.
+    have: List[str] = Field(default_factory=list, max_length=8)
 
 
 class SceneSuggestResponse(BaseModel):
@@ -161,6 +178,13 @@ class SceneSuggestResponse(BaseModel):
     search_terms: List[str] = Field(default_factory=list)
     visual_prompt: str = ""
     visual_ideas: List[str] = Field(default_factory=list)
+    # The alternatives. The four fields above mirror ideas[0] so a client written before
+    # this existed keeps working unchanged.
+    ideas: List[SceneIdea] = Field(default_factory=list)
+    # True when the model failed outright or returned fewer ideas than asked for. Without
+    # it a total LLM outage and a good answer are the same 200 to the caller, and the
+    # client would cache "this scene only has one idea" forever.
+    degraded: bool = False
 
 
 class StoryboardResponse(BaseModel):

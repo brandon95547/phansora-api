@@ -165,7 +165,7 @@ async def suggest_scene(req: SceneSuggestRequest):
     _ensure_llm()
     try:
         suggestion = await asyncio.get_running_loop().run_in_executor(
-            None, lambda: storyboard.suggest_for_span(req.text),
+            None, lambda: storyboard.suggest_for_span(req.text, count=req.count, have=req.have),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Scene suggestion failed")
@@ -176,6 +176,8 @@ async def suggest_scene(req: SceneSuggestRequest):
         search_terms=suggestion.get("search_terms", []),
         visual_prompt=suggestion.get("visual_prompt", ""),
         visual_ideas=suggestion.get("visual_ideas", []),
+        ideas=suggestion.get("ideas", []),
+        degraded=bool(suggestion.get("degraded", False)),
     )
 
 
