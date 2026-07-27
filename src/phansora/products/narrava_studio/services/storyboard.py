@@ -348,8 +348,14 @@ def _ask_ideas(user: str, count: int) -> Any:
     The ceiling covers reasoning tokens as well as visible output, and a truncated array
     parses to nothing rather than to fewer ideas — so this budgets generously. Roughly
     400 tokens an idea against ~110 of visible text is deliberate headroom.
+
+    Returns the ideas LIST, not the envelope the model answers with. `generate_json` hands
+    back the whole `{"ideas": [...]}` object, and unwrapping here mirrors what `_scenes_from`
+    does for the storyboard call — the alternative, handing the envelope to `_clean_ideas`,
+    silently yields zero ideas for every scene however good the model's answer was.
     """
-    return _ask_json(user, 1, system=_IDEAS_SYSTEM, budget=min(16000, 1500 + count * 400))
+    data = _ask_json(user, 1, system=_IDEAS_SYSTEM, budget=min(16000, 1500 + count * 400))
+    return data.get("ideas") if isinstance(data, dict) else data
 
 
 def _clean_ideas(value: Any, *, span: str, limit: int) -> List[Dict[str, Any]]:
@@ -360,7 +366,13 @@ def _clean_ideas(value: Any, *, span: str, limit: int) -> List[Dict[str, Any]]:
     which is the case a model is least likely to produce — what it actually produces is
     "archival newsreel of a crowd" next to "archival footage of a crowd", two arrow
     positions that return the same media.
+
+    Accepts either the bare list or the `{"ideas": [...]}` envelope. Tolerating both is
+    deliberate: passing the envelope in produces an empty result that is indistinguishable
+    from a real model failure, so the shape mismatch hides instead of announcing itself.
     """
+    if isinstance(value, dict):
+        value = value.get("ideas")
     raw = value if isinstance(value, list) else []
     out: List[Dict[str, Any]] = []
     seen_terms: set = set()
@@ -430,7 +442,9 @@ def suggest_for_span(text: str, count: int = _MIN_IDEAS, have: List[str] = None)
     ideas = _clean_ideas(_ask_ideas(user, want), span=span, limit=want)
     if not ideas:
         # The model failed or answered unusably. Say so rather than passing a fallback off
-        # as a real result.
+        # as a real result. Logged because the endpoint answers 200 either way: without this
+        # line the only trace of a failure here is a "no ideas" message in the browser.
+        logger.warning("Scene ideas: model returned nothing usable for span %r", span[:80])
         return {**_fallback_scene(span), "text": span, "ideas": [], "degraded": True}
 
     first = ideas[0]
