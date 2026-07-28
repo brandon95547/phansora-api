@@ -46,19 +46,47 @@ async def create_project(
     source_path: Optional[str],
     source_url: Optional[str],
     options: dict,
-) -> int:
+    max_projects: Optional[int] = None,
+) -> Optional[int]:
+    """Insert a project and return its id.
+
+    When ``max_projects`` is set, the user's existing project count is checked
+    under a per-user advisory lock and ``None`` is returned if they're already at
+    the cap — so two simultaneous uploads can't both slip past the limit.
+    """
     pool = await get_pool()
-    row = await pool.fetchrow(
-        """
-        INSERT INTO public.book_alchemy_projects
-            (user_id, name, source_format, source_path, source_url, options,
-             status, phase, stage, progress)
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'uploaded', 'uploaded', 'Uploaded', 0)
-        RETURNING id
-        """,
-        user_id, name, source_format, source_path, source_url, _json(options),
-    )
+    async with pool.acquire() as con:
+        async with con.transaction():
+            if max_projects is not None:
+                # Serialize create-vs-create for this user only; released on commit.
+                await con.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('book_alchemy_projects'), $1)",
+                    user_id,
+                )
+                existing = await con.fetchval(
+                    "SELECT COUNT(*) FROM public.book_alchemy_projects WHERE user_id = $1",
+                    user_id,
+                )
+                if int(existing) >= max_projects:
+                    return None
+            row = await con.fetchrow(
+                """
+                INSERT INTO public.book_alchemy_projects
+                    (user_id, name, source_format, source_path, source_url, options,
+                     status, phase, stage, progress)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, 'uploaded', 'uploaded', 'Uploaded', 0)
+                RETURNING id
+                """,
+                user_id, name, source_format, source_path, source_url, _json(options),
+            )
     return int(row["id"])
+
+
+async def count_projects(user_id: int) -> int:
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        "SELECT COUNT(*) FROM public.book_alchemy_projects WHERE user_id = $1", user_id
+    ))
 
 
 async def get_project(project_id: int, user_id: Optional[int] = None) -> Optional[asyncpg.Record]:

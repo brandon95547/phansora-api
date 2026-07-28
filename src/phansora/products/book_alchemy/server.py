@@ -85,6 +85,24 @@ if _BOOK_ALCHEMY_OK:
         ".html": "html", ".htm": "html",
     }
 
+    def _ba_max_projects() -> int:
+        """How many audio courses a user may keep at once.
+
+        Each finished course is hundreds of MB of narration on disk, so storage —
+        not compute — is the binding constraint. Users free a slot by deleting an
+        old course (DELETE /projects/{id} removes its audio too).
+        """
+        try:
+            return max(1, int(os.getenv("BOOK_ALCHEMY_MAX_PROJECTS", "2")))
+        except Exception:  # noqa: BLE001
+            return 2
+
+    def _ba_limit_message(limit: int) -> str:
+        return (
+            f"You can keep up to {limit} audio course{'s' if limit != 1 else ''} at a time. "
+            "Delete one of your existing courses to free up space, then start a new one."
+        )
+
     def _ba_user_id(user_id: str) -> int:
         try:
             return int(str(user_id).strip())
@@ -164,6 +182,12 @@ if _BOOK_ALCHEMY_OK:
         url = (url or "").strip()
         text = (text or "").strip()
 
+        # Cheap pre-check so an over-limit upload is rejected before we read the
+        # file; create_project re-checks atomically to close the race.
+        limit = _ba_max_projects()
+        if await ba_db.count_projects(uid) >= limit:
+            raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
+
         # Determine source format + a default project name.
         if file is not None and file.filename:
             ext = _safe_ext(file.filename)
@@ -184,7 +208,10 @@ if _BOOK_ALCHEMY_OK:
         project_id = await ba_db.create_project(
             user_id=uid, name=proj_name, source_format=fmt,
             source_path=None, source_url=(url or None), options={"voice": voice},
+            max_projects=limit,
         )
+        if project_id is None:  # raced another upload past the pre-check
+            raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
 
         # Persist the source so processing is fully resumable from disk + DB.
         if file is not None and file.filename:
@@ -202,7 +229,15 @@ if _BOOK_ALCHEMY_OK:
     async def ba_list_projects(user_id: str) -> dict:
         uid = _ba_user_id(user_id)
         rows = await ba_db.list_projects(uid)
-        return {"ok": True, "projects": [_ba_project_wire(r) for r in rows]}
+        limit = _ba_max_projects()
+        # The dashboard gates its upload form on these so it can block (and explain)
+        # an over-limit upload before spending a credit on it.
+        return {
+            "ok": True,
+            "projects": [_ba_project_wire(r) for r in rows],
+            "limit": limit,
+            "remaining": max(0, limit - len(rows)),
+        }
 
     @app.get("/projects/{project_id}")
     async def ba_get_project(project_id: int, user_id: str) -> dict:
