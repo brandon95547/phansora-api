@@ -69,10 +69,15 @@ def root():
 
 @app.get("/health")
 def health():
+    # `configured` is the script/storyboard provider; AI media generation is a
+    # SEPARATE key, so it gets its own field — otherwise a host with scripts working
+    # and animations 503-ing looks healthy here.
     return {
         "status": "ok",
         "provider": settings.provider,
         "configured": llm.provider_configured(),
+        "animation_configured": animation.provider_configured(),
+        "animation_model": animation.model_name(),
     }
 
 
