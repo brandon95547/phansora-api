@@ -99,6 +99,7 @@ async def generate_script(req: ScriptGenerateRequest):
                 tone=req.tone,
                 target_duration_sec=req.target_duration_sec,
                 doc_style=req.doc_style,
+                research=req.research,
             ),
         )
     except Exception as exc:  # noqa: BLE001

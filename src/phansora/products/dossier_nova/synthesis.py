@@ -58,6 +58,8 @@ sources disagree on a date, note the discrepancy.
 ONE source, what CONFLICTS between sources, and what remains UNRESOLVED.
 6. Write a one-page EXECUTIVE SUMMARY: overview, current status, key findings, overall \
 evidence confidence, and the major unanswered questions.
+7. Extract the key ENTITIES: the people involved (with their role in the case and a \
+one-line description), the organizations, and the locations.
 
 Return ONLY valid JSON in exactly this shape (no markdown, no commentary):
 {
@@ -87,6 +89,12 @@ Return ONLY valid JSON in exactly this shape (no markdown, no commentary):
     "conflicting": [{"topic": "what they disagree about",
                      "versions": [{"source": "Source label", "claim": "their version"}]}],
     "unresolved": ["open point not settled by any source", "..."]
+  },
+  "entities": {
+    "people": [{"name": "Full Name", "role": "e.g. suspect, victim, investigator, witness",
+                "description": "one line on who they are in this case"}],
+    "organizations": [{"name": "...", "role": "one line on their involvement"}],
+    "locations": [{"name": "...", "relevance": "one line on why it matters"}]
   }
 }
 
@@ -146,19 +154,32 @@ def synthesize_dossier(
     source_profiles,
     client,
     sample_chars: int = 8000,
+    min_sources: int = 2,
 ) -> Optional[Dict]:
     """Run the one cross-source correlation call. Returns the intelligence model
-    dict, or None on failure (the pipeline then proceeds without front matter)."""
-    if not sources or len(sources) < 2:
+    dict, or None on failure (the pipeline then proceeds without front matter).
+
+    ``min_sources=1`` is used by the research-dataset build: a single-source dossier
+    still wants the structured intelligence model (findings, timeline, entities),
+    even though its front matter stays multi-source-only."""
+    if not sources or len(sources) < max(1, min_sources):
         return None
 
     digest = _build_synthesis_input(sources, source_profiles, sample_chars)
     source_labels = [s.get("label", "unknown") for s in sources]
-    user_prompt = (
-        f"There are {len(sources)} sources with labels: {', '.join(source_labels)}.\n\n"
-        f"{digest}\n\n"
-        "Correlate these sources into one intelligence assessment as specified."
-    )
+    if len(sources) == 1:
+        user_prompt = (
+            f"There is 1 source with label: {source_labels[0]}.\n\n"
+            f"{digest}\n\n"
+            "Build one intelligence assessment from this source as specified. With a "
+            "single source the cross_source section will be mostly empty; that is fine."
+        )
+    else:
+        user_prompt = (
+            f"There are {len(sources)} sources with labels: {', '.join(source_labels)}.\n\n"
+            f"{digest}\n\n"
+            "Correlate these sources into one intelligence assessment as specified."
+        )
 
     try:
         response = client.chat.completions.create(

@@ -28,6 +28,12 @@ class ScriptGenerateRequest(BaseModel):
     # of the film. Bounded string rather than a Literal for the same reason as below: an
     # unknown name writes unstyled instead of 422-ing over a creative preference.
     doc_style: Optional[str] = Field(default=None, max_length=40)
+    # Optional structured research (Dossier Nova's research dataset). When present it is
+    # rendered into the prompt as the factual knowledge base — the brief stays creative
+    # direction only. A free-form dict rather than a typed model so the dataset can grow
+    # on the Dossier Nova side without a lockstep deploy here; absent means "write from
+    # the brief alone", exactly as before.
+    research: Optional[dict] = None
 
 
 class ScriptSegment(BaseModel):

@@ -138,6 +138,171 @@ _SCRIPT_SYSTEM = (
     "- Do not address 'the viewer' with meta commentary about the video itself."
 )
 
+# Appended to the system prompt ONLY when research is attached, so the plain
+# brief-only path stays byte-identical to what it always sent.
+_RESEARCH_SYSTEM = (
+    "\n\nA RESEARCH KNOWLEDGE BASE is provided with this request. It is the factual "
+    "record of the story:\n"
+    "- Base every factual statement in the narration on the research. Do not invent "
+    "names, dates, numbers, or events that are not in it.\n"
+    "- The brief describes HOW to tell the story (tone, angle, pacing, length); the "
+    "research describes WHAT the story contains.\n"
+    "- Keep allegations attributed the way the research does (e.g. 'Police allege'); "
+    "never present an allegation as settled fact.\n"
+    "- You do not have to use every fact — choose what serves the narration."
+)
+
+# Prompt-size ceiling for the rendered research block. Big dossiers can carry far
+# more research than a narration needs; the renderer emits the most story-critical
+# sections first (summary, people, timeline, findings) so a cut loses the least.
+_RESEARCH_MAX_CHARS = 18000
+
+
+def _render_research_block(research: dict | None) -> str:
+    """Dossier Nova's research dataset -> a readable knowledge-base block.
+
+    Tolerant of missing keys and unexpected shapes: the dataset is produced by a
+    different service and may evolve; anything unrecognized is simply skipped.
+    Returns "" when there is nothing factual to show.
+    """
+    if not isinstance(research, dict):
+        return ""
+
+    def clean(value) -> str:
+        return str(value).strip() if value is not None else ""
+
+    def str_list(items) -> list[str]:
+        if not isinstance(items, list):
+            return []
+        return [s for s in (clean(x) for x in items) if s]
+
+    out: list[str] = []
+
+    subject = clean(research.get("subject"))
+    if subject:
+        out.append(f"Subject: {subject}")
+
+    es = research.get("executive_summary") or {}
+    if isinstance(es, dict):
+        if clean(es.get("overview")):
+            out.append(f"Overview: {clean(es.get('overview'))}")
+        if clean(es.get("current_status")):
+            out.append(f"Current status: {clean(es.get('current_status'))}")
+        if clean(es.get("evidence_confidence")):
+            out.append(f"Overall evidence confidence: {clean(es.get('evidence_confidence'))}")
+        key_findings = str_list(es.get("key_findings"))
+        if key_findings:
+            out.append("Key findings:")
+            out.extend(f"- {x}" for x in key_findings)
+        unknowns = str_list(es.get("major_unknowns"))
+        if unknowns:
+            out.append("Major unknowns (do not present these as settled):")
+            out.extend(f"- {x}" for x in unknowns)
+
+    entities = research.get("entities") or {}
+    if isinstance(entities, dict):
+        people = [p for p in (entities.get("people") or []) if isinstance(p, dict)]
+        if people:
+            out.append("People:")
+            for p in people:
+                line = clean(p.get("name"))
+                if not line:
+                    continue
+                if clean(p.get("role")):
+                    line += f" ({clean(p.get('role'))})"
+                if clean(p.get("description")):
+                    line += f": {clean(p.get('description'))}"
+                out.append(f"- {line}")
+        orgs = [o for o in (entities.get("organizations") or []) if isinstance(o, dict)]
+        if orgs:
+            out.append("Organizations:")
+            for o in orgs:
+                line = clean(o.get("name"))
+                if not line:
+                    continue
+                if clean(o.get("role")):
+                    line += f": {clean(o.get('role'))}"
+                out.append(f"- {line}")
+        locations = [l for l in (entities.get("locations") or []) if isinstance(l, dict)]
+        if locations:
+            out.append("Locations:")
+            for l in locations:
+                line = clean(l.get("name"))
+                if not line:
+                    continue
+                if clean(l.get("relevance")):
+                    line += f": {clean(l.get('relevance'))}"
+                out.append(f"- {line}")
+
+    timeline = [t for t in (research.get("timeline") or []) if isinstance(t, dict)]
+    if timeline:
+        out.append("Timeline:")
+        for t in timeline:
+            when = " ".join(x for x in (clean(t.get("date")), clean(t.get("time"))) if x) or "Undated"
+            event = clean(t.get("event"))
+            if not event:
+                continue
+            line = f"- {when}: {event}"
+            if clean(t.get("discrepancy")):
+                line += f" [sources disagree: {clean(t.get('discrepancy'))}]"
+            out.append(line)
+
+    findings = [f for f in (research.get("findings") or []) if isinstance(f, dict)]
+    if findings:
+        out.append("Facts and allegations:")
+        for f in findings:
+            statement = clean(f.get("statement"))
+            if not statement:
+                continue
+            kind = "ALLEGATION" if clean(f.get("type")).lower() == "allegation" else "FACT"
+            tags = [kind]
+            if clean(f.get("confidence")):
+                tags.append(f"confidence: {clean(f.get('confidence'))}")
+            line = f"- [{', '.join(tags)}]"
+            if kind == "ALLEGATION" and clean(f.get("attribution")):
+                line += f" {clean(f.get('attribution'))}:"
+            out.append(f"{line} {statement}")
+
+    cs = research.get("cross_source") or {}
+    if isinstance(cs, dict):
+        conflicting = [c for c in (cs.get("conflicting") or []) if isinstance(c, dict)]
+        if conflicting:
+            out.append("Conflicting reporting (acknowledge, do not pick a side):")
+            for c in conflicting:
+                versions = "; ".join(
+                    f"{clean(v.get('source'))}: {clean(v.get('claim'))}"
+                    for v in (c.get("versions") or [])
+                    if isinstance(v, dict) and clean(v.get("claim"))
+                )
+                topic = clean(c.get("topic"))
+                out.append(f"- {topic} -- {versions}" if topic else f"- {versions}")
+        unresolved = str_list(cs.get("unresolved"))
+        if unresolved:
+            out.append("Unresolved questions:")
+            out.extend(f"- {x}" for x in unresolved)
+
+    src_lines = []
+    for s in research.get("sources") or []:
+        if not isinstance(s, dict):
+            continue
+        label = clean(s.get("label"))
+        if not label:
+            continue
+        line = f"- {label}"
+        if clean(s.get("central_argument")):
+            line += f": {clean(s.get('central_argument'))}"
+        src_lines.append(line)
+    if src_lines:
+        out.append("Sources the research was built from:")
+        out.extend(src_lines)
+
+    if not out:
+        return ""
+    block = "RESEARCH KNOWLEDGE BASE:\n" + "\n".join(out)
+    if len(block) > _RESEARCH_MAX_CHARS:
+        block = block[:_RESEARCH_MAX_CHARS].rsplit("\n", 1)[0] + "\n[research truncated]"
+    return block
+
 
 def generate_script(
     prompt: str,
@@ -147,6 +312,7 @@ def generate_script(
     target_duration_sec: int | None = None,
     doc_style: str | None = None,
     wpm: int | None = None,
+    research: dict | None = None,
 ) -> Script:
     """Prompt -> narrator-formatted script, then segmented into timed beats.
 
@@ -158,9 +324,15 @@ def generate_script(
                      cinematic, investigative, historical, and so on. The storyboard is
                      built from the same value, which is what keeps the words and the
                      pictures reading as one film. Unknown or missing writes unstyled.
+
+    ``research`` is Dossier Nova's structured research dataset. When present, the
+    brief becomes creative direction only and every fact comes from the research;
+    when absent, generation works from the brief alone exactly as it always has.
     """
     settings = config.get_settings()
     wpm = wpm or settings.narrava_words_per_minute
+
+    research_block = _render_research_block(research)
 
     instructions = [f"Topic / brief: {prompt.strip()}", f"Narration style: {style}."]
     if tone:
@@ -171,11 +343,19 @@ def generate_script(
             f"Target length: about {target_duration_sec} seconds of narration "
             f"(~{target_words} words). Stay close to this length."
         )
+    if research_block:
+        instructions.append(
+            "The brief above is creative direction only; base every factual statement "
+            "on the research knowledge base below."
+        )
     # The house style leads the message: it is the frame the brief is written inside, and
     # a model reads the top of a user turn as the standing instruction for the rest of it.
     user = styles.narration_block(doc_style) + "\n".join(instructions)
+    if research_block:
+        user += "\n\n" + research_block
 
-    body = llm.generate_text(_SCRIPT_SYSTEM, user, max_output_tokens=2500).strip()
+    system = _SCRIPT_SYSTEM + (_RESEARCH_SYSTEM if research_block else "")
+    body = llm.generate_text(system, user, max_output_tokens=2500).strip()
     body = _strip_artifacts(body)
 
     return segment_script(body, wpm=wpm, source="prompt")

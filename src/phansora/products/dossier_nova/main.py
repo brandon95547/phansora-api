@@ -37,6 +37,7 @@ from .validation import (
 )
 from .text_cleaner import clean_extracted_text
 from .synthesis import synthesize_dossier, render_front_matter
+from .research import build_research_dataset
 from phansora.shared.paths import runtime_root
 
 # Runtime data root (CWD / PHANSORA_DATA_DIR), not the installed package dir.
@@ -172,6 +173,7 @@ def run_pipeline(
     # dossier's leading front matter (prepended after the body is assembled, below).
     # Best-effort: any failure leaves front_matter empty and the dossier proceeds.
     front_matter = ""
+    intel_model: Optional[Dict] = None
     if config.enable_correlation and len(sources) > 1:
         print("[PIPELINE] Running cross-source intelligence synthesis...")
         intel_model = _timed(
@@ -190,6 +192,21 @@ def run_pipeline(
                 f"[PIPELINE] Synthesis produced {len(intel_model.get('findings') or [])} "
                 f"findings, {len(intel_model.get('timeline') or [])} timeline events."
             )
+    elif config.enable_correlation and len(sources) == 1:
+        # Research-only synthesis: single-source dossiers keep their front matter
+        # exactly as before (none), but the structured research dataset below still
+        # wants the intelligence model (findings, timeline, entities).
+        print("[PIPELINE] Running single-source intelligence synthesis (research dataset)...")
+        intel_model = _timed(
+            "synthesis",
+            lambda: synthesize_dossier(
+                sources=sources,
+                source_profiles=source_profiles,
+                client=config.deepseek_client,
+                sample_chars=config.synthesis_sample_chars,
+                min_sources=1,
+            ),
+        )
 
     # 5. Build the merged text (with source headers) for TOC extraction
     merged_text = _build_source_labeled_text(sources)
@@ -291,6 +308,26 @@ def run_pipeline(
     if duplication_ratio > config.max_duplication_ratio:
         print(f"⚠️  Duplication ratio: {duplication_ratio:.1%} (max: {config.max_duplication_ratio:.0%})")
 
+    # 11. Structured research dataset for downstream AI use (Narrava Studio's
+    # "Attach Research" and the dashboard's "View Research" dialog). Assembled from
+    # data already collected above; best-effort — a dossier without a research
+    # dataset is still a dossier.
+    research = None
+    try:
+        research = build_research_dataset(
+            intel_model=intel_model,
+            sources=sources,
+            source_profiles=source_profiles,
+        )
+        if research:
+            print(
+                f"[RESEARCH] Research dataset built: {research['stats']['finding_count']} findings, "
+                f"{research['stats']['timeline_event_count']} timeline events, "
+                f"{research['stats']['person_count']} people."
+            )
+    except Exception as e:  # noqa: BLE001 — research must never break the pipeline
+        print(f"[RESEARCH] Failed to build research dataset: {e}")
+
     _total = sum(dt for _, dt in _stage_times)
     print(
         f"[TIMING] LLM stages total: {_total:.1f}s — "
@@ -311,6 +348,7 @@ def run_pipeline(
         "source_balance": source_balance,
         "duplication_ratio": duplication_ratio,
         "has_front_matter": bool(front_matter),
+        "research": research,
     }
 
 
