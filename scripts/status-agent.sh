@@ -9,11 +9,14 @@
 #   4. Scans the API + frontend journald logs over the last window for errors
 #      (500s, tracebacks, worker failures) — i.e. errors users are hitting live
 #   5. Runs standard host checks               (disk, load, postgres connectivity)
+#      Disk is two-tier: a heads-up once a mount passes $DISK_WARN_PCT (50%) of
+#      capacity, and an urgent alert past $DISK_CRIT_PCT (90%).
 #
 # If anything is wrong it emails you via the phansora-api email endpoint
 # (POST /contact -> delivers to $EMAIL_TO). It de-dupes: the same set of problems
 # won't re-email more than once per $ALERT_COOLDOWN_SECONDS, so an ongoing
-# outage nudges you at most a few times a day instead of every run.
+# outage nudges you at most a few times a day instead of every run. Runs that find
+# nothing but capacity warnings use the longer $DISK_WARN_COOLDOWN_SECONDS (24h).
 #
 # Exit codes: 0 = all clean, 1 = issues found (alert sent or suppressed by cooldown).
 #
@@ -45,13 +48,17 @@ FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:3000}"    # Express base
 LOG_WINDOW="${LOG_WINDOW:-11 min ago}"
 
 # Host thresholds.
-DISK_WARN_PCT="${DISK_WARN_PCT:-90}"                     # alert when any watched mount is fuller than this
+DISK_WARN_PCT="${DISK_WARN_PCT:-50}"                     # early heads-up: mount has passed half capacity
+DISK_CRIT_PCT="${DISK_CRIT_PCT:-90}"                     # urgent: mount is nearly full
 DISK_MOUNTS="${DISK_MOUNTS:-/ /var/lib/phansora}"        # space-separated mounts to watch
 LOAD_WARN_PER_CORE="${LOAD_WARN_PER_CORE:-3.0}"          # 1-min loadavg per CPU core
 
 # Alerting.
 EMAIL_SUBJECT_PREFIX="${EMAIL_SUBJECT_PREFIX:-[status-agent] phansora.com}"
 ALERT_COOLDOWN_SECONDS="${ALERT_COOLDOWN_SECONDS:-21600}" # 6h: suppress identical repeat alerts
+# Disk sitting above DISK_WARN_PCT is a standing condition, not a new incident, so
+# a run that finds *only* capacity warnings re-emails at most this often (24h).
+DISK_WARN_COOLDOWN_SECONDS="${DISK_WARN_COOLDOWN_SECONDS:-86400}"
 STATE_DIR="${STATE_DIR:-/var/lib/status-agent}"           # persists last-alert fingerprint
 ALERT_LOG="${ALERT_LOG:-/var/log/status-agent.log}"       # local fallback if the API email can't send
 
@@ -76,9 +83,10 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 # Internals
 # ─────────────────────────────────────────────────────────────────────────────
-REPORT=""          # human-readable body accumulated across checks
-FINGERPRINT=""     # stable one-line-per-issue key set, for de-dupe (no timestamps)
+REPORT=""            # human-readable body accumulated across checks
+FINGERPRINT=""       # stable one-line-per-issue key set, for de-dupe (no timestamps)
 ISSUES=0
+CAPACITY_WARNINGS=0  # subset of ISSUES that are early disk-capacity heads-ups
 
 note() { [ "$VERBOSE" -eq 1 ] && echo "$*" >&2 || true; }
 
@@ -185,13 +193,22 @@ scan_logs() {
 
 # ── 5. Standard host checks ──────────────────────────────────────────────────
 check_disk() {
-  local m used
+  local m used avail
   for m in $DISK_MOUNTS; do
     [ -d "$m" ] || continue
     used="$(df -P "$m" 2>/dev/null | awk 'NR==2{gsub("%","",$5); print $5}')"
     [ -z "$used" ] && continue
-    if [ "$used" -ge "$DISK_WARN_PCT" ]; then
-      add_issue "disk:${m}" "Disk ${m} is ${used}% full (threshold ${DISK_WARN_PCT}%)."
+    avail="$(df -Ph "$m" 2>/dev/null | awk 'NR==2{print $4}')"
+    # Two tiers, distinct fingerprint keys — crossing from warn into crit changes
+    # the fingerprint, so the urgent one emails immediately instead of waiting out
+    # the warning's cooldown.
+    if [ "$used" -ge "$DISK_CRIT_PCT" ]; then
+      add_issue "disk-crit:${m}" \
+        "Disk ${m} is ${used}% full — only ${avail:-?} free (critical threshold ${DISK_CRIT_PCT}%). Free space now."
+    elif [ "$used" -ge "$DISK_WARN_PCT" ]; then
+      CAPACITY_WARNINGS=$((CAPACITY_WARNINGS + 1))
+      add_issue "disk-warn:${m}" \
+        "Disk ${m} has passed ${DISK_WARN_PCT}% capacity — ${used}% used, ${avail:-?} free. Heads-up only; nothing is failing yet."
     else
       note "ok: disk ${m} ${used}%"
     fi
@@ -246,14 +263,15 @@ record_alert() {
   date +%s > "${STATE_DIR}/last_alert_epoch" 2>/dev/null || true
 }
 
+# should_alert <fingerprint> [cooldown-seconds]
 # Returns 0 if we should send (new problem OR cooldown elapsed), 1 to suppress.
 should_alert() {
-  local fp="$1" last_fp="" last_ts=0 now
+  local fp="$1" cooldown="${2:-$ALERT_COOLDOWN_SECONDS}" last_fp="" last_ts=0 now
   now="$(date +%s)"
   [ -f "${STATE_DIR}/last_fingerprint" ] && last_fp="$(cat "${STATE_DIR}/last_fingerprint" 2>/dev/null || true)"
   [ -f "${STATE_DIR}/last_alert_epoch" ] && last_ts="$(cat "${STATE_DIR}/last_alert_epoch" 2>/dev/null || echo 0)"
   if [ "$fp" != "$last_fp" ]; then return 0; fi
-  [ $(( now - last_ts )) -ge "$ALERT_COOLDOWN_SECONDS" ]
+  [ $(( now - last_ts )) -ge "$cooldown" ]
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -296,14 +314,22 @@ BODY="status-agent found ${ISSUES} issue(s) on ${HOST} at ${TS}:
 ${REPORT}
 — Automated watchdog. Log window scanned: ${LOG_WINDOW}."
 
-SUBJECT="${EMAIL_SUBJECT_PREFIX} ${ISSUES} issue(s) detected"
+# A run whose only findings are capacity heads-ups isn't an incident — label it as
+# one and re-send it far less often than a real failure.
+if [ "$CAPACITY_WARNINGS" -eq "$ISSUES" ]; then
+  SUBJECT="${EMAIL_SUBJECT_PREFIX} disk capacity warning"
+  COOLDOWN="$DISK_WARN_COOLDOWN_SECONDS"
+else
+  SUBJECT="${EMAIL_SUBJECT_PREFIX} ${ISSUES} issue(s) detected"
+  COOLDOWN="$ALERT_COOLDOWN_SECONDS"
+fi
 FP="$(printf '%s' "$FINGERPRINT" | sort | (sha256sum 2>/dev/null || shasum -a 256) | awk '{print $1}')"
 
 # Always keep a local record so nothing is lost even if email delivery fails.
 { echo "===== ${TS} ${HOST} (${ISSUES} issues, fp=${FP}) ====="; printf '%s\n' "$BODY"; } \
   >> "$ALERT_LOG" 2>/dev/null || true
 
-if should_alert "$FP"; then
+if should_alert "$FP" "$COOLDOWN"; then
   if send_via_api "$SUBJECT" "$BODY"; then
     record_alert "$FP"
     note "Alert emailed via API."
@@ -314,7 +340,7 @@ if should_alert "$FP"; then
     record_alert "$FP"   # avoid hammering a down API every run; local log still has details
   fi
 else
-  note "Same issues as last alert and within cooldown (${ALERT_COOLDOWN_SECONDS}s) — not re-emailing."
+  note "Same issues as last alert and within cooldown (${COOLDOWN}s) — not re-emailing."
 fi
 
 exit 1
