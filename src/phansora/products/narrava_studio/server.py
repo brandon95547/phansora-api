@@ -27,6 +27,8 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from .config import get_settings  # noqa: E402
 from .models import (  # noqa: E402
+    AnimationGenerateRequest,
+    AnimationGenerateResponse,
     MediaSearchRequest,
     MediaSearchResponse,
     SceneSuggestRequest,
@@ -40,7 +42,7 @@ from .models import (  # noqa: E402
     TimelineBuildRequest,
     TimelineBuildResponse,
 )
-from .services import align, llm, media, script, storyboard, timeline, voices  # noqa: E402
+from .services import align, animation, llm, media, script, storyboard, timeline, voices  # noqa: E402
 
 logger = logging.getLogger("narrava-studio")
 
@@ -106,6 +108,47 @@ async def generate_script(req: ScriptGenerateRequest):
         logger.exception("Script generation failed")
         raise HTTPException(status_code=502, detail=f"Script generation failed: {exc}")
     return ScriptGenerateResponse(script=result)
+
+
+@app.post("/media/animation", response_model=AnimationGenerateResponse)
+async def generate_media_animation(req: AnimationGenerateRequest):
+    """A described visual -> a self-contained HTML5 Canvas animation document.
+
+    The caller (Node) renders it to video headlessly and imports the video into
+    the project's media library; the HTML itself is never stored or shown.
+    """
+    if not animation.provider_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=f"{animation.required_key_name()} is not configured.",
+        )
+    try:
+        html = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: animation.generate_animation_html(
+                req.prompt,
+                duration_sec=req.duration_sec,
+                width=req.width,
+                height=req.height,
+                transparent=req.transparent,
+                style=req.style,
+                feedback=req.feedback,
+            ),
+        )
+    except ValueError as exc:
+        # The model produced an unusable document — a retryable outcome, not a 5xx
+        # infrastructure failure. 422 tells the caller to retry with feedback.
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Animation generation failed")
+        raise HTTPException(status_code=502, detail=f"Animation generation failed: {exc}")
+    return AnimationGenerateResponse(
+        html=html,
+        duration_sec=req.duration_sec,
+        width=req.width,
+        height=req.height,
+        transparent=req.transparent,
+    )
 
 
 @app.post("/script/segment", response_model=SegmentResponse)

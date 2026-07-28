@@ -57,6 +57,32 @@ class ScriptGenerateResponse(BaseModel):
     script: Script
 
 
+# ── AI media generation (Media tab "Generate with AI") ───────────────────────
+class AnimationGenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=3, max_length=2000)
+    duration_sec: int = Field(default=8, ge=2, le=30)
+    width: int = Field(default=1280, ge=320, le=1920)
+    height: int = Field(default=720, ge=320, le=1920)
+    # Transparent renders composite over other footage (encoded as VP9 webm with
+    # alpha downstream); solid renders become plain mp4.
+    transparent: bool = False
+    # Animation style id (minimal, educational, motion-graphics, whiteboard,
+    # playful). Bounded string, not a Literal: an unknown name falls back to
+    # 'minimal' instead of 422-ing over a creative preference.
+    style: Optional[str] = Field(default=None, max_length=40)
+    # The renderer's validation error from a failed previous attempt, so one retry
+    # can tell the model exactly what to fix.
+    feedback: Optional[str] = Field(default=None, max_length=2000)
+
+
+class AnimationGenerateResponse(BaseModel):
+    html: str
+    duration_sec: int
+    width: int
+    height: int
+    transparent: bool
+
+
 # ── Segmentation (for a pasted/uploaded script) ──────────────────────────────
 class SegmentRequest(BaseModel):
     script_text: str = Field(..., min_length=3)

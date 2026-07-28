@@ -64,6 +64,7 @@ orjson
 
 # ── AI clients ──
 openai>=2.0.0            # chrono_origin (GPT-5 Nano — Responses API + web_search); dossier_nova (DeepSeek via OpenAI-compatible API)
+anthropic>=0.80.0        # narrava_studio (Claude Sonnet 4.6 — AI media animation generation)
 pydantic>=2.9            # chrono_origin models — >=2.9 also required by vLLM 0.9.0
 pydantic-settings>=2.2   # chrono_origin settings
 
