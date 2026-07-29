@@ -17,8 +17,11 @@ loosely here) is:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+
+logger = logging.getLogger("narrava-studio")
 
 # SDKs are imported lazily inside each provider branch. At module scope an absent
 # `anthropic` package would raise on import, and main.py mounts a product only if it
@@ -250,19 +253,45 @@ def _deepseek_html(user_prompt: str) -> str:
         timeout=cfg.timeout_s,
     )
     resp.raise_for_status()
-    choices = resp.json().get("choices") or []
+    data = resp.json()
+    choices = data.get("choices") or []
     if not choices:
         raise ValueError("The model returned no animation.")
+    message = choices[0].get("message") or {}
+    text = (message.get("content") or "").strip()
     # Same distinction the Anthropic branch draws: a truncated document is a retryable
     # generation problem, not a malformed one, and says so rather than failing later
     # on a missing </html> the validator would blame on the prompt.
     if (choices[0].get("finish_reason") or "") == "length":
+        _log_truncation(data, message, text)
         raise ValueError(
             "The generated document was cut off before completion. Write a shorter, "
             "more compact document: fewer helper functions, no long comments, and no "
             "repeated drawing code that a loop could express."
         )
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    return text
+
+
+def _log_truncation(data: dict, message: dict, text: str) -> None:
+    """Say WHICH budget ran out, because the three causes need opposite fixes.
+
+    `asked` vs `completion` separates them at a glance: equal means the document really
+    is that long (write less / raise the cap), completion stuck below asked means the
+    provider clamped to its own ceiling (raising ours does nothing), and a large
+    `reasoning` share means thinking consumed the budget before any HTML was written.
+    """
+    usage = data.get("usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    reasoning = details.get("reasoning_tokens")
+    # Some providers put thinking in a sibling field rather than counting it separately.
+    if reasoning is None and message.get("reasoning_content"):
+        reasoning = f"~{len(str(message['reasoning_content']))} chars (uncounted)"
+    logger.warning(
+        "Animation truncated: asked max_tokens=%s, completion=%s, prompt=%s, "
+        "reasoning=%s, html_chars=%s",
+        _max_tokens(), usage.get("completion_tokens"), usage.get("prompt_tokens"),
+        reasoning if reasoning is not None else "n/a", len(text),
+    )
 
 
 def generate_animation_html(
