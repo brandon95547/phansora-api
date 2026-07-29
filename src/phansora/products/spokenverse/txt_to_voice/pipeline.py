@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from phansora.shared.utils.chunking import chunk_text
+from phansora.shared.utils.tts_text import normalize_for_tts
 from phansora.shared.utils.naming import sanitize_stem
 from phansora.shared.utils.ffmpeg import (
     concat_audio_files_ffmpeg,
@@ -87,6 +88,13 @@ class BatchConverter:
         text = txt_path.read_text(encoding="utf-8", errors="replace").strip()
         if not text:
             raise ValueError(f"Text file is empty: {txt_path.name}")
+
+        # Normalize the whole document before chunking. The engine normalizes again at its
+        # own boundary (it has to — Narrava Studio and create-voice never come through
+        # here), but chunk_text splits oversized paragraphs on "(?<=[.!?])\s+" too, so
+        # doing it only there would leave document-level splits landing on abbreviations.
+        # The pass is idempotent, so running it twice is a no-op.
+        text = normalize_for_tts(text)
 
         chunks = chunk_text(text, self.cfg.chunk_chars)
         if not chunks:

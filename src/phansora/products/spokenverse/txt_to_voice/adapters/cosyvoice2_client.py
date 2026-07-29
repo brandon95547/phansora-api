@@ -56,6 +56,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional, Sequence
 
+from phansora.shared.utils.tts_text import normalize_for_tts
+
 logger = logging.getLogger(__name__)
 
 _MODEL_LOCK = Lock()      # guards the one-per-process model construction
@@ -512,6 +514,16 @@ async def synthesize_to_file(
     instruct_text: Optional[str] = None,  # delivery direction, e.g. "speak in a calm tone"
     **_ignored,
 ) -> None:
+    # Spoken-form normalization happens here, at the engine boundary, so every caller gets
+    # it without repeating itself — Narrava Studio narration, SpokenVerse txt-to-audio,
+    # Book Alchemy, create-voice previews and the CLI all funnel through this function.
+    # It must run BEFORE _chunk_text: its main job is removing abbreviation periods that
+    # the chunker would otherwise mistake for sentence ends. Deterministic and idempotent,
+    # so the pipeline applying it first (document level) costs nothing here.
+    #
+    # prompt_text is deliberately NOT normalized — it is the reference clip's verbatim
+    # transcript, and CosyVoice conditions on it matching the audio.
+    text = normalize_for_tts(text)
     await asyncio.to_thread(
         _synthesize_sync,
         text, out_path, voice, use_gpu, rate, volume, speaker, language, ref_audio,
