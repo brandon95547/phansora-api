@@ -132,6 +132,153 @@ class TocGenerator:
         return toc_sections
 
     # ------------------------------------------------------------------
+    # LLM plumbing for the organize calls
+    # ------------------------------------------------------------------
+
+    def _organize_max_tokens(self, heading_count: int) -> int:
+        """Token budget for a call that must emit the whole TOC in one answer.
+
+        The old value was a hardcoded 2048 for every dossier regardless of size, but this
+        answer scales with the source material: one line per extracted heading plus the
+        dossier scaffold. ~24 tokens/line is a generous allowance for "### Some Heading
+        Text". Floor of 4096 so a small dossier still has room to think.
+        """
+        cap = int(getattr(self.config, "toc_organize_max_tokens", 16384) or 16384)
+        want = 1024 + max(0, heading_count) * 24
+        return max(4096, min(want, cap))
+
+    @staticmethod
+    def _describe_response(response) -> str:
+        """Everything worth knowing about a response that came back unusable.
+
+        The previous failure mode was `raise ValueError("empty dossier TOC")` and nothing
+        else, which cannot distinguish "budget exhausted by reasoning" from "model refused"
+        from "answer was whitespace" — so the reported error told you only that it broke.
+        """
+        bits = []
+        try:
+            choice = response.choices[0]
+            bits.append(f"finish_reason={getattr(choice, 'finish_reason', None)}")
+            msg = getattr(choice, "message", None)
+            content = getattr(msg, "content", None)
+            bits.append(f"content_len={len(content or '')}")
+            # deepseek-v4-flash reasons on every tier; chain-of-thought arrives in its own
+            # field. Non-empty reasoning with empty content is the signature of a budget
+            # spent thinking before any answer token was emitted.
+            reasoning = getattr(msg, "reasoning_content", None)
+            if reasoning:
+                bits.append(f"reasoning_len={len(reasoning)}")
+            refusal = getattr(msg, "refusal", None)
+            if refusal:
+                bits.append(f"refusal={refusal!r}")
+        except Exception as exc:  # noqa: BLE001 - diagnostics must never mask the real error
+            bits.append(f"choice_unreadable={exc!r}")
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                val = getattr(usage, field, None)
+                if val is not None:
+                    bits.append(f"{field}={val}")
+            details = getattr(usage, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", None) if details else None
+            if reasoning_tokens is not None:
+                bits.append(f"reasoning_tokens={reasoning_tokens}")
+        return ", ".join(bits)
+
+    def _organize_call(self, system: str, prompt: str, heading_count: int, label: str) -> str:
+        """One organize call, with a retry at double the budget and loud diagnostics.
+
+        Returns "" rather than raising: the caller has the extracted headings and the fixed
+        scaffold in hand, so it can still assemble a TOC without the model. Killing a
+        pipeline that has already paid for chunk extraction is the worse outcome.
+        """
+        budget = self._organize_max_tokens(heading_count)
+        for attempt in (1, 2):
+            response = self.client.chat.completions.create(
+                model=chat_model("DOSSIER_MODEL"),
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=budget,
+            )
+            content = (response.choices[0].message.content or "").strip()
+            if content:
+                return content
+            detail = self._describe_response(response)
+            print(
+                f"[TOC] {label}: empty answer on attempt {attempt} "
+                f"(max_tokens={budget}, headings={heading_count}, prompt_chars={len(prompt)}) "
+                f"-> {detail}"
+            )
+            if attempt == 1:
+                budget = min(budget * 2, int(getattr(self.config, "toc_organize_max_tokens", 16384) or 16384))
+                print(f"[TOC] {label}: retrying with max_tokens={budget}.")
+        return ""
+
+    def _place_headings_by_similarity(
+        self,
+        topic_headings: List[str],
+        source_profiles: Optional[List[SourceProfile]] = None,
+    ) -> List[Tuple[str, str]]:
+        """Assemble the dossier TOC without the model.
+
+        Used when the organize call comes back empty. This is not a stub: DOSSIER_SECTIONS
+        carries a description per section and an embedding store is already wired up for
+        dedupe, so each heading can be assigned to its nearest section by cosine similarity.
+        Headings whose embedding is unavailable land under the configured catch-all rather
+        than being dropped.
+        """
+        section_embs: List[Tuple[str, Optional[np.ndarray]]] = []
+        for name, desc in DOSSIER_SECTIONS:
+            section_embs.append((name, self.embedding_store.get_embedding(f"{name}. {desc}")))
+
+        catchall = getattr(self.config, "catchall_heading", "Miscellaneous") or "Miscellaneous"
+        buckets: Dict[str, List[str]] = {name: [] for name, _ in DOSSIER_SECTIONS}
+        overflow: List[str] = []
+
+        for heading in topic_headings:
+            title = re.sub(r"^#{1,6}\s+", "", heading).strip()
+            if not title:
+                continue
+            emb = self.embedding_store.get_embedding(title)
+            best_name, best_score = None, -1.0
+            if emb is not None:
+                for name, s_emb in section_embs:
+                    if s_emb is None:
+                        continue
+                    score = self._cosine_similarity(emb, s_emb)
+                    if score > best_score:
+                        best_name, best_score = name, score
+            if best_name is None:
+                overflow.append(title)
+            else:
+                buckets[best_name].append(title)
+
+        out: List[Tuple[str, str]] = []
+        for name, _desc in DOSSIER_SECTIONS:
+            out.append(("#", name))
+            if name == "Source Perspectives":
+                for p in source_profiles or []:
+                    out.append(("##", p.source_label))
+            for title in buckets[name]:
+                out.append(("##", title))
+        if overflow:
+            out.append(("#", catchall))
+            for title in overflow:
+                out.append(("##", title))
+
+        placed = sum(len(v) for v in buckets.values()) + len(overflow)
+        print(
+            f"[TOC] Deterministic placement: {placed} heading(s) assigned by embedding "
+            f"similarity across {len(DOSSIER_SECTIONS)} sections"
+            + (f", {len(overflow)} under '{catchall}'" if overflow else "")
+            + "."
+        )
+        return out
+
+    # ------------------------------------------------------------------
     # Step 2: Build dossier-style TOC
     # ------------------------------------------------------------------
 
@@ -194,19 +341,21 @@ class TocGenerator:
             "7. Do NOT change the wording of the top-level dossier sections.\n"
         )
 
-        response = self.client.chat.completions.create(
-            model=chat_model("DOSSIER_MODEL"),
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant building a dossier TOC."},
-                {"role": "user", "content": organize_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=2048,
+        toc_md_raw = self._organize_call(
+            "You are a helpful assistant building a dossier TOC.",
+            organize_prompt,
+            len(topic_headings),
+            "dossier organize",
         )
-
-        toc_md_raw = (response.choices[0].message.content or "").strip()
         if not toc_md_raw:
-            raise ValueError("[TOC] DeepSeek returned empty dossier TOC.")
+            # Was: raise ValueError("[TOC] DeepSeek returned empty dossier TOC."), which
+            # threw away a pipeline that had already paid for chunk extraction. Every
+            # ingredient for a valid TOC is in hand here — the fixed DOSSIER_SECTIONS
+            # scaffold and the deduped headings — so build it locally instead.
+            print("[TOC] Organize call produced nothing; assembling the TOC locally.")
+            return self._assign_ids_and_format(
+                self._place_headings_by_similarity(topic_headings, source_profiles)
+            )
 
         # Parse, dedupe, and assign IDs
         final_headings: List[Tuple[str, str]] = []
@@ -240,6 +389,18 @@ class TocGenerator:
 
         print(f"[TOC] Dossier TOC: {len(final_headings)} headings after dedupe.")
 
+        # A non-empty answer that parsed to nothing usable (prose, bullets, fenced code —
+        # anything with no "#" lines) is the same outcome as an empty one, so it takes the
+        # same route rather than returning a TOC with zero headings downstream.
+        if not final_headings:
+            print(
+                f"[TOC] Organize answer had no usable headings "
+                f"({len(toc_md_raw)} chars returned); assembling the TOC locally."
+            )
+            return self._assign_ids_and_format(
+                self._place_headings_by_similarity(topic_headings, source_profiles)
+            )
+
         # Assign hierarchical IDs
         return self._assign_ids_and_format(final_headings)
 
@@ -267,19 +428,19 @@ class TocGenerator:
             f"{headings_block}"
         )
 
-        response = self.client.chat.completions.create(
-            model=chat_model("DOSSIER_MODEL"),
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": final_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=2048,
+        # Same scaling + diagnostics as the dossier path: this answer is also "the whole
+        # TOC in one response", so a fixed 2048 under-budgets it for exactly the same reason.
+        toc_md_raw = self._organize_call(
+            "You are a helpful assistant.",
+            final_prompt,
+            len(toc_sections),
+            "legacy organize",
         )
-
-        toc_md_raw = (response.choices[0].message.content or "").strip()
         if not toc_md_raw:
-            raise ValueError("[TOC] DeepSeek returned empty TOC markdown.")
+            raise ValueError(
+                "[TOC] DeepSeek returned empty TOC markdown after a retry at double the "
+                "token budget. See the [TOC] diagnostics above for finish_reason and usage."
+            )
 
         final_headings: List[Tuple[str, str]] = []
         seen_norms: Set[str] = set()

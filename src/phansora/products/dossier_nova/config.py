@@ -53,6 +53,15 @@ class Config:
         self.conservative_mode = os.getenv("CONSERVATIVE_MODE", "false").lower() in ("true", "1", "yes")
         self.catchall_heading = os.getenv("CATCHALL_HEADING", "Miscellaneous")
         self.toc_target_heading_count = _get_int_env("TOC_TARGET_HEADING_COUNT", 60)
+        # Ceiling on the TOC-organize answer. That call has to emit the WHOLE table of
+        # contents in one response — every dossier section plus every extracted heading —
+        # so its output grows with the source material while the old hardcoded 2048 did
+        # not. 2048 is roughly 80-140 heading lines; a long multi-source dossier blows
+        # through that, and because deepseek-v4-flash reasons on every tier an exhausted
+        # budget can come back as EMPTY content rather than truncated content. The actual
+        # request scales with the heading count and is clamped to this (see toc_generator
+        # ._organize_max_tokens).
+        self.toc_organize_max_tokens = _get_int_env("TOC_ORGANIZE_MAX_TOKENS", 16384)
         self.content_similarity_threshold = _get_float_env("CONTENT_SIMILARITY_THRESHOLD", 0.95)
         self.overlap_paragraphs = _get_int_env("OVERLAP_PARAGRAPHS", 2)
         self.coverage_threshold = _get_float_env("COVERAGE_THRESHOLD", 0.85)
