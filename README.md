@@ -5,11 +5,56 @@ serves all products, each under a path prefix:
 
 | Product | Prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice2 voice cloning), PDF→text, audio→text, Book Alchemy |
-| **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (Claude web search) |
+| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice2 voice cloning), PDF→text, audio→text |
+| **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (web-search research) |
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
+| **Book Alchemy** | `/book-alchemy` | book → structured audio course |
+| **Narrava Studio** | `/studio` | documentary editor: script, storyboard, AI media generation |
 
 System packages: `ffmpeg`, `tesseract-ocr`.
+
+## AI models by product
+
+Nothing here is hardcoded except where noted — models come from `.env` through
+`shared/ai/models.py`, which resolves **`<PRODUCT>_MODEL` → `<PROVIDER>_MODEL`** and
+raises `MissingModelConfig` rather than inventing a name, so a model a provider has
+retired fails loudly at the call instead of 404-ing mid-request.
+
+### Hosted (API) models
+
+| Product | Used for | Provider var (default) | Model var → falls back to |
+|---|---|---|---|
+| Narrava Studio | script + storyboard generation | `NARRAVA_LLM_PROVIDER` (`openai`) | `NARRAVA_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
+| Narrava Studio | **AI media generation** (writes the canvas animation) | `NARRAVA_ANIMATION_PROVIDER` (`deepseek`) | `NARRAVA_ANIMATION_MODEL` → `DEEPSEEK_MODEL` |
+| Chrono-Origin | origin research + reasoning | `CHRONO_LLM_PROVIDER` (`openai`) | `CHRONO_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
+| Dossier Nova | research synthesis, dossier writing | — (DeepSeek only) | `DEEPSEEK_MODEL` |
+| Book Alchemy | book → course structure + lesson text | — (DeepSeek only) | `BOOK_ALCHEMY_MODEL` → `DEEPSEEK_MODEL` |
+| SpokenVerse | OCR cleanup / page merge on scanned PDFs | — (DeepSeek only) | `SPOKENVERSE_OCR_MODEL` → `DEEPSEEK_MODEL` |
+
+Reasoning-model overrides (`<PRODUCT>_REASONING_MODEL` → `{OPENAI,DEEPSEEK}_REASONING_MODEL`)
+apply on the research paths; unset means "reason with the chat model", not an error.
+
+**The one literal in the tree** is Narrava's Anthropic animation fallback,
+`claude-sonnet-4-6` — it applies only when `NARRAVA_ANIMATION_PROVIDER=anthropic`,
+because that provider has no `ANTHROPIC_MODEL` var to resolve through.
+
+### Local models (no API, run on this host)
+
+| Product | Used for | Model | Var |
+|---|---|---|---|
+| SpokenVerse | text→speech + voice cloning | CosyVoice2-0.5B / IndexTTS2 / GPT-SoVITS | `TTS_ENGINE`, `COSYVOICE2_MODEL_DIR` |
+| SpokenVerse | audio→text | faster-whisper | `WHISPER_MODEL` (`base`) |
+| Narrava Studio | word-level narration timing | faster-whisper | `NARRAVA_ALIGN_MODEL` → `WHISPER_MODEL` |
+| Dossier Nova | semantic chunking + dedupe | `sentence-transformers/all-MiniLM-L6-v2` (384-dim) | `EMBEDDING_DIMENSIONS` |
+
+Transcription and alignment resolve separately on purpose: transcription wants accuracy,
+alignment wants speed over a file whose text is already known.
+
+### Keys
+
+`OPENAI_API_KEY`, `DEEPSEEK_API_KEY` (+ `DEEPSEEK_BASE_URL`), and — only when the
+animation provider is set to `anthropic` — `ANTHROPIC_API_KEY`. A product whose key is
+missing returns **503** naming the variable; it does not fail at startup.
 
 ## Install
 

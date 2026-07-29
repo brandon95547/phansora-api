@@ -20,23 +20,43 @@ from __future__ import annotations
 import os
 import re
 
-import anthropic
+# SDKs are imported lazily inside each provider branch. At module scope an absent
+# `anthropic` package would raise on import, and main.py mounts a product only if it
+# imports cleanly — so one missing dependency would silently un-mount the whole of
+# Narrava Studio and every /studio route would 404 with nothing explaining why.
 
-# The user picked this model for media generation explicitly. Env-overridable so a
-# newer model can be tried without a deploy.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+# Provider switch, mirroring NARRAVA_LLM_PROVIDER on the script/storyboard path.
+_DEFAULT_PROVIDER = "deepseek"
+
+# Only the Anthropic branch carries a literal: it is the one provider whose model is
+# not already named in .env. The DeepSeek branch resolves through shared.ai.models,
+# which deliberately has no built-in default — see _missing_message() there.
+_ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-4-6"
+
+
+def _provider() -> str:
+    return (os.environ.get("NARRAVA_ANIMATION_PROVIDER") or _DEFAULT_PROVIDER).strip().lower()
 
 
 def model_name() -> str:
-    return os.environ.get("NARRAVA_ANIMATION_MODEL", _DEFAULT_MODEL) or _DEFAULT_MODEL
+    if _provider() == "anthropic":
+        return os.environ.get("NARRAVA_ANIMATION_MODEL") or _ANTHROPIC_DEFAULT_MODEL
+    from phansora.shared.ai.models import resolve_model
+
+    # NARRAVA_ANIMATION_MODEL > DEEPSEEK_MODEL. Raises MissingModelConfig when neither
+    # is set, which is the house convention: a hardcoded name breaks silently when the
+    # provider retires it.
+    return resolve_model("NARRAVA_ANIMATION_MODEL", provider="deepseek")
 
 
 def provider_configured() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    if _provider() == "anthropic":
+        return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return bool(os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_CHAT_API_KEY"))
 
 
 def required_key_name() -> str:
-    return "ANTHROPIC_API_KEY"
+    return "ANTHROPIC_API_KEY" if _provider() == "anthropic" else "DEEPSEEK_API_KEY"
 
 
 # How each Animation Style choice is described to the model. Unknown/missing styles
@@ -155,21 +175,9 @@ def _strip_fences(text: str) -> str:
     return s.strip()
 
 
-def generate_animation_html(
-    prompt: str,
-    *,
-    duration_sec: int,
-    width: int,
-    height: int,
-    transparent: bool = False,
-    style: str | None = None,
-    feedback: str | None = None,
-) -> str:
-    """One Claude Sonnet 4.6 call -> the complete animation HTML document.
+def _anthropic_html(user_prompt: str) -> str:
+    import anthropic  # lazy — see the note at the top of this module
 
-    Raises ValueError when the response doesn't look like a usable document, so the
-    caller can retry once with the error as feedback.
-    """
     client = anthropic.Anthropic()
     # Thinking is OFF, on measurement: adaptive thinking spent 8+ minutes at the
     # default effort and ~3 minutes at medium designing an animation — far past
@@ -183,30 +191,84 @@ def generate_animation_html(
         thinking={"type": "disabled"},
         output_config={"effort": "medium"},
         system=_SYSTEM,
-        messages=[
-            {
-                "role": "user",
-                "content": _build_user_prompt(
-                    prompt,
-                    duration_sec=duration_sec,
-                    width=width,
-                    height=height,
-                    transparent=transparent,
-                    style=style,
-                    feedback=feedback,
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": user_prompt}],
     ) as stream:
         response = stream.get_final_message()
     if response.stop_reason == "refusal":
         raise ValueError("The model declined to generate this animation.")
     if response.stop_reason == "max_tokens":
         raise ValueError("The generated document was cut off before completion.")
+    return "".join(block.text for block in response.content if block.type == "text")
 
-    html = _strip_fences(
-        "".join(block.text for block in response.content if block.type == "text")
+
+def _deepseek_html(user_prompt: str) -> str:
+    import httpx
+
+    from phansora.shared.ai.deepseek import DeepSeekChatConfig
+
+    cfg = DeepSeekChatConfig.from_env(product_var="NARRAVA_ANIMATION_MODEL")
+    resp = httpx.post(
+        f"{cfg.base_url}/v1/chat/completions",
+        json={
+            "model": cfg.model,
+            # Low but non-zero: this is code generation, where a deterministic-ish
+            # sample beats a creative one, but 0 makes a failed retry reproduce the
+            # same broken document the feedback round is meant to fix.
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            # Well above the ~4k tokens a finished document runs to, and inside the
+            # per-request output ceiling the chat API enforces.
+            "max_tokens": 8192,
+            "stream": False,
+        },
+        headers={"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"},
+        timeout=cfg.timeout_s,
     )
+    resp.raise_for_status()
+    choices = resp.json().get("choices") or []
+    if not choices:
+        raise ValueError("The model returned no animation.")
+    # Same distinction the Anthropic branch draws: a truncated document is a retryable
+    # generation problem, not a malformed one, and says so rather than failing later
+    # on a missing </html> the validator would blame on the prompt.
+    if (choices[0].get("finish_reason") or "") == "length":
+        raise ValueError("The generated document was cut off before completion.")
+    return ((choices[0].get("message") or {}).get("content") or "").strip()
+
+
+def generate_animation_html(
+    prompt: str,
+    *,
+    duration_sec: int,
+    width: int,
+    height: int,
+    transparent: bool = False,
+    style: str | None = None,
+    feedback: str | None = None,
+) -> str:
+    """One LLM call -> the complete animation HTML document.
+
+    Raises ValueError when the response doesn't look like a usable document, so the
+    caller can retry once with the error as feedback.
+    """
+    user_prompt = _build_user_prompt(
+        prompt,
+        duration_sec=duration_sec,
+        width=width,
+        height=height,
+        transparent=transparent,
+        style=style,
+        feedback=feedback,
+    )
+    raw = (
+        _anthropic_html(user_prompt)
+        if _provider() == "anthropic"
+        else _deepseek_html(user_prompt)
+    )
+    html = _strip_fences(raw)
     if "<canvas" not in html or 'id="stage"' not in html.replace("'", '"'):
         raise ValueError('The generated document has no <canvas id="stage">.')
     if "renderFrame" not in html:
