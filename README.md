@@ -26,6 +26,12 @@ retired fails loudly at the call instead of 404-ing mid-request.
 |---|---|---|---|
 | Narrava Studio | script + storyboard generation | `NARRAVA_LLM_PROVIDER` (`openai`) | `NARRAVA_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
 | Narrava Studio | **AI media generation** (writes the canvas animation) | `NARRAVA_ANIMATION_PROVIDER` (`deepseek`) | `NARRAVA_ANIMATION_MODEL` → `DEEPSEEK_MODEL` |
+
+`NARRAVA_ANIMATION_MAX_TOKENS` (default 16384) caps that one call. It is the largest
+generation in the codebase — a whole working HTML document in one shot — and a cap set
+too low fails as **422 "cut off before completion"**, not as an error mentioning tokens.
+Raise it if that appears; lower it if DeepSeek starts rejecting the request outright,
+which is what exceeding the model's real output ceiling looks like.
 | Chrono-Origin | origin research + reasoning | `CHRONO_LLM_PROVIDER` (`openai`) | `CHRONO_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
 | Dossier Nova | research synthesis, dossier writing | — (DeepSeek only) | `DEEPSEEK_MODEL` |
 | Book Alchemy | book → course structure + lesson text | — (DeepSeek only) | `BOOK_ALCHEMY_MODEL` → `DEEPSEEK_MODEL` |

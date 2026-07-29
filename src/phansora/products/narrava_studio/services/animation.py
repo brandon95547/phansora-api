@@ -1,6 +1,6 @@
 """AI media generation: a described visual -> a self-contained HTML5 Canvas animation.
 
-One LLM call (Claude Sonnet 4.6 via the Anthropic SDK) writes a complete HTML
+One LLM call (DeepSeek by default, Anthropic behind a switch) writes a complete HTML
 document that draws the requested animation on a single <canvas>. The document is
 never shown to the user and never stored: the Node side loads it in a headless
 browser, drives ``window.renderFrame(t)`` frame by frame, encodes the frames to
@@ -41,6 +41,21 @@ def _provider() -> str:
 def provider_name() -> str:
     """The active provider, for logs and /health."""
     return _provider()
+
+
+# Output ceiling for the DeepSeek branch. 8192 was measured too small — real documents
+# hit it and came back truncated. Env-tunable because the true per-model ceiling is the
+# provider's to change, and a request above it is rejected outright: if this starts
+# failing with a 400 from DeepSeek naming max_tokens, lower it rather than editing code.
+_DEFAULT_MAX_TOKENS = 16384
+
+
+def _max_tokens() -> int:
+    raw = (os.environ.get("NARRAVA_ANIMATION_MAX_TOKENS") or "").strip()
+    try:
+        return max(1024, int(raw)) if raw else _DEFAULT_MAX_TOKENS
+    except ValueError:
+        return _DEFAULT_MAX_TOKENS
 
 
 def model_name() -> str:
@@ -202,7 +217,11 @@ def _anthropic_html(user_prompt: str) -> str:
     if response.stop_reason == "refusal":
         raise ValueError("The model declined to generate this animation.")
     if response.stop_reason == "max_tokens":
-        raise ValueError("The generated document was cut off before completion.")
+        raise ValueError(
+            "The generated document was cut off before completion. Write a shorter, "
+            "more compact document: fewer helper functions, no long comments, and no "
+            "repeated drawing code that a loop could express."
+        )
     return "".join(block.text for block in response.content if block.type == "text")
 
 
@@ -224,9 +243,7 @@ def _deepseek_html(user_prompt: str) -> str:
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": user_prompt},
             ],
-            # Well above the ~4k tokens a finished document runs to, and inside the
-            # per-request output ceiling the chat API enforces.
-            "max_tokens": 8192,
+            "max_tokens": _max_tokens(),
             "stream": False,
         },
         headers={"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"},
@@ -240,7 +257,11 @@ def _deepseek_html(user_prompt: str) -> str:
     # generation problem, not a malformed one, and says so rather than failing later
     # on a missing </html> the validator would blame on the prompt.
     if (choices[0].get("finish_reason") or "") == "length":
-        raise ValueError("The generated document was cut off before completion.")
+        raise ValueError(
+            "The generated document was cut off before completion. Write a shorter, "
+            "more compact document: fewer helper functions, no long comments, and no "
+            "repeated drawing code that a loop could express."
+        )
     return ((choices[0].get("message") or {}).get("content") or "").strip()
 
 
