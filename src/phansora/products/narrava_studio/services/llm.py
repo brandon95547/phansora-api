@@ -80,12 +80,22 @@ def _deepseek_text(system: str, user: str, *, max_output_tokens: int, json_mode:
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    resp = httpx.post(
-        f"{cfg.base_url}/v1/chat/completions",
-        json=payload,
-        headers={"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"},
-        timeout=cfg.timeout_s,
-    )
+    # The v4 models think by default and those tokens are billed against `max_tokens` —
+    # our budgets here are sized for the answer alone (2500 for a script, ~1500+ for a
+    # storyboard), so leaving it on returns empty or truncated JSON. Same failure, and the
+    # same fix, as the OCR cleaner in shared.ai.deepseek. The openai path keeps effort low
+    # for the same reason.
+    payload["thinking"] = {"type": "disabled"}
+
+    url = f"{cfg.base_url}/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"}
+    resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout_s)
+    # `thinking` is a v4-era parameter. A model that predates it 400s rather than ignoring
+    # it, so drop it and retry instead of failing the call — the model name comes from .env
+    # and can be pointed anywhere.
+    if resp.status_code == 400 and "thinking" in resp.text:
+        payload.pop("thinking", None)
+        resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout_s)
     resp.raise_for_status()
     data = resp.json()
     choices = data.get("choices") or []
