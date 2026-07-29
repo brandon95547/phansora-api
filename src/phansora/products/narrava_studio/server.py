@@ -143,6 +143,14 @@ async def generate_media_animation(req: AnimationGenerateRequest):
     except ValueError as exc:
         # The model produced an unusable document — a retryable outcome, not a 5xx
         # infrastructure failure. 422 tells the caller to retry with feedback.
+        #
+        # Logged with the model that produced it: a 422 rate is how you tell a model
+        # that cannot hold the renderFrame contract from a prompt that is asking for
+        # something impossible, and the bare status in the access log says neither.
+        logger.warning(
+            "Animation rejected (%s via %s): %s",
+            animation.model_name(), animation.provider_name(), exc,
+        )
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Animation generation failed")

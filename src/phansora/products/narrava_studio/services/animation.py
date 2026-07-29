@@ -38,6 +38,11 @@ def _provider() -> str:
     return (os.environ.get("NARRAVA_ANIMATION_PROVIDER") or _DEFAULT_PROVIDER).strip().lower()
 
 
+def provider_name() -> str:
+    """The active provider, for logs and /health."""
+    return _provider()
+
+
 def model_name() -> str:
     if _provider() == "anthropic":
         return os.environ.get("NARRAVA_ANIMATION_MODEL") or _ANTHROPIC_DEFAULT_MODEL
