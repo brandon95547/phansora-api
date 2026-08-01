@@ -59,6 +59,7 @@ DENSITY_MAX = 1.6
 
 MAX_TOPICS_PER_SEGMENT = 5        # detail carried into the segmentation prompt
 MAX_SEGMENT_DIGEST_CHARS = 60_000 # keep that prompt inside the context window
+MAX_PRIOR_COVERAGE_CHARS = 6_000  # what earlier lessons taught, carried into each script
 
 
 class TerminalError(Exception):
@@ -556,6 +557,11 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     # ~1.4 tokens per word, plus headroom, capped at the DeepSeek output ceiling.
     token_budget = min(8000, int(max_words * 1.7) + 400)
 
+    # Lessons are written in ordinal order, so everything before this one is
+    # already settled. Handing that over is what stops a course re-teaching the
+    # same ground each time the source circles back to it.
+    prior = _prior_coverage(sessions, int(sess["ordinal"]))
+
     script = ""
     validation = {"supported": False, "flagged": [], "notes": ""}
     feedback: Optional[list] = None
@@ -570,6 +576,7 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
                 min_words=min_words,
                 max_words=max_words,
                 feedback=feedback,
+                previously_taught=prior,
             ),
             max_output_tokens=token_budget,
             # A retry must not reproduce the rejected script verbatim. The
@@ -578,7 +585,9 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
             # unchanged prompt, the old loop regenerated the identical script.)
             temperature=0.0 if attempt == 0 else 0.3,
         )
-        validation = await validate_script(client, script=script, chunks=chunk_dicts)
+        validation = await validate_script(
+            client, script=script, chunks=chunk_dicts, previously_taught=prior,
+        )
         if script.strip() and validation["supported"]:
             break
         feedback = validation.get("flagged") or []
@@ -608,6 +617,50 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         validation_notes=validation,
         regen_count=regen,
     )
+
+
+def _prior_coverage(sessions: list[Any], current_ordinal: int) -> list[dict]:
+    """What the lessons before this one already taught: title plus topic list.
+
+    Titles and topics, not scripts — a twenty-lesson course would otherwise put
+    the whole finished course back into every prompt. Topics are the same
+    coverage checklist the segmentation phase produced, so they name exactly the
+    ground a repeat would cover.
+    """
+    entries = [
+        {
+            "ordinal": int(s["ordinal"]),
+            "title": (s["title"] or f"Part {s['ordinal']}").strip(),
+            "topics": [str(t).strip() for t in _as_list(s["outline"]) if str(t).strip()],
+        }
+        for s in sessions
+        if int(s["ordinal"]) < current_ordinal
+    ]
+    return _trim_coverage(entries)
+
+
+def _trim_coverage(entries: list[dict]) -> list[dict]:
+    """Hold the coverage list inside its character budget.
+
+    Detail goes before entries do, oldest first: a lesson the listener heard an
+    hour ago is the one whose topic list can be spared, while dropping a lesson
+    outright would invite the course to teach it all over again.
+    """
+    def size(entry: dict) -> int:
+        return len(entry["title"]) + sum(len(t) + 8 for t in entry["topics"]) + 16
+
+    total = sum(size(e) for e in entries)
+    if total <= MAX_PRIOR_COVERAGE_CHARS:
+        return entries
+
+    trimmed = [dict(e) for e in entries]
+    for entry in trimmed:
+        if total <= MAX_PRIOR_COVERAGE_CHARS:
+            break
+        before = size(entry)
+        entry["topics"] = []
+        total -= before - size(entry)
+    return trimmed
 
 
 # --------------------------------------------------------------- phase: audio

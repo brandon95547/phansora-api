@@ -3,6 +3,19 @@
 Book Alchemy turns a written work into a spoken audio course — the source taught
 back the way a college lecturer would teach it after reading it.
 
+The narrator is the INSTRUCTOR, teaching the subject in the first person. It is
+not a reviewer describing a book: no "the author states", no "he argues", no "in
+this chapter". A listener should finish the course knowing the material without
+ever being told where it came from. That is a voice rule, not a licence — every
+sentence still has to be something the source says.
+
+A course also has a memory. Books circle back; a course that circles back with
+them feels padded, so each lesson is told what the earlier lessons already
+taught (see ``already_taught_block``) and passes over settled ground. The
+validator is given the SAME list, because a lesson that correctly skips a repeat
+would otherwise be marked down for omitting it and the retry loop would put the
+repetition straight back in.
+
 The rule repeated in every prompt separates two acts that are easy to conflate:
 
   RESTATING the author's material in the lecturer's own words is the job. The
@@ -29,22 +42,33 @@ import json
 
 GROUNDING = (
     "You are part of Book Alchemy, which turns a written work into a spoken audio "
-    "course. Teach the source the way a good college lecturer would teach it after "
-    "reading it: in your own words, organised so it lands by ear.\n"
+    "course. You are the instructor. Teach the subject the way a good college "
+    "lecturer would teach it after reading the source: in your own words, organised "
+    "so it lands by ear.\n"
     "\n"
-    "The line that matters is RESTATING versus ADDING. Restating the author's "
+    "Teach the SUBJECT, not the book. The listener came to learn the material, not "
+    "to hear a report on someone's writing. Say the thing itself — 'a limit order "
+    "fills only at your price or better' — never 'the author says that a limit "
+    "order…'. No 'he states', 'she argues', 'the book explains', 'in this chapter', "
+    "'according to the text'. The source is your material; it is not your topic, and "
+    "the listener never needs to be told where a point came from.\n"
+    "\n"
+    "The line that matters is RESTATING versus ADDING. Restating the source's "
     "material in clearer words is the entire job. Adding anything of your own is "
     "never allowed. Those are different acts, and only the second is forbidden.\n"
     "\n"
     "Do this:\n"
-    "- Say the author's points in your own words. Explain them; do not read them "
+    "- Teach the source's points in your own words. Explain them; do not read them "
     "out. A listener should hear a lecturer who has read the text, not a recording "
     "of the text.\n"
+    "- Where the source recounts a first-person experience, teach it as the account "
+    "it is — what happened and what it showed — without naming a narrator and "
+    "without claiming it as your own experience.\n"
     "- Group and order the material so it teaches well — related points together, "
     "a term explained before it is used.\n"
     "- Define a term the way the source defines it, and spell out what the source "
     "states compactly (an abbreviation, a table, 'see figure 3') in speakable words.\n"
-    "- Quote a short, striking phrase when the author's own wording carries it, and "
+    "- Quote a short, striking phrase when the source's own wording carries it, and "
     "keep names, numbers, dates and quoted words exact.\n"
     "\n"
     "Never do this:\n"
@@ -173,9 +197,18 @@ SCRIPT_SYSTEM = (
     "the requirement; verbatim wording is not.\n"
     "- Follow the source's order unless grouping related points teaches better. "
     "Say each point once — a lesson does not circle back.\n"
-    "- Attribution is natural and welcome: 'Crowley writes that…', 'he goes on to "
-    "say…'. What you must not do is characterise the writing ('this reveals', "
-    "'strikingly', 'what is remarkable here').\n"
+    "- Teach in your own voice, first person. 'Let's start with…', 'notice that…', "
+    "'you'll see this whenever…'. You are teaching a class, not reviewing a book, "
+    "so nothing is attributed to a writer: no 'he states', 'the author explains', "
+    "'the text tells us'. If a sentence would still make sense with that clause "
+    "deleted, delete it.\n"
+    "- Do not characterise the material either ('this reveals', 'strikingly', "
+    "'what is remarkable here'). Teach it; let it land on its own.\n"
+    "- A point already taught in an earlier lesson is finished. If these segments "
+    "return to it, do not teach it a second time — carry it in a single clause of "
+    "no more than a few words if the new material needs it to make sense, and "
+    "otherwise pass over it in silence. Recaps, 'as we saw', and re-explanations "
+    "are what make a course feel padded.\n"
     "- Open straight on the material — one orienting sentence at most, naming what "
     "this lesson covers. No 'In this lesson we will explore…'. Do not close with a "
     "recap, summary, takeaways, or 'to recap'; stop when the material is taught.\n"
@@ -189,6 +222,24 @@ SCRIPT_SYSTEM = (
 )
 
 
+def already_taught_block(previously_taught: list[dict] | None) -> str:
+    """What earlier lessons in this course have already covered.
+
+    Both the writer and the checker need this, and they must be given the same
+    text: a lesson told to pass over settled material would otherwise be marked
+    down for omitting it, and the regeneration loop would put the repetition
+    straight back in.
+    """
+    if not previously_taught:
+        return ""
+    lines = []
+    for lesson in previously_taught:
+        lines.append(f"- Lesson {lesson.get('ordinal')}: {lesson.get('title') or 'untitled'}")
+        for topic in lesson.get("topics") or []:
+            lines.append(f"    · {topic}")
+    return "Already taught in earlier lessons of this course:\n" + "\n".join(lines) + "\n"
+
+
 def script_user(
     session_title: str,
     outline: list[str],
@@ -198,11 +249,19 @@ def script_user(
     min_words: int,
     max_words: int,
     feedback: list[dict] | None = None,
+    previously_taught: list[dict] | None = None,
 ) -> str:
     outline_txt = "\n".join(f"- {b}" for b in (outline or [])) or "- (follow the segments)"
     excerpts = "\n\n".join(
         f"[segment {i + 1}{_ref(c)}]\n{c['text']}" for i, c in enumerate(chunks)
     )
+    covered = already_taught_block(previously_taught)
+    if covered:
+        covered = (
+            f"\n{covered}"
+            "Anything on that list is settled. Teach it again only if these segments "
+            "genuinely extend it, and then teach only what is new.\n"
+        )
 
     fix = ""
     if feedback:
@@ -220,13 +279,14 @@ def script_user(
     return (
         f"Lesson title: {session_title}\n\n"
         f"Points to cover, in source order — every one must be taught:\n{outline_txt}\n"
-        f"{fix}\n"
+        f"{covered}{fix}\n"
         f"Length: the source below runs about {source_words} words; your lesson "
         f"should land between {min_words} and {max_words} words. Teaching in your own "
         f"words naturally runs a little longer than the source — that headroom is for "
         f"explaining, not for padding. Under the floor means you dropped material or "
-        f"merely summarised it; over the ceiling means you added something that is "
-        f"not in the source.\n\n"
+        f"merely summarised it — unless you passed over ground an earlier lesson "
+        f"already covered, which is correct and needs no compensating. Over the "
+        f"ceiling means you added something that is not in the source.\n\n"
         f"Source segments, in order:\n{excerpts}"
     )
 
@@ -248,25 +308,43 @@ VALIDATION_SYSTEM = (
     "not, and neither is following the source clause by clause.\n"
     '- "filler": words carrying no source content — an intro announcing what will '
     "be covered, a closing recap or takeaways, or the same point taught twice.\n"
+    '- "attributed": the script reports on the source or its writer instead of '
+    "teaching the subject — 'the author says', 'he states', 'she argues', 'the "
+    "book explains', 'in this chapter', 'according to the text'. The lesson is "
+    "taught in the instructor's own first-person voice; a listener should not be "
+    "able to tell that it came from a book. Quote the offending clause.\n"
     "\n"
-    "Restating the author's material in different words is the POINT and is never "
-    "a problem. Neither is naming the author, ordinary connective phrasing, or a "
-    "sentence that orients the listener. Judge only against the segments supplied "
-    "— never against outside knowledge.\n"
+    "Restating the source's material in different words is the POINT and is never "
+    "a problem. Neither is ordinary connective phrasing, or a sentence that orients "
+    "the listener. Judge only against the segments supplied — never against outside "
+    "knowledge.\n"
+    "\n"
+    "If a list of material already taught in earlier lessons is supplied: a point "
+    "on that list which this lesson passes over or carries in a short clause is "
+    "NOT omitted — that is the course working correctly. Teaching such a point "
+    "again at length is \"filler\".\n"
     "\n"
     'Return JSON: {"supported": bool, "flagged": [{"type": '
-    '"added"|"inferred"|"omitted"|"copied"|"filler", "claim": str, "reason": str}], '
-    '"notes": str}. Set `supported` to false if any flagged item is material.'
+    '"added"|"inferred"|"omitted"|"copied"|"filler"|"attributed", "claim": str, '
+    '"reason": str}], "notes": str}. Set `supported` to false if any flagged item '
+    "is material."
 )
 
 
-def validation_user(script: str, chunks: list[dict]) -> str:
+def validation_user(
+    script: str,
+    chunks: list[dict],
+    *,
+    previously_taught: list[dict] | None = None,
+) -> str:
     excerpts = "\n\n".join(
         f"[segment {i + 1}{_ref(c)}]\n{c['text']}" for i, c in enumerate(chunks)
     )
+    covered = already_taught_block(previously_taught)
     return (
         f"Source segments:\n{excerpts}\n\n"
-        f"Narration script to check:\n\"\"\"\n{script}\n\"\"\""
+        + (f"{covered}\n" if covered else "")
+        + f"Narration script to check:\n\"\"\"\n{script}\n\"\"\""
     )
 
 
