@@ -61,6 +61,32 @@ def _max_tokens() -> int:
         return _DEFAULT_MAX_TOKENS
 
 
+# Thinking is OFF for the DeepSeek branch too, and for a harder reason than the
+# Anthropic branch's latency: with it on, this call did not merely run slowly, it
+# never produced anything at all. Every attempt in production came back
+#
+#   Animation truncated: max_tokens=16384, completion=16384, reasoning=16384, html_chars=0
+#
+# — the whole budget spent reasoning, zero characters of document, nine times out
+# of nine. Whole-program code generation is exactly the workload this model
+# thinks longest about, and DeepSeek counts reasoning against max_tokens, so the
+# budget was gone before the first tag. Raising the ceiling only buys a more
+# expensive failure; the retry's "write something shorter" feedback cannot help a
+# document that was never started.
+#
+# With reasoning off the same prompt returns a complete, contract-passing
+# document in ~24s using ~3k output tokens. Env-tunable rather than hardcoded
+# because a future model may need some thinking here — set it to `default` to
+# hand the decision back to the provider.
+_DEFAULT_REASONING_EFFORT = "none"
+
+
+def _reasoning_effort() -> str | None:
+    """The `reasoning_effort` to send, or None to omit the field entirely."""
+    raw = (os.environ.get("NARRAVA_ANIMATION_REASONING_EFFORT") or _DEFAULT_REASONING_EFFORT).strip().lower()
+    return None if raw in ("", "default", "auto", "provider") else raw
+
+
 def model_name() -> str:
     if _provider() == "anthropic":
         return os.environ.get("NARRAVA_ANIMATION_MODEL") or _ANTHROPIC_DEFAULT_MODEL
@@ -234,21 +260,28 @@ def _deepseek_html(user_prompt: str) -> str:
     from phansora.shared.ai.deepseek import DeepSeekChatConfig
 
     cfg = DeepSeekChatConfig.from_env(product_var="NARRAVA_ANIMATION_MODEL")
+    body = {
+        "model": cfg.model,
+        # Low but non-zero: this is code generation, where a deterministic-ish
+        # sample beats a creative one, but 0 makes a failed retry reproduce the
+        # same broken document the feedback round is meant to fix.
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": _max_tokens(),
+        "stream": False,
+    }
+    # Omitted rather than sent empty when disabled: DeepSeek ignores parameters it
+    # does not recognise instead of rejecting them, so a wrong key would look like
+    # it worked. See _reasoning_effort for why the default is off.
+    effort = _reasoning_effort()
+    if effort:
+        body["reasoning_effort"] = effort
     resp = httpx.post(
         f"{cfg.base_url}/v1/chat/completions",
-        json={
-            "model": cfg.model,
-            # Low but non-zero: this is code generation, where a deterministic-ish
-            # sample beats a creative one, but 0 makes a failed retry reproduce the
-            # same broken document the feedback round is meant to fix.
-            "temperature": 0.2,
-            "messages": [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            "max_tokens": _max_tokens(),
-            "stream": False,
-        },
+        json=body,
         headers={"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"},
         timeout=cfg.timeout_s,
     )
