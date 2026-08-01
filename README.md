@@ -401,3 +401,51 @@ or its torch/vLLM pins** — several of these cost real time.
    large single upload to the synchronous `/txt-to-audio` can approach nginx's `proxy_read_timeout`
    (300 s). Book Alchemy long-form runs through the durable worker, not that endpoint, so it is
    unaffected; only watch the direct front-end upload path.
+
+## Known issues / what not to do (Narrava Studio animation + DeepSeek)
+
+1. **Keep DeepSeek's reasoning OFF for animation generation — with it on, nothing comes back
+   at all.** `deepseek-v4-flash` spent its *entire* completion budget thinking and emitted zero
+   characters of document, on **9 of 10 attempts across 4 production runs** (2026-08-01):
+
+   ```
+   Animation truncated: asked max_tokens=16384, completion=16384, prompt=724,
+                        reasoning=16384, html_chars=0
+   ```
+
+   Writing a whole self-contained program is the workload this model thinks longest about, and
+   DeepSeek counts reasoning tokens against `max_tokens`, so the budget was gone before the first
+   tag. Each attempt burned ~2.5 min and the route retries once, so a user waited ~5.5 min for a
+   422 saying *"the document was cut off — write something shorter"* — advice that cannot help a
+   document that was never started. **Do not "fix" this by raising `NARRAVA_ANIMATION_MAX_TOKENS`**:
+   the reasoning expands to fill whatever it is given, so a bigger ceiling buys a slower, dearer
+   failure. The fix is `reasoning_effort=none` (`_reasoning_effort()` in
+   `products/narrava_studio/services/animation.py`, overridable with
+   `NARRAVA_ANIMATION_REASONING_EFFORT`; `default` hands the decision back to the provider).
+   Measured after, on "Chronology of Trump election" at 1280×720/8 s: **flash 18 / 23 / 25 s** and
+   **pro 27 / 41 / 49 s** for minimal / whiteboard / playful, every one a complete
+   contract-passing document; through the prod API, 15–26 s and zero truncations. Switching
+   provider to Anthropic also avoids it (that branch already sends `thinking: disabled`) but costs
+   far more per call and is not the fix.
+
+2. **DeepSeek silently ignores parameters it does not recognise — never take a 200 as proof a
+   knob works.** `enable_thinking: false`, `thinking: {"type": "disabled"}`,
+   `chat_template_kwargs: {"thinking": false}` and `reasoning: {"enabled": false}` were all
+   accepted with HTTP 200 *and kept right on reasoning*. Only `reasoning_effort` is honoured. Verify
+   any new parameter by reading `usage.completion_tokens_details.reasoning_tokens` back off the
+   response, not by the absence of a 400. (As of 2026-08-01 the key exposes exactly two models,
+   `deepseek-v4-flash` and `deepseek-v4-pro` — there is no non-thinking model to switch to.)
+
+3. **When an animation is slow, read the phase timings before blaming the renderer.** The Node
+   app logs one line per render — `Animation rendered for project N: total=… model=… capture=…
+   encode=… attempts=…` (`docker logs phansora_node_app | grep "Animation rendered"`). A real
+   production line looked like this:
+
+   ```
+   total=244.9s model=241.9s capture=2.1s encode=0.9s attempts=2 frames=120 4s 1280x720 mp4/h264
+   ```
+
+   The model owned 98.8% of it; capture and encode together were 3 seconds. The browser's
+   "Encoding the video…" is **not** a phase — the Media panel rotates fixed labels on a 14 s timer
+   and stops on the last one, so it shows from ~42 s onward no matter what the server is doing.
+   `attempts=2` alone adds minutes, and is usually the truncation above.
