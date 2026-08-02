@@ -131,15 +131,47 @@ _STYLES = {
         "Playful: bouncy squash-and-stretch easing, rounded shapes, bright cheerful "
         "palette, small delightful details."
     ),
-    # Written as a visual LANGUAGE, not a set of objects. Every other entry here
-    # describes treatment — how things are drawn and move — and a style phrased as
-    # subject matter ("compasses, all-seeing eyes") gets read as content to insert,
-    # so an animation about quarterly revenue comes back wearing regalia. Palette,
-    # line quality and construction rule keep it steering the drawing instead.
+    # Everything below is TREATMENT — how a thing is drawn and moves — because the
+    # subject is already carried by the user's prompt. An earlier draft had seventeen
+    # entries; most collapsed into each other once that split was clear (alchemical,
+    # celestial and art-deco are "engraved" with different iconography, and iconography
+    # is the prompt's job). Fewer, more distinct entries also means fewer untuned
+    # fragments to notice going wrong.
+    "blueprint": (
+        "Blueprint: white and pale cyan line-work on deep blueprint blue over a fine "
+        "grid. Dimension arrows, leader lines, section marks and technical annotation in "
+        "light monospace. Orthographic construction, consistent stroke weights, every "
+        "element drawn as if measured."
+    ),
+    "isometric": (
+        "Isometric: 2.5D forms on fixed 30-degree axes with no perspective convergence. "
+        "Flat faces in three tonal steps for top, left and right; muted palette with a "
+        "single accent. Objects assembled from stacked volumes, movement travelling "
+        "along the isometric axes."
+    ),
+    "neon": (
+        "Neon: glowing strokes with soft bloom against near-black, horizon grids "
+        "receding to a vanishing point, magenta-to-cyan gradients. Light sources rather "
+        "than filled shapes, additive glow where strokes overlap, slow confident drift "
+        "with the occasional flicker."
+    ),
+    # The general ceremonial treatment. Prompt it with the iconography you want —
+    # "a constellation chart", "a rose window", "stepped deco fans" — and it covers
+    # the ground four separate styles used to.
+    "engraved": (
+        "Engraved: fine metallic line-work — gold, brass or sepia — on deep indigo, "
+        "black or parchment, drawn as if etched into a plate. Visible construction "
+        "geometry, compass arcs and ruled lines, strong symmetry, restrained ornament. "
+        "Hatching and line density for tone rather than flat fills."
+    ),
+    # Kept as its own entry rather than folded into 'engraved': it is the specific
+    # vocabulary this tool gets asked for by name, and a preset is also documentation
+    # that the capability exists.
     #
-    # It also suits this pipeline better than most: the renderer is canvas, so
-    # painterly styles disappoint, while engraved geometry is arcs, rules and
-    # rotational symmetry — exactly what the 2D context is good at.
+    # Phrased as a visual LANGUAGE, not a set of objects. A style written as subject
+    # matter ("compasses, all-seeing eyes") reads as content to insert, so an animation
+    # about quarterly revenue comes back wearing regalia. Palette, line quality and
+    # construction rule keep it steering the drawing instead.
     "masonic": (
         "Masonic: engraved geometric symbolism. Construction-line geometry — compass "
         "arcs, set-square angles, radiating light, twin pillars, checkerboard grids, "
