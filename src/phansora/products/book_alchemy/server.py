@@ -89,18 +89,25 @@ if _BOOK_ALCHEMY_OK:
         """How many audio courses a user may keep at once.
 
         Each finished course is hundreds of MB of narration on disk, so storage —
-        not compute — is the binding constraint. Users free a slot by deleting an
-        old course (DELETE /projects/{id} removes its audio too).
+        not compute — is the binding constraint. One at a time: users free the
+        slot by downloading their course and deleting it (DELETE /projects/{id}
+        removes its audio too).
         """
         try:
-            return max(1, int(os.getenv("BOOK_ALCHEMY_MAX_PROJECTS", "2")))
+            return max(1, int(os.getenv("BOOK_ALCHEMY_MAX_PROJECTS", "1")))
         except Exception:  # noqa: BLE001
-            return 2
+            return 1
 
     def _ba_limit_message(limit: int) -> str:
+        if limit == 1:
+            return (
+                "You can only have one audio course at a time. Download your current "
+                "course, then delete it to free up space and start a new one."
+            )
         return (
-            f"You can keep up to {limit} audio course{'s' if limit != 1 else ''} at a time. "
-            "Delete one of your existing courses to free up space, then start a new one."
+            f"You can keep up to {limit} audio courses at a time. "
+            "Download and delete one of your existing courses to free up space, "
+            "then start a new one."
         )
 
     def _ba_user_id(user_id: str) -> int:
