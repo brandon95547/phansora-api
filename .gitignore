@@ -52,7 +52,12 @@ history/
 input_pdf/
 input_txt/
 .tmp_uploads/
-voices/
+# The per-user voice store appears at the repo root (dev — runtime_root defaults to CWD)
+# and under data/ (prod — PHANSORA_DATA_DIR). Both are listed explicitly rather than as a
+# bare `voices/`, which would also swallow assets/voices/ — the app-wide default voices,
+# which ARE tracked (shipped content, see voices.py).
+/voices/
+data/voices/
 
 # Book Alchemy — per-user source uploads + narrated session audio
 /book_alchemy/

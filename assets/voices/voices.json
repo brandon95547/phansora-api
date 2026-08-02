@@ -1,0 +1,123 @@
+[
+  {
+    "id": "21a217ee39a74860",
+    "name": "Lucian",
+    "created_at": 1784159183.0296702,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "These are dark times that is no denying. Our world has perhaps faced no greater threat than it does today."
+  },
+  {
+    "id": "14c32fcf807e43a6",
+    "name": "Charlotte",
+    "created_at": 1784159922.1038704,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Gates of imagination presents Jane Eyre, an autobiography"
+  },
+  {
+    "id": "318f85724cfd46c2",
+    "name": "Janet",
+    "created_at": 1784159992.4532144,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Dusk was falling as the boy arrived with his herd at an abandoned church."
+  },
+  {
+    "id": "2e954bf0cf5d461c",
+    "name": "Charles",
+    "created_at": 1784160022.1823215,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Those who strive to obtain the good graces of a prince are accustomed to come before him with such things as they hold most precious"
+  },
+  {
+    "id": "92cafd08712e4253",
+    "name": "Edward",
+    "created_at": 1784160075.701909,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "3rd of May, Bistritz, left Munich, 8.35pm on 1st of May, arriving at Vienna early next morning."
+  },
+  {
+    "id": "8acd99fbec6645cd",
+    "name": "Mary",
+    "created_at": 1784160226.4436672,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Gates of Imagination Presents Little Women by Luisa May Alcott Red by Olivia Lane"
+  },
+  {
+    "id": "4780f3ee8b4a4b2d",
+    "name": "Nigel",
+    "created_at": 1784160286.1268945,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Chapter 1, Laying Plans Suitsu said"
+  },
+  {
+    "id": "dcf43b89e7b440f3",
+    "name": "Oliver",
+    "created_at": 1784160365.856038,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Chapter 1 One confidential evening, not three months ago."
+  },
+  {
+    "id": "9e6572b0f11d4c83",
+    "name": "Roman",
+    "created_at": 1784160417.3893583,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "the old man and the sea, written by Ernest Hemingway. He was an old man who fished alone in a skiff in the Gulf Stream."
+  },
+  {
+    "id": "1d801df7634c432f",
+    "name": "Margaret",
+    "created_at": 1784162391.0363817,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Tonight, I'll be reading Lewis Carroll's classic novel, Alice in Wonderland."
+  },
+  {
+    "id": "065c8738aaa241c5",
+    "name": "Matilda",
+    "created_at": 1784234946.0720491,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "Written by Mildred Cable and Francesca French, originally published in 1934."
+  },
+  {
+    "id": "ecf16522ae724e8e",
+    "name": "Kimberly",
+    "created_at": 1784235159.7079618,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "The Silent Girl, by Kelly Heard, read by Laurent Spuvard for Saga Egman."
+  },
+  {
+    "id": "cc20d6d10c134139",
+    "name": "Karen",
+    "created_at": 1784237904.0322223,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "A particularly beautiful woman is a source of terror. Carl Jung."
+  },
+  {
+    "id": "997b4a83435b4de5",
+    "name": "Arthur",
+    "created_at": 1784238164.6918418,
+    "language": "en",
+    "speed": 1.0,
+    "ref_text": "The Gospel according to Matthew, Chapter 1."
+  },
+  {
+    "id": "6ba39ffe21e44172",
+    "name": "Sebastian",
+    "created_at": 1785673915.7851698,
+    "language": "en",
+    "speed": 1.0,
+    "instruct_text": "",
+    "ref_text": "The night sky is ablaze with stars."
+  }
+]

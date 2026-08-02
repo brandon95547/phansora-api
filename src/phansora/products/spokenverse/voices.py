@@ -12,6 +12,16 @@ per-user JSON manifest live under the runtime data root:
     <runtime_root>/voices/<user_id>/_pending/<token>.sample.wav   (engine-synthesized preview)
     <runtime_root>/voices/<user_id>/voices.json                   (manifest)
 
+The app-wide default voices use the identical layout but are *shipped content*, not
+user state, so they live in the git-tracked assets tree instead — alongside the
+built-in "default" voice's reference clip that COSYVOICE2_DEFAULT_REF points at:
+
+    <assets_root>/voices/<voice_id>.wav / .sample.wav / voices.json
+
+That keeps them versioned, reviewable and identical on every deployment (dev included),
+rather than existing only as files someone copied onto one box. They are read-only at
+runtime; adding or replacing one is a commit, not a filesystem edit on prod.
+
 On upload the clip is normalized to a pending reference clip; the caller then runs
 it through the engine to synthesize a short sample the user previews. On approval
 both are saved: the reference clip (what text-to-speech later clones from) and the
@@ -28,7 +38,7 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
-from phansora.shared.paths import runtime_dir
+from phansora.shared.paths import assets_dir, runtime_dir
 
 # CosyVoice2 works best with a 3-10 second reference clip (longer errors out). We keep
 # the first 9s (safely inside the range) — this clip is what it clones from, and
@@ -67,8 +77,9 @@ SETTING_KEYS = ("language", "speed", "instruct_text")
 
 # Reserved store of app-wide DEFAULT voices, shown to every user in addition to their
 # own saved voices. A regular user_id can never resolve to this id (the server's
-# _safe_user_id strips leading/trailing "._-"), so the defaults are effectively
-# read-only through the per-user API and are managed out-of-band (admin/filesystem).
+# _safe_user_id strips leading/trailing "._-"), so the defaults are read-only through
+# the per-user API. _user_dir() maps this id to the git-tracked assets tree; to add or
+# replace a default voice, commit the clip + manifest entry there.
 DEFAULTS_ID = "_defaults"
 
 
@@ -98,6 +109,13 @@ def _safe_token(token: str) -> str:
 
 
 def _user_dir(user_id: str) -> Path:
+    # The app-wide defaults are shipped content, not user state, so they live in the
+    # git-tracked assets tree rather than the mutable runtime root. Resolving that here
+    # — the one place every clip/manifest path is derived from — means the rest of this
+    # module stays unaware of the split. DEFAULTS_ID is unreachable as a real user id
+    # (the server's _safe_user_id strips leading "._-"), so this can't shadow anyone.
+    if str(user_id) == DEFAULTS_ID:
+        return assets_dir("voices")
     d = runtime_dir("voices", _safe_id(user_id))
     d.mkdir(parents=True, exist_ok=True)
     return d

@@ -242,7 +242,8 @@ both.
 | Var | Dev (Mac / local) | Prod (Linux GPU) |
 |---|---|---|
 | `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | your real site origin(s) |
-| `PHANSORA_DATA_DIR` | *unset* → uses cwd | `/var/lib/phansora` (voices/audio/db live here) |
+| `PHANSORA_DATA_DIR` | *unset* → uses cwd | `/var/lib/phansora` (user voices/audio/db live here) |
+| `PHANSORA_ASSETS_DIR` | *unset* → `<repo>/assets` | rarely set; shipped read-only content (the default voices) |
 | `COSYVOICE2_REPO` | `~/CosyVoice` | `/var/www/CosyVoice` |
 | `COSYVOICE2_FP16` | `0` (CPU) | `1` (fp16 on GPU — faster, lower VRAM) |
 | `COSYVOICE2_USE_VLLM` | `0` (CUDA-only) | `1` (the LLM speedup) |
