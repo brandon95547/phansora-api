@@ -13,6 +13,7 @@ pass the raw voice id (not a file path).
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 from pathlib import Path
@@ -70,7 +71,9 @@ async def render_script_to_audio(
     if not out_path.is_file() or out_path.stat().st_size == 0:
         raise RuntimeError("TTS endpoint returned no audio.")
 
-    return _probe_duration_seconds(out_path)
+    # to_thread: ffprobe is a blocking subprocess call and this coroutine runs on the
+    # API's single-worker event loop.
+    return await asyncio.to_thread(_probe_duration_seconds, out_path)
 
 
 def _probe_duration_seconds(path: Path) -> int:

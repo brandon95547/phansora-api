@@ -610,7 +610,10 @@ async def voice_preview(
     tmp_path = TMP_UPLOADS_DIR / f"voice_{job_id}{ext}"
     await _save_upload(file, tmp_path)
     try:
-        result = voice_store.create_pending(safe_user, tmp_path)
+        # to_thread: create_pending shells out to ffmpeg/ffprobe several times (normalize,
+        # silencedetect, trim) with timeouts up to 180s. Inline, that pinned the single
+        # uvicorn worker for the whole upload — nothing else got served meanwhile.
+        result = await asyncio.to_thread(voice_store.create_pending, safe_user, tmp_path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not process audio: {e}") from e
     finally:
@@ -672,7 +675,9 @@ async def voice_preview(
     tmp_norm = sample_out.with_name(sample_out.name + ".tmp.wav")
     try:
         from phansora.shared.utils.ffmpeg import loudnorm_audio
-        loudnorm_audio(sample_out, tmp_norm)
+        # to_thread: blocking subprocess.run() on a single-worker uvicorn — see the note
+        # in txt_to_voice/pipeline.py. Short here (one sample), but it stalls the loop too.
+        await asyncio.to_thread(loudnorm_audio, sample_out, tmp_norm)
         tmp_norm.replace(sample_out)
     except Exception:
         print("[create-voice] loudnorm skipped for sample", flush=True)

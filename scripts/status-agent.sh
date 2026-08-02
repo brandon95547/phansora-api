@@ -31,14 +31,21 @@ set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Config — override any of these via the environment (e.g. in the cron line).
-# ⚠ VERIFY the three *_SERVICE names below match your server's actual systemd
-#   units before enabling. `systemctl list-units --type=service | grep -Ei
+# ⚠ VERIFY the *_SERVICE names below match your server's actual systemd units
+#   before enabling. `systemctl list-units --type=service | grep -Ei
 #   'phansora|nginx|postgre'` will show them.
 # ─────────────────────────────────────────────────────────────────────────────
 API_SERVICE="${API_SERVICE:-phansora-api.service}"     # FastAPI/uvicorn unit
 FRONTEND_SERVICE="${FRONTEND_SERVICE:-phansora.service}" # Node/Express unit — VERIFY
 NGINX_SERVICE="${NGINX_SERVICE:-nginx.service}"
-PG_SERVICE="${PG_SERVICE:-postgresql.service}"           # e.g. postgresql-16.service on RHEL — VERIFY
+
+# Postgres runs in Docker (compose service "postgres" -> container "phansora_postgres"),
+# not under systemd, and the host has no libpq client tools — so both the unit check and
+# a host-side pg_isready are wrong here. When PG_CONTAINER is set we check the container
+# and run pg_isready *inside* it (the postgres image always ships it). Set PG_CONTAINER=""
+# on a host where Postgres really is a systemd unit, and PG_SERVICE takes over.
+PG_CONTAINER="${PG_CONTAINER:-phansora_postgres}"        # docker container name, or "" for systemd
+PG_SERVICE="${PG_SERVICE:-postgresql.service}"           # only used when PG_CONTAINER is empty
 
 API_URL="${API_URL:-http://127.0.0.1:8000}"              # phansora-api base (uvicorn)
 FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:3000}"    # Express base
@@ -228,7 +235,37 @@ check_load() {
   fi
 }
 
+# Liveness of the Postgres *process*: a Docker container here, a systemd unit elsewhere.
+check_postgres_service() {
+  if [ -n "$PG_CONTAINER" ]; then
+    have docker || { add_issue "pg-docker-missing" "PG_CONTAINER is set (${PG_CONTAINER}) but docker is not on PATH — postgres cannot be checked."; return; }
+    local state
+    state="$(docker inspect -f '{{.State.Status}}' "$PG_CONTAINER" 2>/dev/null || true)"
+    if [ -z "$state" ]; then
+      add_issue "pg-container-missing" "postgres container '${PG_CONTAINER}' not found — check the PG_CONTAINER config var."
+    elif [ "$state" != "running" ]; then
+      add_issue "pg-container-down" "postgres container '${PG_CONTAINER}' is ${state} — DB-backed features will error."
+    else
+      note "ok: postgres container ${PG_CONTAINER} running"
+    fi
+    return
+  fi
+  check_service "$PG_SERVICE" "postgresql"
+}
+
 check_postgres() {
+  if [ -n "$PG_CONTAINER" ]; then
+    have docker || return   # already reported by check_postgres_service
+    # Skip when the container isn't up — check_postgres_service has said so already, and
+    # a second "unreachable" line for the same root cause is just noise.
+    [ "$(docker inspect -f '{{.State.Status}}' "$PG_CONTAINER" 2>/dev/null || true)" = "running" ] || return
+    if docker exec "$PG_CONTAINER" pg_isready -q >/dev/null 2>&1; then
+      note "ok: postgres accepting connections"
+    else
+      add_issue "postgres-unreachable" "PostgreSQL is not accepting connections (pg_isready inside ${PG_CONTAINER} failed) — DB-backed features will error."
+    fi
+    return
+  fi
   have pg_isready || { note "pg_isready not installed; relying on service check"; return; }
   if ! pg_isready -q >/dev/null 2>&1; then
     add_issue "postgres-unreachable" "PostgreSQL is not accepting connections (pg_isready failed) — DB-backed features will error."
@@ -291,7 +328,7 @@ fi
 check_service "$NGINX_SERVICE"    "nginx"
 check_service "$API_SERVICE"      "phansora-api"
 check_service "$FRONTEND_SERVICE" "frontend"
-check_service "$PG_SERVICE"       "postgresql"
+check_postgres_service
 check_nginx_config
 check_api_http
 check_frontend_http
@@ -353,7 +390,11 @@ exit 1
 #   sudo install -d -m 0755 /var/lib/status-agent
 #
 #   # then `sudo crontab -e` and add (every 10 min; LOG_WINDOW default 11m overlaps safely):
-#   */10 * * * * FRONTEND_SERVICE=phansora.service PG_SERVICE=postgresql.service /usr/local/bin/status-agent
+#   */10 * * * * FRONTEND_SERVICE=phansora.service /usr/local/bin/status-agent
+#
+#   Do NOT pass PG_SERVICE on this host: Postgres is the phansora_postgres container, and
+#   the defaults already point at it. An old cron line carrying PG_SERVICE=postgresql.service
+#   is harmless (PG_CONTAINER wins) but misleading — drop it when you next edit the crontab.
 #
 # Validate the pipe once before trusting it:
 #   sudo /usr/local/bin/status-agent --test        # sends a test email via the API

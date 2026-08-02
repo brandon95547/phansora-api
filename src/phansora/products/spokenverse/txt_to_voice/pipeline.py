@@ -149,24 +149,28 @@ class BatchConverter:
         await asyncio.gather(*tasks)
         # --- end NEW ---
 
+        # Every ffmpeg pass below runs via asyncio.to_thread. They are blocking
+        # subprocess.run() calls, and uvicorn serves this app on a single worker — calling
+        # them inline froze the event loop for the length of the render's tail (10-25s on
+        # a full audiobook), so /health and every user request stalled until ffmpeg exited.
         merged_audio = chunk_files[0]
         if len(chunk_files) > 1:
             merged_audio = tmp_dir / "merged.wav"
             LOG.info("  Concatenating chunks with ffmpeg -> %s", final_audio.name)
-            concat_audio_files_ffmpeg(chunk_files, merged_audio)
+            await asyncio.to_thread(concat_audio_files_ffmpeg, chunk_files, merged_audio)
 
         # Final step: loudness-normalize to a consistent professional level (EBU R128,
         # -16 LUFS) while encoding to the requested format. Fall back to the plain
         # replace/transcode path if loudnorm ever fails, so audio still renders.
         final_audio.parent.mkdir(parents=True, exist_ok=True)
         try:
-            loudnorm_audio(merged_audio, final_audio)
+            await asyncio.to_thread(loudnorm_audio, merged_audio, final_audio)
         except Exception:
             LOG.warning("loudnorm failed; writing un-normalized audio", exc_info=True)
             if self.cfg.output_format == "wav":
                 merged_audio.replace(final_audio)
             else:
-                transcode_audio_ffmpeg(merged_audio, final_audio)
+                await asyncio.to_thread(transcode_audio_ffmpeg, merged_audio, final_audio)
 
         # Cleanup temp chunks
         try:
