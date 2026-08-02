@@ -16,20 +16,42 @@ validator is given the SAME list, because a lesson that correctly skips a repeat
 would otherwise be marked down for omitting it and the retry loop would put the
 repetition straight back in.
 
-The rule repeated in every prompt separates two acts that are easy to conflate:
+Every prompt separates TWO INDEPENDENT AXES. Conflating them is what produced the
+worst bug this module has had:
 
-  RESTATING the author's material in the lecturer's own words is the job. The
-  output should never be the source read aloud.
-
-  ADDING anything of the lecturer's own — a fact, an example, a motive, a moral,
-  a "what this shows" — is never allowed. Where the source is silent, so is the
+  CONTENT is bounded by the source. Every fact, name, figure, example and
+  conclusion comes from the excerpts. Where the source is silent, so is the
   lesson.
 
-Both failure modes have been seen in production, and they pull in opposite
-directions: prompts tight enough to stop invention produced near-verbatim
-read-back, while prompts loose enough to teach produced a four-lesson course out
-of a one-page letter. The prompts below aim at the middle, and the length band in
-``pipeline.py`` (DENSITY_MIN/MAX) is the dial that holds it there.
+  EXPRESSION is entirely the instructor's. Every sentence is built fresh from an
+  understanding of the material, in the instructor's own vocabulary and
+  structure. None of the original's wording survives.
+
+An earlier version stated these as one rule — "restating is the job, adding is
+never allowed" — and surrounded it with instructions that all pulled toward
+fidelity: keep quoted words exact, define a term the way the source defines it,
+quote a striking phrase. Under that prompt the safest way to satisfy every
+constraint was to stay close to the original, and a measured course came back
+**46% verbatim** (5,580 of 12,155 words; 72 unbroken twenty-word runs; a single
+143-word transcription). The model was not disobeying — copying is maximally
+faithful, adds nothing, omits nothing, and lands inside the length band. It was
+the optimal strategy the prompt permitted.
+
+Hence the framing below: the excerpts are NOTES to understand, not text to edit,
+and the lesson is written from memory afterwards. Fidelity of MEANING is
+demanded; fidelity of WORDING is named as the failure mode it is. The rule is
+made countable (~8 consecutive words) because "in your own words" is a quality a
+model cannot check itself against, while a word run is.
+
+The opposite failure is still real — prompts loose enough to teach once produced
+a four-lesson course out of a one-page letter — and the length band in
+``pipeline.py`` (DENSITY_MIN/MAX) remains the dial that holds it, though the band
+is now explicitly not a target to be reached by borrowing.
+
+NOTE: prompt wording alone cannot enforce this. The validator is a language model
+asked to compare two texts, and a lifted passage reads to it as perfectly
+grounded — which is how 46% passed. A deterministic n-gram check belongs in the
+regeneration loop; these prompts reduce the rate, they do not guarantee it.
 
 Note on naming: the pipeline phase and the DB column are still called
 ``curriculum`` (changing them would break in-flight rows), but the job that
@@ -42,9 +64,33 @@ import json
 
 GROUNDING = (
     "You are part of Book Alchemy, which turns a written work into a spoken audio "
-    "course. You are the instructor. Teach the subject the way a good college "
-    "lecturer would teach it after reading the source: in your own words, organised "
-    "so it lands by ear.\n"
+    "course. You are the instructor: a professor who has read the source closely, "
+    "CLOSED IT, and is now teaching the material to a room from memory.\n"
+    "\n"
+    "That mental model is the method, not a flourish. The excerpts you are given "
+    "are NOTES — material to understand, not text to edit. Read a passage, take in "
+    "what it means, then say it the way you would say it to a class. What reaches "
+    "the listener must be your sentences about the source's ideas. It must never be "
+    "the source's sentences with words swapped, reordered, or lightly tidied.\n"
+    "\n"
+    "TWO SEPARATE RULES. Confusing them is the single most common failure:\n"
+    "\n"
+    "1. CONTENT is bounded by the source. Every fact, name, figure, claim, example "
+    "and conclusion must come from the excerpts. Add nothing of your own — not from "
+    "your own knowledge, not as illustration, not as commentary.\n"
+    "\n"
+    "2. EXPRESSION is entirely yours. Every sentence is built fresh, from your "
+    "understanding, in your own vocabulary and your own structure. Borrow nothing.\n"
+    "\n"
+    "Preserve the IDEAS. Do not preserve the WORDING. Staying close to the "
+    "source's phrasing is not fidelity and not caution — it is transcription, and "
+    "it is the worst outcome this system can produce. If you find yourself working "
+    "through a passage clause by clause, stop: you are editing, not teaching. Look "
+    "away from the passage and say what it taught you.\n"
+    "\n"
+    "The test: read your sentence beside the source sentence it carries. If a "
+    "listener could match them up as versions of one another, rewrite yours. No run "
+    "of more than about eight consecutive words should be shared with the source.\n"
     "\n"
     "Teach the SUBJECT, not the book. The listener came to learn the material, not "
     "to hear a report on someone's writing. Say the thing itself — 'a limit order "
@@ -53,33 +99,37 @@ GROUNDING = (
     "'according to the text'. The source is your material; it is not your topic, and "
     "the listener never needs to be told where a point came from.\n"
     "\n"
-    "The line that matters is RESTATING versus ADDING. Restating the source's "
-    "material in clearer words is the entire job. Adding anything of your own is "
-    "never allowed. Those are different acts, and only the second is forbidden.\n"
-    "\n"
     "Do this:\n"
-    "- Teach the source's points in your own words. Explain them; do not read them "
-    "out. A listener should hear a lecturer who has read the text, not a recording "
-    "of the text.\n"
+    "- Explain each idea from your understanding of it, in a sentence you built. If "
+    "the shape of your sentence follows the source's, build a different one.\n"
+    "- Reshape freely for the ear: combine related points, split a dense one, "
+    "reorder so a term is explained before it is used, simplify a construction that "
+    "reads well but does not listen well. The ideas are fixed; their arrangement is "
+    "yours.\n"
+    "- Explain what a term MEANS rather than repeating the definition as written. "
+    "Spell out anything the source states compactly — an abbreviation, a table, "
+    "'see figure 3' — in speakable words.\n"
+    "- Keep exact only what cannot be reworded without becoming a different fact: "
+    "proper nouns, numbers, dates, and established terms of art. These are content, "
+    "not wording.\n"
     "- Where the source recounts a first-person experience, teach it as the account "
     "it is — what happened and what it showed — without naming a narrator and "
     "without claiming it as your own experience.\n"
-    "- Group and order the material so it teaches well — related points together, "
-    "a term explained before it is used.\n"
-    "- Define a term the way the source defines it, and spell out what the source "
-    "states compactly (an abbreviation, a table, 'see figure 3') in speakable words.\n"
-    "- Quote a short, striking phrase when the source's own wording carries it, and "
-    "keep names, numbers, dates and quoted words exact.\n"
     "\n"
     "Never do this:\n"
+    "- Reproduce or closely track a source sentence. This includes paraphrase that "
+    "keeps the original structure and swaps synonyms — that is copying with extra "
+    "steps, and it fails just as hard.\n"
     "- State any fact, name, figure, event, example or analogy that is not in the "
     "source. Not from your own knowledge, not as illustration.\n"
     "- Say WHY someone did or wrote something, what they intended, felt, believed "
     "or hoped for, unless the source says so.\n"
     "- Say what the material means, why it matters, what it shows, or what should "
     "be learned from it, unless the source says so.\n"
-    "- Reproduce the source's sentences as your narration. Copying is not teaching, "
-    "and it is the failure mode to avoid most.\n"
+    "- Quote the source, except for a phrase whose exact words genuinely carry "
+    "weight — a legal formulation, a historically fixed line. Such a quotation is "
+    "brief, deliberate, and rare. Striking prose is not a reason to quote; teach "
+    "what it says instead.\n"
     "- Resolve or remark on a gap. If the source is unclear or incomplete on a "
     "point, teach what it does say and move on."
 )
@@ -193,8 +243,14 @@ SCRIPT_SYSTEM = (
     GROUNDING
     + "\n\nTask: teach the source segments below as one spoken lesson.\n"
     "\n"
-    "- Cover every point the segments contain, in your own words. Completeness is "
-    "the requirement; verbatim wording is not.\n"
+    "Work in two passes. FIRST read the segments through and understand what they "
+    "teach. THEN write the lesson from that understanding, consulting the segments "
+    "only to check a fact, a name or a number. Do not write with a passage open in "
+    "front of you and reword it as you go — that produces transcription every "
+    "time, and transcription is the one result this lesson must not be.\n"
+    "\n"
+    "- Cover every idea the segments contain. Completeness of MEANING is the "
+    "requirement; nothing about the original wording needs to survive.\n"
     "- Follow the source's order unless grouping related points teaches better. "
     "Say each point once — a lesson does not circle back.\n"
     "- Teach in your own voice, first person. 'Let's start with…', 'notice that…', "
@@ -281,12 +337,15 @@ def script_user(
         f"Points to cover, in source order — every one must be taught:\n{outline_txt}\n"
         f"{covered}{fix}\n"
         f"Length: the source below runs about {source_words} words; your lesson "
-        f"should land between {min_words} and {max_words} words. Teaching in your own "
-        f"words naturally runs a little longer than the source — that headroom is for "
-        f"explaining, not for padding. Under the floor means you dropped material or "
-        f"merely summarised it — unless you passed over ground an earlier lesson "
+        f"should land between {min_words} and {max_words} words. Explaining in your "
+        f"own words naturally runs a little longer than the source — that headroom is "
+        f"for explaining, not for padding. Under the floor means you dropped material "
+        f"or merely summarised it — unless you passed over ground an earlier lesson "
         f"already covered, which is correct and needs no compensating. Over the "
-        f"ceiling means you added something that is not in the source.\n\n"
+        f"ceiling means you added something that is not in the source.\n"
+        f"This is a guide, not a target to hit. Reaching it by carrying the source's "
+        f"own sentences is a FAILED lesson, not a passing one — a short lesson written "
+        f"entirely in your own words beats a long one that leans on the original.\n\n"
         f"Source segments, in order:\n{excerpts}"
     )
 
@@ -295,7 +354,17 @@ def script_user(
 VALIDATION_SYSTEM = (
     GROUNDING
     + "\n\nTask: check a lesson script against the source segments it was built "
-    "from. It must teach everything in them, add nothing, and be in its own words.\n"
+    "from. It must teach every idea in them, add nothing, and share none of the "
+    "original's wording.\n"
+    "\n"
+    "Check the wording FIRST, and check it mechanically. Take each sentence of the "
+    "script, find the source sentence carrying the same idea, and set them side by "
+    "side. Count the longest run of consecutive words they share. More than about "
+    "eight is \"copied\". A sentence that keeps the source's structure and swaps in "
+    "synonyms is also \"copied\", however different the vocabulary looks — judge the "
+    "shape, not just the words. Do not skim for meaning here: a lifted passage reads "
+    "as perfectly supported, which is exactly why this check cannot be done by "
+    "impression.\n"
     "\n"
     "Flag each of:\n"
     '- "added": a fact, name, figure, event, example or analogy in the script that '
@@ -303,9 +372,12 @@ VALIDATION_SYSTEM = (
     '- "inferred": a motive, intent, feeling, cause, significance or lesson the '
     "source does not state — including 'this shows', 'what matters here'.\n"
     '- "omitted": something the segments say that the lesson never teaches.\n'
-    '- "copied": a run of source wording reproduced as narration rather than '
-    "taught. A short quoted phrase is fine; a reproduced sentence or passage is "
-    "not, and neither is following the source clause by clause.\n"
+    '- "copied": more than about eight consecutive words shared with the source, '
+    "or a sentence that follows a source sentence's structure with substitutions. "
+    "Quote the run and give its length. The only exception is a brief, deliberate "
+    "quotation of words that genuinely must be exact — a legal formulation, a "
+    "historically fixed line. Proper nouns, numbers, dates and terms of art are "
+    "content, not wording, and are never \"copied\".\n"
     '- "filler": words carrying no source content — an intro announcing what will '
     "be covered, a closing recap or takeaways, or the same point taught twice.\n"
     '- "attributed": the script reports on the source or its writer instead of '
@@ -326,8 +398,10 @@ VALIDATION_SYSTEM = (
     "\n"
     'Return JSON: {"supported": bool, "flagged": [{"type": '
     '"added"|"inferred"|"omitted"|"copied"|"filler"|"attributed", "claim": str, '
-    '"reason": str}], "notes": str}. Set `supported` to false if any flagged item '
-    "is material."
+    '"reason": str}], "notes": str}.\n'
+    'Set `supported` to false if ANY "copied" item is flagged — there is no '
+    "immaterial amount of copying, and this judgement is not yours to weigh. For "
+    "every other type, set it to false when a flagged item is material."
 )
 
 
