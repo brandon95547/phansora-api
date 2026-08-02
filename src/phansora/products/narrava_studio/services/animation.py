@@ -131,6 +131,22 @@ _STYLES = {
         "Playful: bouncy squash-and-stretch easing, rounded shapes, bright cheerful "
         "palette, small delightful details."
     ),
+    # Written as a visual LANGUAGE, not a set of objects. Every other entry here
+    # describes treatment — how things are drawn and move — and a style phrased as
+    # subject matter ("compasses, all-seeing eyes") gets read as content to insert,
+    # so an animation about quarterly revenue comes back wearing regalia. Palette,
+    # line quality and construction rule keep it steering the drawing instead.
+    #
+    # It also suits this pipeline better than most: the renderer is canvas, so
+    # painterly styles disappoint, while engraved geometry is arcs, rules and
+    # rotational symmetry — exactly what the 2D context is good at.
+    "masonic": (
+        "Masonic: engraved geometric symbolism. Construction-line geometry — compass "
+        "arcs, set-square angles, radiating light, twin pillars, checkerboard grids, "
+        "allegorical emblems — drawn as fine gold or sepia line-work on deep indigo or "
+        "parchment, as if etched. Strong symmetry, visible construction geometry, "
+        "restrained ornament. Precision over illustration."
+    ),
 }
 
 
