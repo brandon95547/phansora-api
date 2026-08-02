@@ -108,40 +108,89 @@ def required_key_name() -> str:
     return "ANTHROPIC_API_KEY" if _provider() == "anthropic" else "DEEPSEEK_API_KEY"
 
 
-# How each Animation Style choice is described to the model. Unknown/missing styles
-# fall back to 'minimal' rather than erroring over a creative preference.
+# How each Animation Style choice is described to the model. The keys are the values the
+# Studio's style <select> submits (components/MediaPanel.js, STYLE_OPTS) — they must match
+# exactly, because an unknown style is NOT an error here: it falls back to the default
+# rather than failing a render over a creative preference, so a key that only exists on one
+# side looks like the style "not working" rather than not existing.
+#
+# Every entry is TREATMENT — how a thing is drawn and how it moves — because the subject is
+# already carried by the user's prompt. Written as subject matter ("compasses, pillars") a
+# style reads as content to insert, and an animation about quarterly revenue comes back
+# wearing regalia; palette, line quality, construction rule and motion signature keep each
+# one steering the drawing instead.
+_STYLE_DEFAULT = "flat-vector"
 _STYLES = {
-    "minimal": (
-        "Minimal: clean flat shapes, a restrained palette of 2-4 colors, generous "
-        "empty space, precise easing. Nothing decorative that does not serve the idea."
+    # ── Clean & graphic ──────────────────────────────────────────────────────────
+    "flat-vector": (
+        "Flat vector: solid flat fills with no gradients, shadows or texture of any kind. "
+        "Clean geometric shapes with crisp edges, a restrained palette of 3-5 colors plus "
+        "one accent, generous empty space. Shapes read as cut paper laid flat. Precise "
+        "easing, nothing decorative that does not serve the idea."
     ),
-    "educational": (
-        "Educational: clear labels, step-by-step reveals, diagrammatic clarity. "
-        "Friendly readable palette, arrows and callouts where they aid understanding."
+    "minimal-line": (
+        "Minimal line: a single consistent stroke weight, unfilled outlines, mostly empty "
+        "canvas. One or two ink colors on a plain light ground. Forms described by contour "
+        "alone — no fills, no shading. Movement is drawing and undrawing: strokes trace on "
+        "along their own path, and out again. Restraint is the point."
     ),
     "motion-graphics": (
         "Motion graphics: bold kinetic shapes, snappy overshoot easing, dynamic "
         "composition, high contrast. Confident, energetic movement."
     ),
+    "infographic": (
+        "Infographic: information design. Labelled elements, leader lines and callouts, a "
+        "legend where it earns its place, step-by-step reveals that build one idea at a "
+        "time. Clear typographic hierarchy, generous margins, a readable palette where "
+        "color CARRIES meaning rather than decorating. Numbers and units where they help."
+    ),
+    "kinetic-typography": (
+        "Kinetic typography: the words ARE the animation. Text is the primary subject — "
+        "set large, tracked tight, weighted for contrast — entering, scaling, masking and "
+        "reflowing in time with its own emphasis. Strong grid, two type sizes at most per "
+        "moment, a flat single-color ground. Shapes appear only to punctuate the text."
+    ),
+    # ── Illustrative ─────────────────────────────────────────────────────────────
+    "hand-drawn": (
+        "Hand-drawn: organic ink strokes with visible wobble and varying pressure, ends "
+        "that overshoot slightly, shapes that do not quite close. Sketchbook palette — ink "
+        "plus one or two washes — on off-white paper. Small deliberate imperfections and "
+        "loose hatching for tone. Motion has a light hand-animated jitter."
+    ),
     "whiteboard": (
         "Whiteboard: a hand-drawn feel — sketch-like strokes progressively drawn onto "
         "a white or off-white board, imperfect lines, handwriting-adjacent labels."
     ),
-    "playful": (
-        "Playful: bouncy squash-and-stretch easing, rounded shapes, bright cheerful "
-        "palette, small delightful details."
+    "paper-cutout": (
+        "Paper cutout: layered shapes with slightly rough torn or scissored edges, each "
+        "sitting on its own plane with a soft offset drop shadow. Matte construction-paper "
+        "palette. Depth comes from stacking and shadow, never from gradients. Pieces slide, "
+        "hinge and swap in and out as if moved by hand."
     ),
-    # Everything below is TREATMENT — how a thing is drawn and moves — because the
-    # subject is already carried by the user's prompt. An earlier draft had seventeen
-    # entries; most collapsed into each other once that split was clear (alchemical,
-    # celestial and art-deco are "engraved" with different iconography, and iconography
-    # is the prompt's job). Fewer, more distinct entries also means fewer untuned
-    # fragments to notice going wrong.
+    "comic-book": (
+        "Comic book: heavy black ink outlines of varying weight, flat saturated fills, "
+        "halftone dot shading, speed lines and impact bursts. Bold panel geometry with "
+        "gutters, and hand-lettered caption boxes. Motion is punchy and posed — hold, snap "
+        "to the next beat, hold — rather than smoothly interpolated."
+    ),
+    "engraved": (
+        "Engraved: fine metallic line-work — gold, brass or sepia — on deep indigo, "
+        "black or parchment, drawn as if etched into a plate. Visible construction "
+        "geometry, compass arcs and ruled lines, strong symmetry, restrained ornament. "
+        "Hatching and line density for tone rather than flat fills."
+    ),
+    # ── Technical ────────────────────────────────────────────────────────────────
     "blueprint": (
         "Blueprint: white and pale cyan line-work on deep blueprint blue over a fine "
         "grid. Dimension arrows, leader lines, section marks and technical annotation in "
         "light monospace. Orthographic construction, consistent stroke weights, every "
         "element drawn as if measured."
+    ),
+    "schematic": (
+        "Schematic: a diagram of parts and connections. Nodes as simple boxed or circular "
+        "symbols, joined by orthogonal connectors that route in right angles with junction "
+        "dots and arrowheads. Monospace labels, a legend-like restraint, one accent color "
+        "for the active path. Signal travels ALONG the connectors as the animation's motion."
     ),
     "isometric": (
         "Isometric: 2.5D forms on fixed 30-degree axes with no perspective convergence. "
@@ -149,35 +198,51 @@ _STYLES = {
         "single accent. Objects assembled from stacked volumes, movement travelling "
         "along the isometric axes."
     ),
-    "neon": (
-        "Neon: glowing strokes with soft bloom against near-black, horizon grids "
+    "wireframe": (
+        "Wireframe: geometry described by edges only — unfilled polygon meshes with visible "
+        "vertices, hidden lines drawn faintly rather than removed. Thin uniform strokes, "
+        "one or two colors on a dark or paper ground, subdivision lines showing how forms "
+        "are built. Slow rotation and deformation reveal the structure."
+    ),
+    "data-visualization": (
+        "Data visualization: plotted marks in a real coordinate space — axes with ticks and "
+        "units, gridlines, a baseline. Bars, lines, areas, points or arcs that animate by "
+        "GROWING along their encoding (bars from the baseline, lines drawing left to right) "
+        "rather than sliding in. Sequential or categorical palette, direct labels over a "
+        "legend, honest scales."
+    ),
+    # ── Digital & stylized ───────────────────────────────────────────────────────
+    "neon-glow": (
+        "Neon glow: glowing strokes with soft bloom against near-black, horizon grids "
         "receding to a vanishing point, magenta-to-cyan gradients. Light sources rather "
         "than filled shapes, additive glow where strokes overlap, slow confident drift "
         "with the occasional flicker."
     ),
-    # The general ceremonial treatment. Prompt it with the iconography you want —
-    # "a constellation chart", "a rose window", "stepped deco fans" — and it covers
-    # the ground four separate styles used to.
-    "engraved": (
-        "Engraved: fine metallic line-work — gold, brass or sepia — on deep indigo, "
-        "black or parchment, drawn as if etched into a plate. Visible construction "
-        "geometry, compass arcs and ruled lines, strong symmetry, restrained ornament. "
-        "Hatching and line density for tone rather than flat fills."
+    "pixel-art": (
+        "Pixel art: everything drawn on a coarse pixel grid — pick a cell size (6-12 canvas "
+        "pixels) and snap every shape, edge and position to it. Disable image smoothing, "
+        "no anti-aliased curves, no sub-pixel motion: things move a whole cell at a time. "
+        "Tight limited palette (8-16 colors), dithering instead of gradients, chunky "
+        "readable forms. Animation steps at a low frame rate rather than easing smoothly."
     ),
-    # Kept as its own entry rather than folded into 'engraved': it is the specific
-    # vocabulary this tool gets asked for by name, and a preset is also documentation
-    # that the capability exists.
-    #
-    # Phrased as a visual LANGUAGE, not a set of objects. A style written as subject
-    # matter ("compasses, all-seeing eyes") reads as content to insert, so an animation
-    # about quarterly revenue comes back wearing regalia. Palette, line quality and
-    # construction rule keep it steering the drawing instead.
-    "masonic": (
-        "Masonic: engraved geometric symbolism. Construction-line geometry — compass "
-        "arcs, set-square angles, radiating light, twin pillars, checkerboard grids, "
-        "allegorical emblems — drawn as fine gold or sepia line-work on deep indigo or "
-        "parchment, as if etched. Strong symmetry, visible construction geometry, "
-        "restrained ornament. Precision over illustration."
+    "retro-terminal": (
+        "Retro terminal: monospace phosphor text on black — green or amber — with a faint "
+        "scanline overlay and soft glow bleeding off the glyphs. Content types on character "
+        "by character with a blinking block cursor; box-drawing rules, prompts and ASCII "
+        "framing. Occasional flicker or roll. Everything aligns to a character grid."
+    ),
+    "low-poly": (
+        "Low poly: forms faceted into visible triangles, each facet filled flat with its "
+        "own tone so shading steps rather than blends. Crystalline silhouettes, a cool or "
+        "sunset gradient palette sampled per facet, occasional visible edges. Motion is "
+        "slow rotation and facet-by-facet assembly."
+    ),
+    "particle": (
+        "Particle: form emerges from many small points — hundreds or thousands — rather "
+        "than from drawn shapes. Points flow along fields, gather into a silhouette, hold, "
+        "then disperse. Additive blending, fading trails, a dark ground with one or two "
+        "luminous hues. Seed the point set deterministically at load time so the motion is "
+        "reproducible."
     ),
 }
 
@@ -231,8 +296,8 @@ def _build_user_prompt(
     style: str | None,
     feedback: str | None,
 ) -> str:
-    style_key = (style or "minimal").strip().lower()
-    style_desc = _STYLES.get(style_key, _STYLES["minimal"])
+    style_key = (style or _STYLE_DEFAULT).strip().lower()
+    style_desc = _STYLES.get(style_key, _STYLES[_STYLE_DEFAULT])
     background_rule = (
         "Background: TRANSPARENT. Do not paint any background fill - after clearRect the "
         "canvas stays transparent, so the animation can be composited over other footage. "
