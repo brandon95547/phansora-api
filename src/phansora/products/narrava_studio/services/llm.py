@@ -105,6 +105,21 @@ def _deepseek_text(system: str, user: str, *, max_output_tokens: int, json_mode:
 
 
 # ── Public surface ───────────────────────────────────────────────────────────
+def deepseek_configured() -> bool:
+    """Is DeepSeek reachable, regardless of which provider the switch points at?"""
+    return bool(os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY"))
+
+
+def deepseek_text(system: str, user: str, *, max_output_tokens: int = 2000) -> str:
+    """Always DeepSeek, whatever NARRAVA_LLM_PROVIDER says.
+
+    Writing a script is a creative job and follows the provider switch. Polishing prose
+    someone already wrote is not the same job: it is cheap, high-volume and asked for by
+    name, so it is pinned rather than left to follow a setting that exists for generation.
+    """
+    return _deepseek_text(system, user, max_output_tokens=max_output_tokens, json_mode=False)
+
+
 def generate_text(system: str, user: str, *, max_output_tokens: int = 2000) -> str:
     if _provider() == "deepseek":
         return _deepseek_text(system, user, max_output_tokens=max_output_tokens, json_mode=False)

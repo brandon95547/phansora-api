@@ -361,6 +361,72 @@ def generate_script(
     return segment_script(body, wpm=wpm, source="prompt")
 
 
+# ── Enhance ──────────────────────────────────────────────────────────────────
+# The Write tab's "Enhance Narration". Everything here is written to protect one thing:
+# the piece the user already wrote. The model may reword freely, and may not add to,
+# remove from, or reorder what was said — a "better" narration that argues something
+# slightly different is a worse answer than leaving the text alone.
+_ENHANCE_SYSTEM = """
+You are an editor polishing narration that will be read aloud in a video.
+
+The words are the writer's. Return the SAME narration, written better.
+
+You may:
+- Fix grammar, spelling, punctuation and tense.
+- Reword a sentence when different wording says the same thing more clearly, or reads
+  better aloud.
+- Split a sentence that is hard to follow, or join two that are stronger together.
+- Replace a vague or repeated word with a more precise one.
+
+You must not:
+- Add any fact, name, number, claim, opinion or example that is not already there.
+- Remove anything the writer said, or soften a point they made.
+- Change the order in which the ideas are presented.
+- Change the language, the person (I / we / you), or the tense the piece is written in.
+- Change the register: keep casual writing casual and formal writing formal.
+- Add a title, headings, labels, stage directions or markdown.
+- Add or remove paragraph breaks.
+
+If a passage is already good, leave it exactly as it is. Returning the text unchanged is a
+valid answer.
+
+Output the narration and nothing else: no preamble, no explanation, no quotation marks
+around it, no notes about what you changed.
+""".strip()
+
+# Below this share of the original word count, the reply is not a polish — it is a summary,
+# or an answer the model ran out of room to finish. Either way it is not what was asked for,
+# and handing it back would quietly replace the writer's script with a shorter one.
+_ENHANCE_MIN_RATIO = 0.6
+
+
+def enhance_narration(text: str) -> str:
+    """Narration the user wrote -> the same narration, written better.
+
+    Pinned to DeepSeek rather than following the provider switch (see llm.deepseek_text).
+
+    The output budget is sized from the input instead of fixed. The reply is the whole
+    piece rewritten, so one ceiling for every length would truncate a long script and give
+    back a narration missing its ending — which is exactly the failure the ratio check
+    below refuses to pass on.
+    """
+    src = (text or "").strip()
+    if not src:
+        return ""
+
+    words = _word_count(src)
+    budget = max(600, min(8000, int(words * 2.2) + 300))
+    out = _strip_artifacts(llm.deepseek_text(_ENHANCE_SYSTEM, src, max_output_tokens=budget))
+
+    if not out:
+        raise RuntimeError("The model returned nothing to use.")
+    if _word_count(out) < words * _ENHANCE_MIN_RATIO:
+        raise RuntimeError(
+            "The model shortened the narration instead of polishing it, so it was discarded."
+        )
+    return out
+
+
 def _strip_artifacts(text: str) -> str:
     """Remove markdown/label artifacts an LLM sometimes adds despite instructions."""
     lines = []

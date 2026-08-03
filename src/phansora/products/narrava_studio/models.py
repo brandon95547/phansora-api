@@ -57,6 +57,19 @@ class ScriptGenerateResponse(BaseModel):
     script: Script
 
 
+# ── Enhance (Write tab: polish narration the user typed) ─────────────────────
+# Not a generation. The words are the user's; this returns the same narration written
+# better. The cap is generous because it is applied to a whole script at once, and the
+# request carries nothing else — no style, no duration — because there is nothing to
+# steer: the text already says what it wants to say.
+class ScriptEnhanceRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=20000)
+
+
+class ScriptEnhanceResponse(BaseModel):
+    text: str
+
+
 # ── AI media generation (Media tab "Generate with AI") ───────────────────────
 class AnimationGenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=3, max_length=2000)

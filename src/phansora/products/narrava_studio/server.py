@@ -4,6 +4,7 @@ Mounted by phansora.main under ``/studio``. Endpoints:
 
   GET  /voices           -> preset narration voices
   POST /script/generate  -> prompt      -> narrator script (timed beats)   [LLM]
+  POST /script/enhance   -> narration   -> the same narration, polished    [DeepSeek]
   POST /script/segment   -> pasted text -> timed beats                     [no LLM]
   POST /timeline/build   -> beats       -> preliminary media timeline      [LLM+web]
 
@@ -33,6 +34,8 @@ from .models import (  # noqa: E402
     MediaSearchResponse,
     SceneSuggestRequest,
     SceneSuggestResponse,
+    ScriptEnhanceRequest,
+    ScriptEnhanceResponse,
     ScriptGenerateRequest,
     ScriptGenerateResponse,
     SegmentRequest,
@@ -113,6 +116,31 @@ async def generate_script(req: ScriptGenerateRequest):
         logger.exception("Script generation failed")
         raise HTTPException(status_code=502, detail=f"Script generation failed: {exc}")
     return ScriptGenerateResponse(script=result)
+
+
+@app.post("/script/enhance", response_model=ScriptEnhanceResponse)
+async def enhance_narration(req: ScriptEnhanceRequest):
+    """Narration the user typed -> the same narration, written better.
+
+    Its own key check rather than _ensure_llm: this one is pinned to DeepSeek, so a host
+    running the OpenAI provider would pass the generic check and then fail on the call.
+    """
+    if not llm.deepseek_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="DEEPSEEK_API_KEY is not configured.",
+        )
+    try:
+        # In a thread: the DeepSeek call is blocking httpx, and this process runs a single
+        # uvicorn worker — a blocking call on the event loop stalls every other request.
+        text = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: script.enhance_narration(req.text),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Narration enhance failed")
+        raise HTTPException(status_code=502, detail=f"Enhancing the narration failed: {exc}")
+    return ScriptEnhanceResponse(text=text)
 
 
 @app.post("/media/animation", response_model=AnimationGenerateResponse)
