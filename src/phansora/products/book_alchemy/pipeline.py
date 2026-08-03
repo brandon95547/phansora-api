@@ -11,6 +11,19 @@ to Postgres. This guarantees:
 
 Phase cursor (``book_alchemy_projects.phase``):
     uploaded -> analyze -> curriculum -> sessions -> audio -> finalize -> complete
+
+There is a second, unrelated sense of "phase" in this product. The cursor above
+is the internal PIPELINE phase. A DELIVERY phase (``book_alchemy_phases``, see
+phases.py) is a batch of lessons the listener asks for one at a time, so a
+twenty-hour course arrives in sittings rather than in one twenty-hour run. When
+the worker finishes a delivery phase and the listener has not asked for the next,
+the cursor parks at ``awaiting_user`` until they do.
+
+Delivery phases change nothing about what the model is asked. Each script is
+conditioned on ``_prior_coverage``, which reads only the titles and outlines
+written for EVERY lesson back at the curriculum step — so as long as lessons are
+still written in ascending ordinal order, splitting them into batches leaves
+every prompt byte-for-byte identical.
 """
 from __future__ import annotations
 
@@ -66,10 +79,18 @@ class TerminalError(Exception):
     """A non-recoverable error; the project should be marked failed."""
 
 
+# Cursor values that mean "there is nothing for the worker to do here". One list,
+# imported by worker.py too, so the three places that ask that question can never
+# drift apart. 'awaiting_user' differs from the other two only in that a click
+# brings it back.
+TERMINAL_PHASES = frozenset({"complete", "failed"})
+IDLE_PHASES = TERMINAL_PHASES | {"awaiting_user"}
+
+
 async def run_step(project: dict, client: Optional[DeepSeekClient] = None) -> bool:
     """Advance one project by a single unit. Returns True if more work remains."""
     phase = project["phase"]
-    if phase in ("complete", "failed"):
+    if phase in IDLE_PHASES:
         return False
 
     client = client or DeepSeekClient.from_env()
@@ -91,7 +112,7 @@ async def run_step(project: dict, client: Optional[DeepSeekClient] = None) -> bo
         raise TerminalError(f"Unknown phase: {phase!r}")
 
     refreshed = await db.get_project(pid)
-    return bool(refreshed and refreshed["phase"] not in ("complete", "failed"))
+    return bool(refreshed and refreshed["phase"] not in IDLE_PHASES)
 
 
 # --------------------------------------------------------------- phase: parse
@@ -324,10 +345,35 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
             ],
         )
 
+    # Delivery phases: which lessons the listener receives as one batch. Planned
+    # here because everything it needs — the lessons, their source word counts and
+    # the chapter each came from — is already in memory. It costs no query and no
+    # model call, and it is the one and only time these boundaries are decided: a
+    # listener told "Phase 3 of 7" must never watch that renumber.
+    #
+    # Imported inside the function on purpose. phases.py reads this module's
+    # listening constants, so a top-level import here would be a cycle.
+    from . import phases as phases_mod
+
+    planned = phases_mod.plan_phases([
+        {
+            "ordinal": l["ordinal"],
+            "seconds": phases_mod.estimate_seconds(source_words=l["words"]),
+            "chapter": chunks[l["start"]]["chapter"],
+        }
+        for l in lessons
+    ])
+    await db.create_phases(pid, planned)
+    log.info(
+        "Project %s: %s lesson(s) -> %s delivery phase(s) (cap %ss)",
+        pid, len(lessons), len(planned), phases_mod.PHASE_TARGET_SECONDS,
+    )
+
     plan = {
         "work_title": project.get("name"),
         "source_words": source_words,
         "lesson_count": len(lessons),
+        "phases": planned,
         "sessions": [
             {
                 "ordinal": l["ordinal"],
@@ -520,17 +566,20 @@ def _word_count(text: Any) -> int:
 # --------------------------------------------------------------- phase: sessions (script + validate)
 async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     pid = int(project["id"])
+    # WHOLE-PROJECT on purpose, never scoped to the current delivery phase: this
+    # list is the input to _prior_coverage, which is what stops lesson 30
+    # re-teaching what lesson 4 already covered. Narrowing it to the phase would
+    # silently change every prompt from phase 2 onwards.
     sessions = await db.get_sessions(pid)
     total = len(sessions)
-    sess = await db.next_session_needing(pid, ["pending"])
+    sess = await db.next_session_needing(pid, ["pending"], await db.work_ceiling(pid))
     if sess is None:
         await db.set_project(pid, phase="audio", stage="Generating audio", progress=80)
         return
 
-    done = sum(1 for s in sessions if s["status"] not in ("pending",))
     await db.set_project(
-        pid, stage=f"Creating session {sess['ordinal']} of {total}",
-        progress=min(55 + int(23 * done / max(1, total)), 79),
+        pid, stage=await _stage_label(pid, f"writing lesson {sess['ordinal']} of {total}"),
+        progress=_course_progress(sessions),
     )
 
     chunk_ids = list(sess["source_chunk_ids"] or [])
@@ -668,9 +717,11 @@ async def _phase_audio(project: dict) -> None:
     pid = int(project["id"])
     sessions = await db.get_sessions(pid)
     total = len(sessions)
-    sess = await db.next_session_needing(pid, ["validated"])
+    sess = await db.next_session_needing(pid, ["validated"], await db.work_ceiling(pid))
     if sess is None:
-        await db.set_project(pid, phase="finalize", stage="Finalizing assets", progress=98)
+        # Nothing left within the current delivery phase. Either the listener gets
+        # the next one now, or the course is done.
+        await _close_active_phase(project)
         return
 
     if not (sess["script"] or "").strip():
@@ -683,10 +734,9 @@ async def _phase_audio(project: dict) -> None:
         await db.set_session(sess["id"], status="complete", audio_seconds=0)
         return
 
-    done = sum(1 for s in sessions if s["status"] == "complete")
     await db.set_project(
-        pid, stage=f"Processing session {sess['ordinal']} of {total}",
-        progress=min(80 + int(18 * done / max(1, total)), 97),
+        pid, stage=await _stage_label(pid, f"recording lesson {sess['ordinal']} of {total}"),
+        progress=_course_progress(sessions),
     )
 
     options = _as_dict(project.get("options"))
@@ -704,6 +754,124 @@ async def _phase_audio(project: dict) -> None:
     await db.set_session(
         sess["id"], status="complete", audio_path=str(out_path),
         audio_seconds=seconds, generated_at=_now(),
+    )
+
+
+# --------------------------------------------------------------- delivery phases
+async def _stage_label(project_id: int, detail: str) -> str:
+    """The human line under the progress bar, phase-aware where phases exist.
+
+    Also promotes the active phase from 'queued' to 'processing' the first time
+    real work is done on it. 'queued' means the listener has asked but the worker
+    has not arrived; without this the rail would read "Starting" for the whole
+    three hours.
+    """
+    active = await db.active_phase(project_id)
+    if active is None:
+        return detail[:1].upper() + detail[1:]
+    if active["status"] == "queued":
+        await db.set_phase(active["id"], status="processing")
+    total = await db.count_phases(project_id)
+    return f"Phase {active['ordinal']} of {total} · {detail}"
+
+
+def _course_progress(sessions: list[Any]) -> int:
+    """Whole-course completion, 55-99.
+
+    Weighted across every lesson in the book rather than the current batch: a
+    lesson counts half once its script is written and whole once its audio
+    exists. That is the only weighting that stays monotonic when phases are
+    delivered one at a time, when "process everything" runs them back to back,
+    and when a single lesson is regenerated after the fact.
+    """
+    total = len(sessions) or 1
+    done = sum(
+        1.0 if s["status"] == "complete" else 0.5 if s["status"] == "validated" else 0.0
+        for s in sessions
+    )
+    return min(99, 55 + int(44 * done / total))
+
+
+async def _rollup(project_id: int) -> None:
+    """Refresh the course-level totals from the lessons that exist so far, so the
+    numbers a listener sees between phases are real rather than final-only."""
+    sessions = await db.get_sessions(project_id)
+    await db.set_project(
+        project_id,
+        total_audio_seconds=sum(int(s["audio_seconds"] or 0) for s in sessions),
+        validation_status=(
+            "flagged" if any(s["validation_status"] == "flagged" for s in sessions) else "passed"
+        ),
+    )
+
+
+async def _close_active_phase(project: dict) -> None:
+    """The active delivery phase has recorded its last lesson.
+
+    Bank it, then either roll straight into the next one or park until the
+    listener asks for it.
+    """
+    pid = int(project["id"])
+    active = await db.active_phase(pid)
+
+    if active is None:
+        # No phase is in flight, so we did not arrive here at the end of a batch.
+        # This is a per-session Regenerate that re-opened a project which was
+        # already parked or already finished. Put it back the way it was rather
+        # than walking the phase pointer forward and re-offering delivered work.
+        await _restore_after_regenerate(project)
+        return
+
+    await db.set_phase(
+        active["id"], status="complete", completed_at=_now(),
+        audio_seconds=await db.phase_audio_seconds(pid, int(active["ordinal"])),
+    )
+    await _rollup(pid)
+
+    nxt = await db.next_phase_after(pid, int(active["ordinal"]))
+    if nxt is None:
+        await db.set_project(pid, phase="finalize", stage="Finalizing assets", progress=98)
+        return
+
+    total = await db.count_phases(pid)
+
+    if project.get("auto_continue"):
+        # The listener asked for the rest of the book up front. Read at the
+        # boundary rather than cached, so turning it off takes effect here.
+        await db.set_phase(nxt["id"], status="queued", requested_at=_now())
+        await db.set_project(
+            pid, phase="sessions", stage=f"Phase {nxt['ordinal']} of {total} · starting",
+        )
+        return
+
+    await db.set_phase(nxt["id"], status="ready")
+    await db.set_project(
+        pid, status="awaiting_user", phase="awaiting_user",
+        stage=f"Phase {active['ordinal']} of {total} ready to play",
+    )
+
+
+async def _restore_after_regenerate(project: dict) -> None:
+    """Return a project to the state a Regenerate interrupted.
+
+    Regenerating one lesson re-opens the project so the worker picks the lesson
+    up. Once it is done there is no active phase to close, and the project must
+    go back to whatever it was: finished, or parked mid-course. Getting this
+    wrong would silently hand the listener a phase they never asked for.
+    """
+    pid = int(project["id"])
+    phases = await db.get_phases(pid)
+
+    if not phases or all(p["status"] == "complete" for p in phases):
+        await _phase_finalize(project)   # idempotent; recomputes from the lessons
+        return
+
+    total = len(phases)
+    delivered = sum(1 for p in phases if p["status"] == "complete")
+    await _rollup(pid)
+    await db.set_project(
+        pid, status="awaiting_user", phase="awaiting_user",
+        stage=f"Phase {delivered} of {total} ready to play",
     )
 
 

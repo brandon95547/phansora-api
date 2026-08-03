@@ -39,16 +39,23 @@ log = logging.getLogger("book_alchemy.worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 LEASE_SECONDS = int(os.getenv("BOOK_ALCHEMY_LEASE_SECONDS", "600"))
 IDLE_SLEEP = float(os.getenv("BOOK_ALCHEMY_IDLE_SLEEP", "5"))
+# How many times one delivery phase may fail before the whole course is failed.
+PHASE_MAX_ATTEMPTS = int(os.getenv("BOOK_ALCHEMY_PHASE_MAX_ATTEMPTS", "2"))
 
 _stop = asyncio.Event()
 
 
 def _cleanup_source(proj: dict) -> None:
-    """Delete the uploaded source file (PDF/EPUB/etc.) once a project reaches a
-    terminal phase — whether the audio course succeeded or failed. The source is
-    only needed while parsing; afterwards it just consumes disk and accumulates.
-    The rendered session audio in the same folder is left untouched. Best-effort:
-    never raises, and only ever unlinks a real file inside the book_alchemy dir."""
+    """Delete the uploaded source file (PDF/EPUB/etc.) once parsing is behind us.
+
+    The source is read by exactly one step, `_phase_parse`, whose idempotency
+    guard is "do chunks already exist" rather than "is the file still there" — so
+    once the cursor is past it, nothing ever opens the file again. Dropping it
+    early matters now that a project sits parked between delivery phases for days
+    at a time: there is no reason to hold a 40 MB PDF for the life of a
+    twenty-hour course. The rendered session audio in the same folder is left
+    untouched. Best-effort: never raises, and only ever unlinks a real file inside
+    the book_alchemy dir."""
     source_path = proj.get("source_path")
     if not source_path:
         return
@@ -62,34 +69,76 @@ def _cleanup_source(proj: dict) -> None:
         log.warning("Could not delete source file %s", source_path, exc_info=True)
 
 
+async def _fail(project_id: int, proj: dict, message: str) -> None:
+    """Give up on the current work.
+
+    A course delivered in phases should not be binned wholesale because one
+    lesson tripped: if the listener already has hours of finished, playable audio,
+    only the phase that broke is failed and the project parks so they can retry
+    it. A phase that keeps breaking escalates to a project-level failure after
+    PHASE_MAX_ATTEMPTS, which is also what restores the credit-refund path in the
+    dashboard's reconciler.
+    """
+    detail = message[:1000]
+    active = await db.active_phase(project_id)
+    delivered = [p for p in await db.get_phases(project_id) if p["status"] == "complete"]
+
+    if active is not None and delivered:
+        attempts = int(active["attempts"]) + 1
+        if attempts < PHASE_MAX_ATTEMPTS:
+            log.warning(
+                "Project %s phase %s failed (attempt %s/%s): %s",
+                project_id, active["ordinal"], attempts, PHASE_MAX_ATTEMPTS, message,
+            )
+            await db.set_phase(
+                active["id"], status="failed", attempts=attempts, error_message=detail,
+            )
+            await db.set_project(
+                project_id, status="awaiting_user", phase="awaiting_user",
+                stage=f"Phase {active['ordinal']} could not be built",
+            )
+            return
+        log.warning(
+            "Project %s phase %s failed %s times; failing the project",
+            project_id, active["ordinal"], attempts,
+        )
+        await db.set_phase(
+            active["id"], status="failed", attempts=attempts, error_message=detail,
+        )
+
+    await db.set_project(
+        project_id, status="failed", phase="failed", stage="Failed", error_message=detail,
+    )
+    _cleanup_source(proj)
+
+
 async def _process_project(project_id: int, client: DeepSeekClient) -> None:
-    """Drive one claimed project to a terminal phase, renewing its lease."""
+    """Drive one claimed project until it has nothing more to do, renewing its
+    lease. "Nothing more" now includes parking to wait for the listener to ask
+    for the next delivery phase."""
+    cleaned = False
     while not _stop.is_set():
         row = await db.get_project(project_id)
         if row is None:
             return
         proj = dict(row)
-        if proj["phase"] in ("complete", "failed"):
-            # Reached a terminal phase (course done or failed) — drop the source file.
+        if proj["phase"] in pipeline.IDLE_PHASES:
+            # Done, failed, or parked between phases. All three are finished with
+            # the source file.
             _cleanup_source(proj)
             return
+        if not cleaned and proj["phase"] not in ("uploaded", "parse"):
+            _cleanup_source(proj)
+            cleaned = True
         try:
             await pipeline.run_step(proj, client)
         except pipeline.TerminalError as exc:
             log.warning("Project %s failed (terminal): %s", project_id, exc)
-            await db.set_project(
-                project_id, status="failed", phase="failed",
-                stage="Failed", error_message=str(exc)[:1000],
-            )
-            _cleanup_source(proj)
+            await _fail(project_id, proj, str(exc))
             return
         except Exception as exc:  # noqa: BLE001
             log.exception("Project %s step crashed", project_id)
-            await db.set_project(
-                project_id, status="failed", phase="failed",
-                stage="Failed", error_message=str(exc)[:1000],
-            )
-            _cleanup_source(proj)
+            await _fail(project_id, proj, str(exc))
             return
         await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
 

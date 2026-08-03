@@ -124,23 +124,64 @@ if _BOOK_ALCHEMY_OK:
         except Exception:  # noqa: BLE001
             return value
 
-    def _ba_project_wire(row) -> dict:
+    def _ba_iso(value) -> Optional[str]:
+        return value.isoformat() if value else None
+
+    def _ba_phase_wire(row) -> dict:
+        """One delivery phase as the dashboard sees it.
+
+        `est_seconds` is the planned runtime, known before a single word is
+        written; `audio_seconds` is the real one, known once the phase lands. The
+        UI shows the first with a tilde and the second without.
+        """
         d = dict(row)
+        return {
+            "ordinal": d["ordinal"],
+            "label": d["label"],
+            "status": d["status"],
+            "session_start": d["session_start"],
+            "session_end": d["session_end"],
+            "session_count": int(d.get("session_count") or 0),
+            "sessions_complete": int(d.get("sessions_complete") or 0),
+            "est_seconds": int(d.get("est_seconds") or 0),
+            "audio_seconds": int(d.get("audio_seconds") or 0),
+            "error": d.get("error_message"),
+            "requested_at": _ba_iso(d.get("requested_at")),
+            "completed_at": _ba_iso(d.get("completed_at")),
+        }
+
+    def _ba_project_wire(row, phases: Optional[list] = None) -> dict:
+        d = dict(row)
+        wired = [_ba_phase_wire(p) for p in (phases or [])]
         return {
             "project_id": d["id"],
             "name": d["name"],
             "source_format": d["source_format"],
             "status": d["status"],
+            # The internal pipeline cursor. Long omitted here, which is why the
+            # dashboard could never say which step a book was actually on.
+            "phase": d["phase"],
             "stage": d["stage"],
             "progress": d["progress"],
             "validation_status": d["validation_status"],
             "total_audio_seconds": d["total_audio_seconds"],
             "sessions_complete": int(d.get("sessions_complete") or 0),
             "sessions_total": int(d.get("sessions_total") or 0),
+            # Delivery phases: [] for a project that predates them, which the UI
+            # reads as "no rail, just the old single bar".
+            "phases": wired,
+            "phase_count": len(wired),
+            "active_phase": next(
+                (p["ordinal"] for p in wired if p["status"] in ("queued", "processing")), None
+            ),
+            "ready_phase": next(
+                (p["ordinal"] for p in wired if p["status"] == "ready"), None
+            ),
+            "auto_continue": bool(d.get("auto_continue")),
             "curriculum": _ba_json(d.get("curriculum")),
             "error": d.get("error_message"),
-            "created_at": d["created_at"].isoformat() if d.get("created_at") else None,
-            "updated_at": d["updated_at"].isoformat() if d.get("updated_at") else None,
+            "created_at": _ba_iso(d.get("created_at")),
+            "updated_at": _ba_iso(d.get("updated_at")),
         }
 
     def _ba_session_wire(row, ref_map: dict | None = None) -> dict:
@@ -236,12 +277,19 @@ if _BOOK_ALCHEMY_OK:
     async def ba_list_projects(user_id: str) -> dict:
         uid = _ba_user_id(user_id)
         rows = await ba_db.list_projects(uid)
+        # One query for every card's phases rather than one per card, so the rail
+        # renders on the list without opening the drawer.
+        by_project: dict[int, list] = {}
+        for p in await ba_db.list_phases_for_projects([int(r["id"]) for r in rows]):
+            by_project.setdefault(int(p["project_id"]), []).append(p)
         limit = _ba_max_projects()
         # The dashboard gates its upload form on these so it can block (and explain)
         # an over-limit upload before spending a credit on it.
         return {
             "ok": True,
-            "projects": [_ba_project_wire(r) for r in rows],
+            "projects": [
+                _ba_project_wire(r, by_project.get(int(r["id"]), [])) for r in rows
+            ],
             "limit": limit,
             "remaining": max(0, limit - len(rows)),
         }
@@ -262,7 +310,8 @@ if _BOOK_ALCHEMY_OK:
             for c in chunks
         }
         sessions = await ba_db.get_sessions(project_id)
-        out = _ba_project_wire(row)
+        phases = await ba_db.list_phases_for_projects([project_id])
+        out = _ba_project_wire(row, phases)
         out["sessions"] = [_ba_session_wire(s, ref_map) for s in sessions]
         return {"ok": True, "project": out}
 
@@ -355,12 +404,73 @@ if _BOOK_ALCHEMY_OK:
             script=None, audio_path=None, audio_seconds=None, validation_notes=None,
         )
         # Re-open the project at the sessions phase so the worker re-scripts,
-        # re-validates and re-renders just this session.
-        await ba_db.set_project(
-            project_id, status="processing", phase="sessions",
-            stage="Regenerating session", lease_owner=None, lease_expires_at=None,
-        )
+        # re-validates and re-renders just this session. reopen_project keeps a
+        # live lease rather than clearing it, so a worker already driving this
+        # project picks the session up itself instead of a second worker claiming
+        # the row alongside it.
+        await ba_db.reopen_project(project_id, stage="Regenerating session")
         return {"ok": True}
+
+    @app.post("/projects/{project_id}/phases/{ordinal}/process")
+    async def ba_process_phase(project_id: int, ordinal: int, user_id: str) -> dict:
+        """Start the delivery phase the listener just asked for.
+
+        The claim is a conditional UPDATE rather than a read-then-write, so a
+        double-clicked button — or two open tabs — can only ever start it once.
+        """
+        uid = _ba_user_id(user_id)
+        if await ba_db.get_project(project_id, uid) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+        phase = await ba_db.claim_phase(project_id, ordinal)
+        if phase is None:
+            raise HTTPException(
+                status_code=409,
+                detail="That phase isn't ready yet, or it's already being processed.",
+            )
+        await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · starting")
+        return {"ok": True, "phase": _ba_phase_wire(phase)}
+
+    @app.post("/projects/{project_id}/process-all")
+    async def ba_process_all(project_id: int, user_id: str) -> dict:
+        """Run every remaining phase back to back, without stopping to ask."""
+        uid = _ba_user_id(user_id)
+        if await ba_db.get_project(project_id, uid) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+        await ba_db.set_project(project_id, auto_continue=True)
+        nxt = await ba_db.claim_next_ready_phase(project_id)
+        if nxt is not None:
+            await ba_db.reopen_project(
+                project_id, stage=f"Phase {nxt['ordinal']} · starting",
+            )
+        return {"ok": True}
+
+    @app.post("/projects/{project_id}/process-all/stop")
+    async def ba_stop_auto(project_id: int, user_id: str) -> dict:
+        """Stop after the phase that is currently running.
+
+        It takes effect at the next boundary. There is nothing to call off
+        mid-lesson, and offering a button that pretended otherwise would be a lie.
+        """
+        uid = _ba_user_id(user_id)
+        if await ba_db.get_project(project_id, uid) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        await ba_db.set_project(project_id, auto_continue=False)
+        return {"ok": True}
+
+    @app.post("/projects/{project_id}/phases/{ordinal}/retry")
+    async def ba_retry_phase(project_id: int, ordinal: int, user_id: str) -> dict:
+        """Re-run a phase that failed. Lessons that already have audio are kept."""
+        uid = _ba_user_id(user_id)
+        if await ba_db.get_project(project_id, uid) is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+
+        phase = await ba_db.retry_phase(project_id, ordinal)
+        if phase is None:
+            raise HTTPException(status_code=409, detail="That phase hasn't failed.")
+        await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · retrying")
+        return {"ok": True, "phase": _ba_phase_wire(phase)}
 
     @app.delete("/projects/{project_id}")
     async def ba_delete_project(project_id: int, user_id: str) -> dict:

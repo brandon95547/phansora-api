@@ -148,12 +148,48 @@ async def set_project(project_id: int, **fields: Any) -> None:
     )
 
 
+async def reopen_project(project_id: int, *, stage: str, phase: str = "sessions") -> None:
+    """Put a parked or finished project back into the worker's claimable set.
+
+    Used by "process this phase", "process everything" and per-session regenerate
+    — all three are user actions that arrive on the API process while the worker
+    may be mid-book on the same row.
+
+    A LIVE lease is deliberately preserved. A worker holding one is already
+    driving this project and re-reads the row on every iteration of its loop, so
+    it picks the new work up by itself; clearing the lease out from under it
+    would let a second worker claim the same project and run the same lesson
+    twice. An expired lease is cleared, because that is the crash-recovery case
+    and nobody is coming back for it.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """
+        UPDATE public.book_alchemy_projects
+           SET status = 'processing',
+               phase = $2,
+               stage = $3,
+               error_message = NULL,
+               lease_owner = CASE WHEN lease_expires_at > NOW() THEN lease_owner ELSE NULL END,
+               lease_expires_at = CASE WHEN lease_expires_at > NOW() THEN lease_expires_at ELSE NULL END,
+               updated_at = NOW()
+         WHERE id = $1
+        """,
+        project_id, phase, stage,
+    )
+
+
 async def claim_next_project(worker_id: str, lease_seconds: int = 600) -> Optional[asyncpg.Record]:
     """Atomically claim one project that needs work and isn't actively leased.
 
     Uses FOR UPDATE SKIP LOCKED so multiple workers never grab the same row.
     A project is claimable when it's freshly uploaded or its previous lease has
-    expired (crash recovery)."""
+    expired (crash recovery).
+
+    Note this needs no awareness of delivery phases: a project parked waiting for
+    the listener to ask for the next phase sits at status 'awaiting_user', which
+    this predicate already excludes. This query is the single point of
+    correctness for claiming, and leaving it untouched is worth a lot."""
     pool = await get_pool()
     async with pool.acquire() as con:
         async with con.transaction():
@@ -323,15 +359,37 @@ async def get_session(session_id: int, project_id: Optional[int] = None) -> Opti
     )
 
 
-async def next_session_needing(project_id: int, statuses: list[str]) -> Optional[asyncpg.Record]:
+async def next_session_needing(
+    project_id: int, statuses: list[str], max_phase: Optional[int] = None
+) -> Optional[asyncpg.Record]:
+    """The lowest-ordinal session in one of ``statuses``, optionally capped to a
+    delivery phase.
+
+    Ordinal order is load-bearing rather than tidy: every script is conditioned on
+    what the lessons before it already covered (see pipeline._prior_coverage), so
+    writing them out of order would change the output.
+
+    ``max_phase`` is the delivery-phase ceiling from :func:`work_ceiling`. None
+    means unbounded, which is how a project with no phase rows — anything that
+    predates phased delivery — keeps behaving exactly as it did before.
+    """
     pool = await get_pool()
+    if max_phase is None:
+        return await pool.fetchrow(
+            """
+            SELECT * FROM public.book_alchemy_sessions
+             WHERE project_id = $1 AND status = ANY($2::text[])
+             ORDER BY ordinal ASC LIMIT 1
+            """,
+            project_id, statuses,
+        )
     return await pool.fetchrow(
         """
         SELECT * FROM public.book_alchemy_sessions
-         WHERE project_id = $1 AND status = ANY($2::text[])
+         WHERE project_id = $1 AND status = ANY($2::text[]) AND phase_no <= $3
          ORDER BY ordinal ASC LIMIT 1
         """,
-        project_id, statuses,
+        project_id, statuses, max_phase,
     )
 
 
@@ -350,6 +408,238 @@ async def set_session(session_id: int, **fields: Any) -> None:
     await pool.execute(
         f"UPDATE public.book_alchemy_sessions SET {', '.join(cols)}, updated_at = NOW() WHERE id = $1",
         session_id, *vals,
+    )
+
+
+# --------------------------------------------------------------- delivery phases
+#
+# What the listener means by "Phase 3 of 7": a batch of lessons delivered
+# together. Not to be confused with book_alchemy_projects.phase, which is the
+# internal pipeline cursor.
+#
+# Lifecycle: pending -> ready -> queued -> processing -> complete | failed.
+# 'ready' is exactly "the listener's button is live"; 'queued' is "they clicked,
+# the worker has not reached it yet".
+
+
+async def create_phases(project_id: int, phases: list[dict]) -> None:
+    """Write the plan. The first phase is offered immediately; the rest wait.
+
+    Called once, from the curriculum step. ON CONFLICT DO NOTHING makes a retried
+    curriculum step harmless — the boundaries a listener has already been shown
+    must never move under them.
+    """
+    if not phases:
+        return
+    pool = await get_pool()
+    await pool.executemany(
+        """
+        INSERT INTO public.book_alchemy_phases
+            (project_id, ordinal, label, status, session_start, session_end, est_seconds)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (project_id, ordinal) DO NOTHING
+        """,
+        [
+            (
+                project_id, p["ordinal"], p["label"],
+                "queued" if int(p["ordinal"]) == 1 else "pending",
+                p["session_start"], p["session_end"], int(p.get("est_seconds") or 0),
+            )
+            for p in phases
+        ],
+    )
+    await pool.execute(
+        """
+        UPDATE public.book_alchemy_sessions s
+           SET phase_no = p.ordinal
+          FROM public.book_alchemy_phases p
+         WHERE s.project_id = $1 AND p.project_id = $1
+           AND s.ordinal BETWEEN p.session_start AND p.session_end
+        """,
+        project_id,
+    )
+    await pool.execute(
+        "UPDATE public.book_alchemy_phases SET requested_at = NOW(), updated_at = NOW() "
+        "WHERE project_id = $1 AND ordinal = 1",
+        project_id,
+    )
+
+
+async def get_phases(project_id: int) -> list[asyncpg.Record]:
+    pool = await get_pool()
+    return await pool.fetch(
+        "SELECT * FROM public.book_alchemy_phases WHERE project_id = $1 ORDER BY ordinal ASC",
+        project_id,
+    )
+
+
+async def count_phases(project_id: int) -> int:
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        "SELECT COUNT(*) FROM public.book_alchemy_phases WHERE project_id = $1", project_id
+    ))
+
+
+async def active_phase(project_id: int) -> Optional[asyncpg.Record]:
+    """The phase the worker is (or should be) working on right now."""
+    pool = await get_pool()
+    return await pool.fetchrow(
+        """
+        SELECT * FROM public.book_alchemy_phases
+         WHERE project_id = $1 AND status IN ('queued', 'processing')
+         ORDER BY ordinal ASC LIMIT 1
+        """,
+        project_id,
+    )
+
+
+async def next_phase_after(project_id: int, ordinal: int) -> Optional[asyncpg.Record]:
+    pool = await get_pool()
+    return await pool.fetchrow(
+        """
+        SELECT * FROM public.book_alchemy_phases
+         WHERE project_id = $1 AND ordinal > $2 AND status NOT IN ('complete', 'failed')
+         ORDER BY ordinal ASC LIMIT 1
+        """,
+        project_id, ordinal,
+    )
+
+
+async def claim_phase(project_id: int, ordinal: int) -> Optional[asyncpg.Record]:
+    """Take a phase the listener just asked for, or return None.
+
+    A conditional UPDATE rather than a read-then-write, which is what makes the
+    button free to double-click: two clicks, or two tabs, race into the same
+    statement and exactly one of them matches ``status = 'ready'``.
+    """
+    pool = await get_pool()
+    return await pool.fetchrow(
+        """
+        UPDATE public.book_alchemy_phases
+           SET status = 'queued', requested_at = NOW(), error_message = NULL, updated_at = NOW()
+         WHERE project_id = $1 AND ordinal = $2 AND status = 'ready'
+        RETURNING *
+        """,
+        project_id, ordinal,
+    )
+
+
+async def claim_next_ready_phase(project_id: int) -> Optional[asyncpg.Record]:
+    """Same claim, but for whichever phase is currently on offer. Backs
+    "process everything remaining", which should not need to know the number."""
+    pool = await get_pool()
+    return await pool.fetchrow(
+        """
+        UPDATE public.book_alchemy_phases
+           SET status = 'queued', requested_at = NOW(), error_message = NULL, updated_at = NOW()
+         WHERE id = (
+             SELECT id FROM public.book_alchemy_phases
+              WHERE project_id = $1 AND status = 'ready'
+              ORDER BY ordinal ASC LIMIT 1
+         )
+        RETURNING *
+        """,
+        project_id,
+    )
+
+
+async def retry_phase(project_id: int, ordinal: int) -> Optional[asyncpg.Record]:
+    """Re-open a failed phase and reset its lessons so the worker rebuilds them."""
+    pool = await get_pool()
+    async with pool.acquire() as con:
+        async with con.transaction():
+            row = await con.fetchrow(
+                """
+                UPDATE public.book_alchemy_phases
+                   SET status = 'queued', requested_at = NOW(), error_message = NULL,
+                       updated_at = NOW()
+                 WHERE project_id = $1 AND ordinal = $2 AND status = 'failed'
+                RETURNING *
+                """,
+                project_id, ordinal,
+            )
+            if row is None:
+                return None
+            # Lessons that never finished go back to the start of the line. Ones
+            # that already have audio are left alone — re-recording them would
+            # burn GPU time redoing work that succeeded.
+            await con.execute(
+                """
+                UPDATE public.book_alchemy_sessions
+                   SET status = 'pending', script = NULL, updated_at = NOW()
+                 WHERE project_id = $1 AND phase_no = $2 AND status <> 'complete'
+                """,
+                project_id, ordinal,
+            )
+            return row
+
+
+async def set_phase(phase_id: int, **fields: Any) -> None:
+    if not fields:
+        return
+    pool = await get_pool()
+    cols = [f"{k} = ${i}" for i, k in enumerate(fields.keys(), start=2)]
+    await pool.execute(
+        f"UPDATE public.book_alchemy_phases SET {', '.join(cols)}, updated_at = NOW() WHERE id = $1",
+        phase_id, *fields.values(),
+    )
+
+
+async def work_ceiling(project_id: int) -> Optional[int]:
+    """The highest delivery phase the worker may touch right now.
+
+    Everything already delivered, plus the one the listener has asked for.
+    Delivered phases stay in range so a per-session Regenerate still works after
+    the fact; phases nobody has clicked are out of range, which is the entire
+    gate.
+
+    Returns None — meaning unbounded — for a project with no phase rows at all.
+    That is a project from before phased delivery, and it then behaves exactly as
+    it did before: fail-open by construction.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT COUNT(*) AS n,
+               COALESCE(MAX(ordinal) FILTER (
+                   WHERE status IN ('queued', 'processing', 'complete')), 0) AS ceiling
+          FROM public.book_alchemy_phases WHERE project_id = $1
+        """,
+        project_id,
+    )
+    return None if int(row["n"]) == 0 else int(row["ceiling"])
+
+
+async def phase_audio_seconds(project_id: int, ordinal: int) -> int:
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        """
+        SELECT COALESCE(SUM(audio_seconds), 0) FROM public.book_alchemy_sessions
+         WHERE project_id = $1 AND phase_no = $2
+        """,
+        project_id, ordinal,
+    ) or 0)
+
+
+async def list_phases_for_projects(project_ids: list[int]) -> list[asyncpg.Record]:
+    """Every phase for a set of projects, so the list endpoint can render its
+    phase rails without a query per card."""
+    if not project_ids:
+        return []
+    pool = await get_pool()
+    return await pool.fetch(
+        """
+        SELECT p.*,
+               (SELECT COUNT(*) FROM public.book_alchemy_sessions s
+                 WHERE s.project_id = p.project_id AND s.phase_no = p.ordinal) AS session_count,
+               (SELECT COUNT(*) FROM public.book_alchemy_sessions s
+                 WHERE s.project_id = p.project_id AND s.phase_no = p.ordinal
+                   AND s.status = 'complete') AS sessions_complete
+          FROM public.book_alchemy_phases p
+         WHERE p.project_id = ANY($1::bigint[])
+         ORDER BY p.project_id ASC, p.ordinal ASC
+        """,
+        project_ids,
     )
 
 
