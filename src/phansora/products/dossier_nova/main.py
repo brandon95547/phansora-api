@@ -34,6 +34,7 @@ from .validation import (
     generate_loss_report,
     compute_source_balance,
     compute_duplication_ratio,
+    compute_provenance,
 )
 from .text_cleaner import clean_extracted_text
 from .synthesis import synthesize_dossier, render_front_matter
@@ -256,6 +257,7 @@ def run_pipeline(
         source_profiles=source_profiles,
         max_source_share=config.max_source_share,
         claim_dedup_threshold=config.claim_dedup_threshold,
+        source_only=config.source_only_mode,
     )
     organized_sections = _timed("organize chunks", lambda: organizer.organize_chunks(chunks))
     organizer.insert_sections(organized_sections)
@@ -277,6 +279,19 @@ def run_pipeline(
         threshold=config.claim_dedup_threshold,
     )
 
+    # 10b-ii. Provenance audit — the inverse of coverage. Coverage asks how much of the
+    # source reached the dossier; this asks whether anything in the dossier came from
+    # nowhere. Run on the organized sections rather than the rendered file so an excerpt
+    # is checked as the model placed it, before markdown chrome is wrapped around it.
+    provenance = compute_provenance(organized_sections, sources)
+    if provenance["grounded_ratio"] < 1.0:
+        print(
+            f"⚠️  Provenance: {provenance['grounded_ratio']:.2%} of dossier text traced to a "
+            f"source; {len(provenance['ungrounded_sections'])} passage(s) untraceable."
+        )
+    else:
+        print("✅ Provenance: every passage in the dossier is verbatim source text.")
+
     # 10c. Write loss report
     loss_report = generate_loss_report(
         coverage,
@@ -284,6 +299,7 @@ def run_pipeline(
         duplication_ratio=duplication_ratio,
         max_source_share=config.max_source_share,
         max_duplication_ratio=config.max_duplication_ratio,
+        provenance=provenance,
     )
     report_path = Path(resolved_toc_path).parent / "loss_report.md"
     report_path.write_text(loss_report, encoding="utf-8")
@@ -292,6 +308,16 @@ def run_pipeline(
     # executive summary, timeline, findings, cross-source analysis, and evidence
     # matrix — above the per-section synthesized body. Done after coverage/validation
     # so those metrics reflect the source-derived body, not the synthesized summary.
+    #
+    # Skipped in source-only mode, and it has to be: every block of that front matter is
+    # written BY the model rather than quoted from the sources — the executive summary is
+    # its prose, the confidence levels are its verdicts, fact-vs-allegation is its
+    # adjudication. `intel_model` is still built above, because the research dataset (step
+    # 11) feeds Narrava Studio's Attach Research and is a separate artifact from the
+    # dossier; what changes here is only that none of it is pasted onto the dossier.
+    if front_matter and config.source_only_mode:
+        print("[PIPELINE] Source-only mode: intelligence front matter withheld from the dossier.")
+        front_matter = ""
     if front_matter:
         dossier_body = Path(resolved_toc_path).read_text(encoding="utf-8")
         Path(resolved_toc_path).write_text(

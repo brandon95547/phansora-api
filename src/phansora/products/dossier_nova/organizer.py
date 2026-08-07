@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 from .toc_manager import TocManager
 from .embeddings import EmbeddingStore
 from .source_profiler import SourceProfile
+from .provenance import ground_passage
 from phansora.shared.ai.deepseek import chat_model
 
 
@@ -61,9 +62,9 @@ def build_prompt_template(_: Any = None) -> str:
     placeholders filled in later.
     """
     return (
-        "You are a dossier analyst building an investigative research dossier from "
-        "multiple source documents. Your job is to extract meaningful content from "
-        "the source chunk and place it under the correct dossier section headings.\n\n"
+        "You are a dossier archivist. You are NOT a writer, an analyst, or a summarizer. "
+        "Your only job is to decide WHERE each passage of the source chunk belongs in the "
+        "dossier, and to quote that passage back EXACTLY as it appears.\n\n"
         "DOSSIER TABLE OF CONTENTS (IDs + headings):\n"
         "{toc_outline}\n"
         "END OF TOC\n\n"
@@ -72,35 +73,42 @@ def build_prompt_template(_: Any = None) -> str:
         "{chunk}\n"
         "END OF CHUNK\n\n"
         "TASK:\n"
-        "1. Read every passage in the source chunk carefully.\n"
+        "1. Read every passage in the source chunk.\n"
         "2. For each passage, decide which dossier heading ID it belongs under.\n"
-        "3. PRESERVE the source's original meaning, framing, and rhetorical purpose.\n"
-        "   - If the source is factual, keep the content factual.\n"
-        "   - If the source is interpretive, preserve its thesis and analytical lens.\n"
-        "   - If the source is advocacy/policy, preserve that framing.\n"
-        "4. You MAY lightly condense repetitive passages, but you MUST NOT:\n"
-        "   - Remove central arguments, key evidence, or important qualifiers\n"
-        "   - Flatten different source voices into one generic stream\n"
-        "   - Invent content that is not in the source\n"
-        "   - Strip out caveats, rebuttals, or nuance\n"
-        "5. For each section, include a source_label indicating which document "
-        "   the content comes from.\n"
-        "6. If a passage contains factual claims AND interpretation, split them "
-        "   into separate entries under the appropriate headings (e.g., facts under "
-        "   'Key Evidence', interpretation under 'Interpretive Frameworks').\n"
-        "7. Do NOT leave any meaningful source content unassigned.\n"
-        "8. Do NOT repeat the same passage under multiple headings unless it genuinely "
-        "   serves a different analytical purpose in each.\n\n"
+        "3. COPY the passage into \"text\" character for character, exactly as written "
+        "in the chunk above.\n\n"
+        "THE COPYING RULE — this is the whole job:\n"
+        "Every \"text\" value MUST be findable in the chunk above by an exact text "
+        "search. If someone searched the chunk for your \"text\", they must find it.\n"
+        "You MUST NOT:\n"
+        "  - Summarize, paraphrase, condense, or shorten\n"
+        "  - Rewrite, reword, or 'improve' the phrasing\n"
+        "  - Fix grammar, spelling, punctuation, or capitalization\n"
+        "  - Add a single word that is not already in the chunk\n"
+        "  - Merge two separate passages into one entry\n"
+        "  - Add transitions, introductions, or closing sentences\n"
+        "  - Add your own commentary, framing, characterization, or conclusions\n"
+        "Copy whole sentences. Never start or stop mid-sentence.\n"
+        "If a passage is long, quote all of it, or quote the specific whole sentences "
+        "you are placing — never a rewritten shorter version of it.\n\n"
+        "PLACEMENT:\n"
+        "4. If a passage contains factual claims AND interpretation, quote them as two "
+        "separate entries under the appropriate headings (e.g., facts under 'Key "
+        "Evidence', interpretation under 'Interpretive Frameworks'). Split them; do not "
+        "rewrite either half.\n"
+        "5. Do NOT leave any meaningful source content unassigned.\n"
+        "6. Do NOT place the same passage under multiple headings.\n"
+        "7. source_label identifies which document the passage came from.\n\n"
         "OUTPUT FORMAT (VERY IMPORTANT):\n"
         "Return ONLY valid JSON with this exact structure:\n\n"
         "{{\n"
         "  \"sections\": [\n"
         "    {{\n"
         "      \"heading_id\": \"H2.1\",\n"
-        "      \"subheading\": \"Optional label for this finding or perspective\",\n"
+        "      \"subheading\": \"Optional short label, may be your own words\",\n"
         "      \"source_label\": \"filename.pdf\",\n"
         "      \"content_type\": \"evidence|analysis|interpretation|policy|narrative\",\n"
-        "      \"text\": \"Preserved source content with original framing intact\"\n"
+        "      \"text\": \"An exact, unaltered quotation from the chunk above\"\n"
         "    }}\n"
         "  ]\n"
         "}}\n\n"
@@ -108,12 +116,15 @@ def build_prompt_template(_: Any = None) -> str:
         "- NEVER return {{\"sections\": []}}. Every chunk has content that belongs "
         "  somewhere.\n"
         "- source_label MUST match the source filename provided in the chunk header.\n"
-        "- content_type helps distinguish raw evidence from analysis:\n"
+        "- content_type labels the passage. It describes what the SOURCE is doing, and "
+        "  never licenses you to write anything yourself:\n"
         "  - evidence: factual claims, data, documented events\n"
-        "  - analysis: synthesized findings, conclusions drawn from evidence\n"
-        "  - interpretation: scholarly/theoretical perspective on the facts\n"
-        "  - policy: advocacy position, reform recommendation, policy argument\n"
+        "  - analysis: conclusions the source itself draws from evidence\n"
+        "  - interpretation: scholarly/theoretical perspective the source offers\n"
+        "  - policy: advocacy position or recommendation the source makes\n"
         "  - narrative: story, account, personal testimony\n"
+        "- \"subheading\" is the ONLY field where your own wording is allowed, and it is "
+        "  a label, not a comment — no evaluation, no conclusions.\n"
         "- Do NOT include any explanation outside the JSON.\n"
         "- Do NOT wrap the JSON in Markdown code fences.\n"
     )
@@ -144,12 +155,17 @@ class ChunkOrganizer:
         source_profiles: Optional[List[SourceProfile]] = None,
         max_source_share: float = 0.40,
         claim_dedup_threshold: float = 0.90,
+        source_only: bool = True,
     ) -> None:
         self.client = client
         self.toc = toc
         self.embedding_store = embedding_store
         self.prompt_template = prompt_template
         self.conservative_mode = conservative_mode
+        # When true, nothing reaches the dossier that is not a literal span of a source.
+        # See provenance.py — this is the switch between "the model wrote the dossier"
+        # and "the model decided where the sources go".
+        self.source_only = source_only
         self.catchall_heading = catchall_heading
         self.content_similarity_threshold = content_similarity_threshold
         self.source_profiles = source_profiles or []
@@ -176,6 +192,12 @@ class ChunkOrganizer:
         """
         all_sections: List[Dict[str, Any]] = []
         unmapped_chunks: List[str] = []
+        # Quotes the model produced that are not in the source at all, and quotes that
+        # were found but had drifted (a smart quote, a reflowed line, a dropped word).
+        # Both are reported: a rising `ungrounded` count is the signal that the model has
+        # started writing again rather than copying.
+        ungrounded = 0
+        repaired = 0
 
         # Filter empty chunks
         valid_chunks: list[tuple[int, str]] = []
@@ -236,6 +258,20 @@ class ChunkOrganizer:
                 if not heading_id or not text:
                     continue
 
+                # The prompt asks for an exact quotation; this is what makes it true.
+                # `text` is replaced by the span it was found at in the chunk, so the
+                # dossier carries the SOURCE's characters and not the model's rendering
+                # of them — and anything that cannot be found is dropped, because text
+                # with no origin in the source is exactly what must never reach the page.
+                if self.source_only:
+                    grounded = ground_passage(text, chunk)
+                    if grounded is None:
+                        ungrounded += 1
+                        continue
+                    if _normalize_label(grounded) != _normalize_label(text):
+                        repaired += 1
+                    text = grounded
+
                 chunk_had_mappings = True
                 all_sections.append({
                     "heading_id": heading_id,
@@ -249,6 +285,14 @@ class ChunkOrganizer:
                 unmapped_chunks.append(chunk)
 
         print(f"[ORG] Pass 1: {len(all_sections)} sections; {len(unmapped_chunks)} unmapped chunks.")
+        if self.source_only:
+            print(
+                f"[ORG] Verbatim check: {repaired} quote(s) snapped back to the source, "
+                f"{ungrounded} dropped as not found in any source."
+            )
+            # A chunk whose every quote was dropped still has its content: it falls through
+            # to pass 2, which places the raw chunk by embedding. Nothing is lost by being
+            # strict here — it is only placed less precisely.
 
         # Pass 2: embedding-based fallback for unmapped content
         if unmapped_chunks:
@@ -541,10 +585,11 @@ class ChunkOrganizer:
                 {
                     "role": "system",
                     "content": (
-                        "You are a dossier analyst. You organize source material into "
-                        "investigative dossier sections, preserving each source's unique "
-                        "framing and rhetorical purpose. You separate evidence from "
-                        "interpretation. You attribute content to its source."
+                        "You are a dossier archivist. You place source passages under the "
+                        "correct headings and quote them exactly. You never summarize, "
+                        "paraphrase, rewrite, or add commentary of your own. Every word you "
+                        "put in a \"text\" field is copied verbatim from the source you were "
+                        "given, and must be findable there by an exact search."
                     ),
                 },
                 {"role": "user", "content": prompt},

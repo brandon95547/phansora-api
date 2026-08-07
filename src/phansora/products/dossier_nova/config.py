@@ -51,6 +51,14 @@ class Config:
         self.toc_full_path = os.getenv("TOC_FULL_PATH", str(BASE_DIR / "toc" / "full.md"))
         self.max_chunk_chars = _get_int_env("MAX_CHUNK_CHARS", 20000)
         self.conservative_mode = os.getenv("CONSERVATIVE_MODE", "false").lower() in ("true", "1", "yes")
+        # Source-only mode: the dossier contains ONLY verbatim spans of the sources.
+        # Two consequences, both on by default because this is what the product is for:
+        #   - every organized passage is grounded against its source (provenance.py) and
+        #     dropped if it cannot be found there
+        #   - the AI-authored intelligence front matter (executive summary, confidence
+        #     verdicts, fact/allegation calls) is NOT prepended to the dossier
+        # Set SOURCE_ONLY_MODE=false to go back to the older synthesized-prose dossier.
+        self.source_only_mode = os.getenv("SOURCE_ONLY_MODE", "true").lower() in ("true", "1", "yes")
         self.catchall_heading = os.getenv("CATCHALL_HEADING", "Miscellaneous")
         self.toc_target_heading_count = _get_int_env("TOC_TARGET_HEADING_COUNT", 60)
         # Ceiling on the TOC-organize answer. That call has to emit the WHOLE table of
