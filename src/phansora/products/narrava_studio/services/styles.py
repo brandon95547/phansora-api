@@ -41,7 +41,7 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
             "field and strong foreground/background separation; golden-hour or motivated "
             "practical light; wide anamorphic-feeling establishing shots and slow push-ins "
             "or tracking moves. Mood is emotive and elevated — the subject treated as story "
-            "rather than as record. Favour texture, silhouette and atmosphere (haze, dust, "
+            "rather than as record. Favor texture, silhouette and atmosphere (haze, dust, "
             "rain, backlight) over literal illustration of the words."
         ),
         "pacing": (
@@ -65,7 +65,7 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
             "captured rather than staged: documents, ledgers, records, screens, evidence "
             "boards, signage, building exteriors, doorways, and long-lens shots from across "
             "a street. Cool, neutral, slightly desaturated light. Mood is sober and "
-            "probing. Favour the concrete artefact — the file, the receipt, the nameplate — "
+            "probing. Favor the concrete artifact — the file, the receipt, the nameplate — "
             "over anything symbolic."
         ),
         "pacing": (
@@ -84,15 +84,15 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
             "what the events came to mean rather than on what happened next."
         ),
         "visual": (
-            "Period reconstruction and archive. Grainy monochrome or faded colour stock, "
+            "Period reconstruction and archive. Grainy monochrome or faded color stock, "
             "archival footage and stills, sepia photographs, maps, letters, newsprint and "
-            "museum artefacts; period-correct clothing, architecture, vehicles and objects "
+            "museum artifacts; period-correct clothing, architecture, vehicles and objects "
             "in every frame. Static frames or slow moves across stills. Mood is "
             "authoritative and elegiac. Never allow a modern object, vehicle or garment "
             "into a historical shot."
         ),
         "pacing": (
-            "Unhurried. Stills and archive need time to be read, so favour longer holds and "
+            "Unhurried. Stills and archive need time to be read, so favor longer holds and "
             "change the picture when the period or the place changes."
         ),
     },
@@ -110,7 +110,7 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
         "visual": (
             "Clear explanatory visuals. Bright, evenly lit, uncluttered frames with a "
             "single unambiguous subject; diagrams, cutaways, scale models, demonstrations, "
-            "labelled close-ups and clean overhead shots of a process. Neutral or bright "
+            "labeled close-ups and clean overhead shots of a process. Neutral or bright "
             "backgrounds. Mood is calm, friendly and legible. Prefer the plainly readable "
             "image to the atmospheric one — if the viewer has to decode the picture, it is "
             "the wrong picture."
@@ -124,7 +124,7 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
         "label": "Dark / Suspense",
         "narration": (
             "Write it as suspense. Short, clipped sentences; concrete, unsettling detail; "
-            "no reassurance and no summarising ahead of yourself. Open cold on a detail "
+            "no reassurance and no summarizing ahead of yourself. Open cold on a detail "
             "that is wrong before explaining anything, withhold the full picture, and "
             "release it late. Structure it as a slow escalation towards the thing the "
             "viewer has been half-told. Pacing tightens as it goes and leaves deliberate "
@@ -133,7 +133,7 @@ DOC_STYLES: Dict[str, Dict[str, str]] = {
         "visual": (
             "Suspense and unease. Low-key lighting with deep shadow and hard pools of "
             "light; night, fog, rain, empty corridors, treelines, headlights, reflections "
-            "and half-seen movement. Tight or off-centre framing, obscured faces, slow "
+            "and half-seen movement. Tight or off-center framing, obscured faces, slow "
             "creeping moves. Desaturated palette of cold blues and sickly amber. Mood is "
             "tense and withholding — show the edge of the thing rather than the thing."
         ),

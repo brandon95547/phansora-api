@@ -429,10 +429,10 @@ or its torch/vLLM pins** — several of these cost real time.
    provider to Anthropic also avoids it (that branch already sends `thinking: disabled`) but costs
    far more per call and is not the fix.
 
-2. **DeepSeek silently ignores parameters it does not recognise — never take a 200 as proof a
+2. **DeepSeek silently ignores parameters it does not recognize — never take a 200 as proof a
    knob works.** `enable_thinking: false`, `thinking: {"type": "disabled"}`,
    `chat_template_kwargs: {"thinking": false}` and `reasoning: {"enabled": false}` were all
-   accepted with HTTP 200 *and kept right on reasoning*. Only `reasoning_effort` is honoured. Verify
+   accepted with HTTP 200 *and kept right on reasoning*. Only `reasoning_effort` is honored. Verify
    any new parameter by reading `usage.completion_tokens_details.reasoning_tokens` back off the
    response, not by the absence of a 400. (As of 2026-08-01 the key exposes exactly two models,
    `deepseek-v4-flash` and `deepseek-v4-pro` — there is no non-thinking model to switch to.)

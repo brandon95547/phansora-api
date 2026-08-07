@@ -102,14 +102,14 @@ def test_a_mismatched_recording_is_refused_not_guessed(monkeypatch):
 def test_a_misheard_stretch_is_interpolated_between_real_anchors(monkeypatch):
     from phansora.products.narrava_studio.services import align
 
-    # "quantum flux" mis-heard as garbage; neighbours heard clean.
+    # "quantum flux" mis-heard as garbage; neighbors heard clean.
     said_text = "the machine used quantum flux to fly"
     heard = _heard(["the", "machine", "used", "kwanza", "flocks", "to", "fly"])
     monkeypatch.setattr(align, "_heard", lambda path, language: heard)
 
     words = align.word_times("audio.mp3", said_text)
     assert len(words) == 7
-    # The interpolated pair sits strictly between its real neighbours.
+    # The interpolated pair sits strictly between its real neighbors.
     assert words[2][1] <= words[3][0] < words[4][1] <= words[5][0] + 1e-9
     # And the clock never runs backwards.
     for prev, cur in zip(words, words[1:]):

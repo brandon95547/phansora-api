@@ -34,7 +34,7 @@ logger = logging.getLogger("narrava-studio.align")
 
 # THE tokenizer for narration text — storyboard.py imports this rather than keeping its own,
 # because the two must agree on the word COUNT exactly or the timings are rejected as
-# mismatched. Curly apostrophes are in the class and normalised away below: a script written
+# mismatched. Curly apostrophes are in the class and normalized away below: a script written
 # by an LLM says "didn’t" while whisper transcribes "didn't", and splitting the first into
 # "didn" + "t" both changed the count and stopped every contraction from matching.
 WORD_RE = re.compile(r"[A-Za-z0-9'’]+")

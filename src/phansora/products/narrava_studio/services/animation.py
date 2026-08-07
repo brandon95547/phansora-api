@@ -139,7 +139,7 @@ _STYLES = {
         "composition, high contrast. Confident, energetic movement."
     ),
     "infographic": (
-        "Infographic: information design. Labelled elements, leader lines and callouts, a "
+        "Infographic: information design. Labeled elements, leader lines and callouts, a "
         "legend where it earns its place, step-by-step reveals that build one idea at a "
         "time. Clear typographic hierarchy, generous margins, a readable palette where "
         "color CARRIES meaning rather than decorating. Numbers and units where they help."
@@ -195,7 +195,7 @@ _STYLES = {
     "isometric": (
         "Isometric: 2.5D forms on fixed 30-degree axes with no perspective convergence. "
         "Flat faces in three tonal steps for top, left and right; muted palette with a "
-        "single accent. Objects assembled from stacked volumes, movement travelling "
+        "single accent. Objects assembled from stacked volumes, movement traveling "
         "along the isometric axes."
     ),
     "wireframe": (
@@ -387,7 +387,7 @@ def _deepseek_html(user_prompt: str) -> str:
         "stream": False,
     }
     # Omitted rather than sent empty when disabled: DeepSeek ignores parameters it
-    # does not recognise instead of rejecting them, so a wrong key would look like
+    # does not recognize instead of rejecting them, so a wrong key would look like
     # it worked. See _reasoning_effort for why the default is off.
     effort = _reasoning_effort()
     if effort:

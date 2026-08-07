@@ -6,7 +6,7 @@ back the way a college lecturer would teach it after reading it.
 The narrator is the INSTRUCTOR, teaching the subject in the first person. It is
 not a reviewer describing a book: no "the author states", no "he argues", no "in
 this chapter". A listener should finish the course knowing the material without
-ever being told where it came from. That is a voice rule, not a licence — every
+ever being told where it came from. That is a voice rule, not a license — every
 sentence still has to be something the source says.
 
 A course also has a memory. Books circle back; a course that circles back with
@@ -166,7 +166,7 @@ ANALYZE_SYSTEM = (
     "- `body`: one line recording what this excerpt actually says about it "
     "(under 30 words).\n"
     "Only include what THIS excerpt supports; empty arrays are fine and normal. "
-    "At most 8 items per array. You are labelling the source, not explaining or "
+    "At most 8 items per array. You are labeling the source, not explaining or "
     "assessing it."
 )
 
@@ -340,7 +340,7 @@ def script_user(
         f"should land between {min_words} and {max_words} words. Explaining in your "
         f"own words naturally runs a little longer than the source — that headroom is "
         f"for explaining, not for padding. Under the floor means you dropped material "
-        f"or merely summarised it — unless you passed over ground an earlier lesson "
+        f"or merely summarized it — unless you passed over ground an earlier lesson "
         f"already covered, which is correct and needs no compensating. Over the "
         f"ceiling means you added something that is not in the source.\n"
         f"This is a guide, not a target to hit. Reaching it by carrying the source's "
@@ -400,7 +400,7 @@ VALIDATION_SYSTEM = (
     '"added"|"inferred"|"omitted"|"copied"|"filler"|"attributed", "claim": str, '
     '"reason": str}], "notes": str}.\n'
     'Set `supported` to false if ANY "copied" item is flagged — there is no '
-    "immaterial amount of copying, and this judgement is not yours to weigh. For "
+    "immaterial amount of copying, and this judgment is not yours to weigh. For "
     "every other type, set it to false when a flagged item is material."
 )
 

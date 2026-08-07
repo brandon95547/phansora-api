@@ -27,7 +27,7 @@ def test_real_sentence_boundary_is_preserved():
 
 
 def test_ambiguous_case_keeps_its_period():
-    """"the D.C. Metro" is unknowable; keeping the period matches today's behaviour."""
+    """"the D.C. Metro" is unknowable; keeping the period matches today's behavior."""
     out = normalize_for_tts("The D.C. Metro opened in 1976.")
     assert out == "The D C. Metro opened in 1976."
 

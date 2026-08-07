@@ -24,7 +24,7 @@ keep their period when what follows looks like a new sentence, and lose it other
     "moved to D.C. The next year"      ->  "moved to D C. The next year"      (period kept)
 
 The ambiguous case ("the D.C. Metro") keeps its period, which is exactly today's
-behaviour — this never makes an existing split worse, it only removes false ones.
+behavior — this never makes an existing split worse, it only removes false ones.
 
 Tuning: every lexicon below is inserted verbatim. If the engine mispronounces an entry,
 respell it phonetically right here ("D C" -> "Dee See"). That is the entire tuning
@@ -106,7 +106,7 @@ _INITIALISM_RE = re.compile(r"\b(?:[A-Za-z]\.){2,}")
 # The (?<!\.) guard keeps this out of dotted initialisms. Without it "D.C. The next year"
 # matches at the trailing "C.", stripping the very sentence period _sub_initialisms is
 # about to preserve — which is why this must also run BEFORE that pass, while the
-# initialism still has its interior dots to be recognised by.
+# initialism still has its interior dots to be recognized by.
 #
 # (?<![A-Z] ) is what makes the whole module idempotent: after one pass "D.C." has become
 # "D C.", and a lone capital preceded by another lone capital is the tail of an already

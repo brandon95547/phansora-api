@@ -27,7 +27,7 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "cosyvoice2" (the only engine); honours TTS_ENGINE for validation.
+    # Resolves to "cosyvoice2" (the only engine); honors TTS_ENGINE for validation.
     return resolve_engine(None)
 
 

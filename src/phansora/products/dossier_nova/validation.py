@@ -201,7 +201,7 @@ def compute_provenance(
     That is the direction editorializing travels, and until now nothing measured it.
 
     Every section is checked against its own source first, then against the others — a
-    passage attributed to the wrong file is a labelling bug, not an invention, and the two
+    passage attributed to the wrong file is a labeling bug, not an invention, and the two
     deserve different names in the report.
 
     Returns character-weighted figures, not per-section ones: one fabricated paragraph

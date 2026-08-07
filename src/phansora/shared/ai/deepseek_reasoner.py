@@ -23,7 +23,7 @@ models keep JSON mode and temperature; reasoning models drop both and lean on th
 
 Config (base URL, key) is shared with the rest of the app via ``DeepSeekChatConfig``; the
 model is chosen separately so one process can use a cheap chat model for bulk work and a
-reasoning model for the calls where judgement actually matters.
+reasoning model for the calls where judgment actually matters.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def is_reasoning_model(model: str) -> bool:
     """Whether `model` is one of the chain-of-thought models.
 
     Matched by name because the API exposes no capability flag. Deliberately loose: a
-    future ``deepseek-reasoner-v2`` or an ``-r1`` variant should be recognised, and the
+    future ``deepseek-reasoner-v2`` or an ``-r1`` variant should be recognized, and the
     cost of a false positive (losing JSON mode, which we can parse around) is far lower
     than a false negative (sending an unsupported parameter and getting a 400).
     """
@@ -71,7 +71,7 @@ class DeepSeekReasoner:
 
     @classmethod
     def reasoning(cls, product_var: Optional[str] = None) -> "DeepSeekReasoner":
-        """The judgement model — ranking chapters, writing a script.
+        """The judgment model — ranking chapters, writing a script.
 
         Falls back to the chat model when no *_REASONING_MODEL is set, rather than to
         a hardcoded reasoning name: DeepSeek v4 no longer ships a separate reasoner."""
@@ -80,7 +80,7 @@ class DeepSeekReasoner:
 
     @classmethod
     def fast(cls, product_var: Optional[str] = None) -> "DeepSeekReasoner":
-        """The bulk model — summarising fifty chapters, where reasoning buys nothing and
+        """The bulk model — summarizing fifty chapters, where reasoning buys nothing and
         would cost minutes per book."""
         from .models import resolve_model
         return cls(model=resolve_model(product_var, provider="deepseek"))

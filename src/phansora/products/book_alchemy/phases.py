@@ -75,7 +75,7 @@ def plan_phases(lessons: list[dict], *, cap_seconds: int = PHASE_TARGET_SECONDS)
     """Contiguous groups of lessons, each roughly at or under ``cap_seconds``.
 
     ``lessons`` is in ordinal order; each carries ``{ordinal, seconds, chapter}``.
-    ``chapter`` may be None throughout, which is the intended behaviour for pdf
+    ``chapter`` may be None throughout, which is the intended behavior for pdf
     and plain text rather than a degraded one.
 
     A phase only ever closes at a lesson boundary, and preferentially at one where
@@ -105,7 +105,7 @@ def plan_phases(lessons: list[dict], *, cap_seconds: int = PHASE_TARGET_SECONDS)
         groups.append(cur)
 
     # A ten-minute final phase is a click for its own sake. Fold it back, unless
-    # doing so would make its neighbour absurd.
+    # doing so would make its neighbor absurd.
     if len(groups) > 1:
         tail = _secs(groups[-1])
         prev = _secs(groups[-2])

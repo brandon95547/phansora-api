@@ -97,7 +97,7 @@ def needs_cleanup(text: str, label: str = "") -> tuple[bool, float]:
     rewrote the source before anything else in the pipeline ever saw it.
 
     Provenance decides first, because it is knowledge rather than inference: a source
-    labelled with an http(s) URL came through Readability and is structurally clean. Only
+    labeled with an http(s) URL came through Readability and is structurally clean. Only
     when that is unavailable does this fall back to measuring the text.
     """
     if label and _URL_LABEL_RE.match(label.strip()):

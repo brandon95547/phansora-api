@@ -205,7 +205,7 @@ def _ask_json(user: str, scene_budget: int, system: str = None, budget: int = No
 # Second pass. The first pass has to guess how long its beats run — it has the words but
 # not the voice. Once the narration is measured we know exactly, so anything still holding
 # too long goes back to the editor WITH its real duration attached. Finding the beat inside
-# a long stretch is a judgement about meaning, and belongs to the thing that understands
+# a long stretch is a judgment about meaning, and belongs to the thing that understands
 # meaning; the mechanical splitter below is only there for when this cannot answer.
 _REFINE_SYSTEM = (
     "You are an experienced documentary editor. Each stretch of narration below is "
@@ -521,7 +521,7 @@ def _lay_out(
         merged_spans[-1][1] = len(full_text)  # the last scene always runs to the end
 
     # Anything still holding too long goes back to the editor with its measured duration —
-    # finding the beat inside a long stretch is a judgement about meaning.
+    # finding the beat inside a long stretch is a judgment about meaning.
     merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock, style=style)
 
     # Last resort only. If the re-cut did not happen or did not go far enough, split on
@@ -578,9 +578,9 @@ def _lay_out(
 
 # ── the clock: a character offset in the narration -> a second on the timeline ───────
 # One question, asked by everything downstream, answered two ways. Given measured word
-# times it reports where the voice actually is. Without them it falls back to modelling how
+# times it reports where the voice actually is. Without them it falls back to modeling how
 # long the text takes to say. Routing both through the same interface is what stops the
-# measured and estimated paths from drifting into different behaviour — the layout code
+# measured and estimated paths from drifting into different behavior — the layout code
 # above cannot tell which one it is holding.
 
 

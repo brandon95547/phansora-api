@@ -8,7 +8,7 @@
 #   2. OPENAI_MODEL / DEEPSEEK_MODEL — every product on that provider
 #   3. nothing — the call raises MissingModelConfig (there is no built-in name)
 #
-# Judgement calls resolve the same way through the *_REASONING_MODEL variables, falling
+# Judgment calls resolve the same way through the *_REASONING_MODEL variables, falling
 # through to the chat chain above when they are blank.
 #
 # The per-product layer exists because the products have genuinely different needs: bulk OCR
@@ -49,10 +49,10 @@ PRODUCT_MODEL_VARS = {
     "spokenverse": "SPOKENVERSE_OCR_MODEL",
 }
 
-# The reasoning/judgement model is resolved the same way, one layer at a time, so a
+# The reasoning/judgment model is resolved the same way, one layer at a time, so a
 # provider retiring a model name is an .env edit and a restart — never a code change.
 # Its own default is the chat chain: leave every *_REASONING_MODEL blank and reasoning
-# simply follows the chat model, which is the right behaviour for providers that no
+# simply follows the chat model, which is the right behavior for providers that no
 # longer ship a separate reasoning SKU.
 PRODUCT_REASONING_MODEL_VARS = {
     "book_alchemy": "BOOK_ALCHEMY_REASONING_MODEL",
@@ -121,7 +121,7 @@ def provider_reasoning_model(provider: str) -> str:
 def resolve_reasoning_model(product_var: str | None, *, provider: str = "deepseek") -> str:
     """Reasoning model for one product, most specific first:
 
-        <PRODUCT>_REASONING_MODEL      this product's judgement calls only
+        <PRODUCT>_REASONING_MODEL      this product's judgment calls only
         {DEEPSEEK,OPENAI}_REASONING_MODEL   every product on that provider
         -> then the whole chat chain (see resolve_model)
 
