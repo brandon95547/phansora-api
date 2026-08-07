@@ -78,6 +78,7 @@ def profile_sources(
     sources: List[Dict[str, str]],
     client: Any,
     sample_chars: int = 4000,
+    max_workers: int = 8,
 ) -> List[SourceProfile]:
     """
     Profile each source document by type, role, and central argument.
@@ -134,7 +135,7 @@ def profile_sources(
         return SourceProfile(source_label=label, char_count=len(text))
 
     # Parallel profiling — API calls are I/O-bound
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
         profiles = list(executor.map(_profile_one, sources))
 
     for p in profiles:

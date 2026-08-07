@@ -50,6 +50,7 @@ class TocGenerator:
         self.embedding_store = embedding_store
         self.client = config.deepseek_client
         self.similarity_threshold = float(config.similarity_threshold)
+        self.max_workers = int(getattr(config, "llm_max_workers", 8))
 
     # ------------------------------------------------------------------
     # Step 1: Extract topic headings from the raw text (unchanged logic)
@@ -99,7 +100,7 @@ class TocGenerator:
             )
             return idx, response.choices[0].message.content
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, self.max_workers)) as executor:
             raw_results = list(executor.map(_extract_from_chunk, enumerate(chunks, start=1)))
 
         for _idx, result in raw_results:

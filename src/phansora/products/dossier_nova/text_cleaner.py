@@ -16,6 +16,7 @@ documents work within the model's context window.
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from phansora.shared.ai.deepseek import chat_model
@@ -62,10 +63,59 @@ LEAVE IT AS-IS.\
 # Public API
 # ---------------------------------------------------------------------------
 
+# An article source carries its URL as its label (see tomeweaver/routes.js), which is a
+# fact about where the text came from rather than a guess about what it looks like.
+_URL_LABEL_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+# Signatures of PDF/OCR damage — the only thing this module exists to repair.
+#   ks,Index / st.The   sentence punctuation with the space eaten
+#   libr-\norum         a word split across a line break
+#
+# Deliberately NOT camelCase ("theChurch"): it cannot be told apart from JavaScript,
+# iPhone or macOS, so on any technical article it fires constantly. The two patterns kept
+# here do not occur in correctly-typeset prose at all — which is what makes a low
+# threshold safe. Two leading lowercase letters also keep "e.g." and "U.S." out of it.
+_ARTIFACT_PATTERNS = (
+    re.compile(r"[a-z]{2}[,.;:!?][A-Z]"),
+    re.compile(r"[A-Za-z]-\n[a-z]"),
+)
+
+# Per 1000 characters. Extraction damage is dense — a scanned page produces these in
+# every other line — while clean prose produces essentially none.
+_ARTIFACT_DENSITY_THRESHOLD = 1.5
+
+
+def needs_cleanup(text: str, label: str = "") -> tuple[bool, float]:
+    """
+    Whether `text` shows enough extraction damage to be worth an LLM repair pass.
+
+    The cleanup stage is the most expensive thing in the pipeline that can be entirely
+    unnecessary: it is written for "text extracted from a PDF or produced by OCR", but a
+    dossier built from article URLs arrives via Readability, which yields clean prose with
+    none of these artifacts. Sending that through anyway costs a full LLM pass per chunk
+    and — since cleanup runs BEFORE the verbatim grounding — it also means a model quietly
+    rewrote the source before anything else in the pipeline ever saw it.
+
+    Provenance decides first, because it is knowledge rather than inference: a source
+    labelled with an http(s) URL came through Readability and is structurally clean. Only
+    when that is unavailable does this fall back to measuring the text.
+    """
+    if label and _URL_LABEL_RE.match(label.strip()):
+        return False, 0.0
+
+    sample = text[:200_000]
+    if not sample.strip():
+        return False, 0.0
+    hits = sum(len(p.findall(sample)) for p in _ARTIFACT_PATTERNS)
+    density = hits / (len(sample) / 1000.0)
+    return density >= _ARTIFACT_DENSITY_THRESHOLD, density
+
+
 def clean_extracted_text(
     text: str,
     client: Any,
     chunk_size: int = 6000,
+    max_workers: int = 8,
 ) -> str:
     """
     Send extracted text through DeepSeek to fix OCR / extraction artifacts.
@@ -101,7 +151,7 @@ def clean_extracted_text(
         print(f"[CLEAN] Cleaning chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
         return idx, _clean_chunk(chunk, client)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
         results = list(executor.map(_do_clean, enumerate(chunks, 1)))
 
     for idx, result in results:

@@ -19,6 +19,7 @@ Accepts two input modes:
 import argparse
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -36,7 +37,7 @@ from .validation import (
     compute_duplication_ratio,
     compute_provenance,
 )
-from .text_cleaner import clean_extracted_text
+from .text_cleaner import clean_extracted_text, needs_cleanup
 from .synthesis import synthesize_dossier, render_front_matter
 from .research import build_research_dataset
 from phansora.shared.paths import runtime_root
@@ -129,16 +130,46 @@ def run_pipeline(
         sources = parse_labeled_sources(full_text)
         print(f"[PIPELINE] Parsed {len(sources)} source(s) from input file.")
 
-    # 3. AI text cleanup per source
+    # 3. AI text cleanup per source.
+    #
+    # Two things were costing whole minutes here. The loop was serial across sources, so
+    # five sources meant five separate 8-wide waves back to back when the chunks could all
+    # have been in flight together. And it ran unconditionally — including on article text
+    # from Readability, which has none of the merged words, OCR errors or broken line
+    # hyphenation this stage exists to repair. A dossier built from URLs was paying for a
+    # full LLM pass that had nothing to do.
     if config.clean_extracted_text:
-        print("[PIPELINE] Running AI text cleanup on each source...")
         _t = time.perf_counter()
+        to_clean = []
         for src in sources:
-            src["text"] = clean_extracted_text(
-                src["text"],
-                client=config.deepseek_client,
-                chunk_size=config.cleanup_chunk_size,
-            )
+            damaged, density = needs_cleanup(src["text"], src.get("label", ""))
+            if config.skip_clean_when_undamaged and not damaged:
+                print(
+                    f"[CLEAN] Skipping '{src.get('label', '?')}' — "
+                    f"{density:.2f} artifacts/1k chars, nothing to repair."
+                )
+                continue
+            to_clean.append(src)
+
+        if to_clean:
+            print(f"[PIPELINE] Running AI text cleanup on {len(to_clean)} source(s)...")
+
+            def _clean_one(src):
+                return src, clean_extracted_text(
+                    src["text"],
+                    client=config.deepseek_client,
+                    chunk_size=config.cleanup_chunk_size,
+                    max_workers=config.llm_max_workers,
+                )
+
+            # Sources overlap with each other as well as within themselves. The inner pool
+            # is bounded too, so the worst case is workers^2 in flight; keep the outer one
+            # narrow so the two together stay near the intended ceiling.
+            outer = max(1, min(len(to_clean), max(2, config.llm_max_workers // 4)))
+            with ThreadPoolExecutor(max_workers=outer) as pool:
+                for src, cleaned in pool.map(_clean_one, to_clean):
+                    src["text"] = cleaned
+
         _stage_times.append(("text cleanup", time.perf_counter() - _t))
         total_chars = sum(len(s["text"]) for s in sources)
         print(f"[TIMING] text cleanup: {_stage_times[-1][1]:.1f}s")
@@ -152,6 +183,7 @@ def run_pipeline(
             sources=sources,
             client=config.deepseek_client,
             sample_chars=config.profile_sample_chars,
+            max_workers=config.llm_max_workers,
         )
         for p in source_profiles:
             print(f"  {p.source_label}: type={p.source_type}, role={p.rhetorical_role}")
@@ -173,40 +205,38 @@ def run_pipeline(
     # conflict analysis, evidence matrix, and an executive summary. Rendered as the
     # dossier's leading front matter (prepended after the body is assembled, below).
     # Best-effort: any failure leaves front_matter empty and the dossier proceeds.
+    #
+    # OFF THE CRITICAL PATH. In source-only mode the dossier never contains any of this,
+    # so nothing between here and step 11 depends on it — it only feeds the research
+    # dataset. It is one big call over every source at once, which made it one of the
+    # slowest single steps in the pipeline to sit and wait on. Launched here, collected at
+    # step 11, and by then the TOC and organize stages have usually outlasted it, so it
+    # costs nothing in wall-clock at all.
+    #
+    # It reads `sources` and `source_profiles` and mutates neither; the organize stage
+    # downstream does not touch them either, so there is no shared state to race on.
     front_matter = ""
     intel_model: Optional[Dict] = None
-    if config.enable_correlation and len(sources) > 1:
-        print("[PIPELINE] Running cross-source intelligence synthesis...")
-        intel_model = _timed(
-            "synthesis",
-            lambda: synthesize_dossier(
-                sources=sources,
-                source_profiles=source_profiles,
-                client=config.deepseek_client,
-                sample_chars=config.synthesis_sample_chars,
-            ),
+    _synth_pool: Optional[ThreadPoolExecutor] = None
+    _synth_future = None
+    _synth_started = 0.0
+
+    if config.enable_correlation and sources:
+        multi = len(sources) > 1
+        print(
+            "[PIPELINE] Cross-source intelligence synthesis started in background"
+            if multi else
+            "[PIPELINE] Single-source intelligence synthesis started in background (research dataset)"
         )
-        if intel_model:
-            source_labels = [s["label"] for s in sources]
-            front_matter = render_front_matter(intel_model, source_labels)
-            print(
-                f"[PIPELINE] Synthesis produced {len(intel_model.get('findings') or [])} "
-                f"findings, {len(intel_model.get('timeline') or [])} timeline events."
-            )
-    elif config.enable_correlation and len(sources) == 1:
-        # Research-only synthesis: single-source dossiers keep their front matter
-        # exactly as before (none), but the structured research dataset below still
-        # wants the intelligence model (findings, timeline, entities).
-        print("[PIPELINE] Running single-source intelligence synthesis (research dataset)...")
-        intel_model = _timed(
-            "synthesis",
-            lambda: synthesize_dossier(
-                sources=sources,
-                source_profiles=source_profiles,
-                client=config.deepseek_client,
-                sample_chars=config.synthesis_sample_chars,
-                min_sources=1,
-            ),
+        _synth_started = time.perf_counter()
+        _synth_pool = ThreadPoolExecutor(max_workers=1)
+        _synth_future = _synth_pool.submit(
+            synthesize_dossier,
+            sources=sources,
+            source_profiles=source_profiles,
+            client=config.deepseek_client,
+            sample_chars=config.synthesis_sample_chars,
+            **({} if multi else {"min_sources": 1}),
         )
 
     # 5. Build the merged text (with source headers) for TOC extraction
@@ -258,6 +288,7 @@ def run_pipeline(
         max_source_share=config.max_source_share,
         claim_dedup_threshold=config.claim_dedup_threshold,
         source_only=config.source_only_mode,
+        max_workers=config.llm_max_workers,
     )
     organized_sections = _timed("organize chunks", lambda: organizer.organize_chunks(chunks))
     organizer.insert_sections(organized_sections)
@@ -303,6 +334,32 @@ def run_pipeline(
     )
     report_path = Path(resolved_toc_path).parent / "loss_report.md"
     report_path.write_text(loss_report, encoding="utf-8")
+
+    # 10c-ii. Collect the background synthesis. Everything above ran while it was in
+    # flight, so this usually returns immediately; the elapsed figure printed here is the
+    # time it ACTUALLY cost the pipeline, not how long the call took.
+    if _synth_future is not None:
+        _wait_from = time.perf_counter()
+        try:
+            intel_model = _synth_future.result()
+        except Exception as e:  # noqa: BLE001 — synthesis must never break the dossier
+            print(f"[PIPELINE] Synthesis failed, continuing without it: {e}")
+            intel_model = None
+        finally:
+            _synth_pool.shutdown(wait=False)
+        waited = time.perf_counter() - _wait_from
+        _stage_times.append(("synthesis (overlapped)", waited))
+        print(
+            f"[TIMING] synthesis: {time.perf_counter() - _synth_started:.1f}s elapsed, "
+            f"{waited:.1f}s of it on the critical path."
+        )
+        if intel_model:
+            source_labels = [s["label"] for s in sources]
+            front_matter = render_front_matter(intel_model, source_labels)
+            print(
+                f"[PIPELINE] Synthesis produced {len(intel_model.get('findings') or [])} "
+                f"findings, {len(intel_model.get('timeline') or [])} timeline events."
+            )
 
     # 10d. Prepend the intelligence front matter so the dossier LEADS with the
     # executive summary, timeline, findings, cross-source analysis, and evidence

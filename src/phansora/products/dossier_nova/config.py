@@ -59,6 +59,16 @@ class Config:
         #     verdicts, fact/allegation calls) is NOT prepended to the dossier
         # Set SOURCE_ONLY_MODE=false to go back to the older synthesized-prose dossier.
         self.source_only_mode = os.getenv("SOURCE_ONLY_MODE", "true").lower() in ("true", "1", "yes")
+
+        # How many LLM calls are in flight at once, across every stage. These calls are
+        # pure network wait, so the ceiling is the provider's rate limit rather than this
+        # box's CPU — 8 was leaving most of the window unused on multi-source dossiers.
+        self.llm_max_workers = _get_int_env("LLM_MAX_WORKERS", 16)
+        # Skip the cleanup pass on sources that show no extraction damage. Costs one cheap
+        # regex scan and saves an entire LLM stage on any dossier built from article URLs.
+        self.skip_clean_when_undamaged = os.getenv(
+            "SKIP_CLEAN_WHEN_UNDAMAGED", "true"
+        ).lower() in ("true", "1", "yes")
         self.catchall_heading = os.getenv("CATCHALL_HEADING", "Miscellaneous")
         self.toc_target_heading_count = _get_int_env("TOC_TARGET_HEADING_COUNT", 60)
         # Ceiling on the TOC-organize answer. That call has to emit the WHOLE table of

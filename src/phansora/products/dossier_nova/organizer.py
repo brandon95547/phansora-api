@@ -156,6 +156,7 @@ class ChunkOrganizer:
         max_source_share: float = 0.40,
         claim_dedup_threshold: float = 0.90,
         source_only: bool = True,
+        max_workers: int = 8,
     ) -> None:
         self.client = client
         self.toc = toc
@@ -166,6 +167,7 @@ class ChunkOrganizer:
         # See provenance.py — this is the switch between "the model wrote the dossier"
         # and "the model decided where the sources go".
         self.source_only = source_only
+        self.max_workers = max_workers
         self.catchall_heading = catchall_heading
         self.content_similarity_threshold = content_similarity_threshold
         self.source_profiles = source_profiles or []
@@ -214,7 +216,7 @@ class ChunkOrganizer:
             raw_content = self._call_llm(prompt)
             return idx, chunk, raw_content
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, self.max_workers)) as executor:
             llm_results = list(executor.map(_classify_chunk, valid_chunks))
 
         for idx, chunk, raw_content in llm_results:
