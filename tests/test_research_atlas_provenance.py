@@ -11,7 +11,7 @@ different claim wearing the source's clothes.
 """
 import pytest
 
-from phansora.products.dossier_nova.provenance import (
+from phansora.products.research_atlas.provenance import (
     ground_passage,
     is_grounded,
     normalize_with_map,

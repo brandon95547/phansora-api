@@ -51,13 +51,16 @@ class Config:
         self.toc_full_path = os.getenv("TOC_FULL_PATH", str(BASE_DIR / "toc" / "full.md"))
         self.max_chunk_chars = _get_int_env("MAX_CHUNK_CHARS", 20000)
         self.conservative_mode = os.getenv("CONSERVATIVE_MODE", "false").lower() in ("true", "1", "yes")
-        # Source-only mode: the dossier contains ONLY verbatim spans of the sources.
-        # Two consequences, both on by default because this is what the product is for:
-        #   - every organized passage is grounded against its source (provenance.py) and
-        #     dropped if it cannot be found there
-        #   - the AI-authored intelligence front matter (executive summary, confidence
-        #     verdicts, fact/allegation calls) is NOT prepended to the dossier
-        # Set SOURCE_ONLY_MODE=false to go back to the older synthesized-prose dossier.
+        # Retained for the older dossier tooling that still reads it. Research Atlas
+        # does not consult it, and the reason is worth recording:
+        #
+        # SOURCE_ONLY_MODE existed to suppress the AI-authored front matter, because
+        # that front matter was the model's VERDICTS -- confidence ratings and
+        # fact-vs-allegation adjudications -- and shipping them inside a document of
+        # quoted sources was indefensible. Research Atlas does not produce verdicts, so
+        # there is nothing to suppress: the organized report IS the deliverable, and
+        # every line of it is attributed. Removing the judgments is precisely what made
+        # it safe to include the organized content in the document.
         self.source_only_mode = os.getenv("SOURCE_ONLY_MODE", "true").lower() in ("true", "1", "yes")
 
         # How many LLM calls are in flight at once, across every stage. These calls are

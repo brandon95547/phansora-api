@@ -203,7 +203,7 @@ def _clean_chunk(chunk: str, client: Any) -> str | None:
     """
     try:
         response = client.chat.completions.create(
-            model=chat_model("DOSSIER_MODEL"),
+            model=chat_model("RESEARCH_ATLAS_MODEL"),
             messages=[
                 {"role": "system", "content": _CLEANUP_SYSTEM_PROMPT},
                 {

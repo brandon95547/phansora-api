@@ -1,4 +1,4 @@
-"""Dossier Nova — AI research & dossier generation (formerly tomeweaver).
+"""Research Atlas — organizes supplied research material into a structured report.
 
 IMPORTANT — OpenMP guard.
 faiss and PyTorch (pulled in by sentence-transformers) each bundle their own

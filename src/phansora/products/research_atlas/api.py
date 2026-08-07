@@ -9,14 +9,14 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from phansora.shared.paths import runtime_root
-from .main import run_pipeline
+from .pipeline import run_pipeline
 
 
 BASE_DIR = runtime_root()
-TMP_DIR = BASE_DIR / "tmp" / "dossier_nova"
+TMP_DIR = BASE_DIR / "tmp" / "research_atlas"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="tomeweaver-api", version="1.0.0")
+app = FastAPI(title="research-atlas-api", version="2.0.0")
 
 
 _JOBS: dict[str, dict] = {}

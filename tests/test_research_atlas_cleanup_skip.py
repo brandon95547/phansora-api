@@ -12,7 +12,7 @@ So the tests below care most about the damaged cases still being caught.
 """
 import pytest
 
-from phansora.products.dossier_nova.text_cleaner import needs_cleanup
+from phansora.products.research_atlas.text_cleaner import needs_cleanup
 
 # Deliberately seeded with what naive artifact detection trips over: a bare domain, an
 # initialism, "e.g.", a Ph.D, and camelCase product names.

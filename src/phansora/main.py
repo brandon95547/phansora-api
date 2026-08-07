@@ -5,7 +5,9 @@ This module composes them into one process, mounting each under a path prefix:
 
     /spokenverse/*   -> SpokenVerse (PDF/OCR, text->audio, Book Alchemy)
     /chrono/*        -> Chrono-Origin (story/myth origin tracing)
-    /dossier/*       -> Dossier Nova (AI research & dossier generation)
+    /research-atlas/* -> Research Atlas (organizes research material into a report)
+    /dossier/*       -> alias of /research-atlas, kept so the Node worker keeps
+                        resolving during the rename; remove once it points at the new prefix
 
 A product is mounted only if it imports cleanly, so a host that is missing one
 product's optional heavy dependencies (torch, cosyvoice2, vllm, asyncpg, ...)
@@ -36,7 +38,10 @@ logger = logging.getLogger("phansora")
 _PRODUCT_APPS = {
     "/spokenverse": "phansora.products.spokenverse.server:app",
     "/chrono": "phansora.products.chrono_origin.server:app",
-    "/dossier": "phansora.products.dossier_nova.api:app",
+    "/research-atlas": "phansora.products.research_atlas.api:app",
+    # Same app under the old prefix. Mounting both means the API can be deployed
+    # before the Node worker is updated, instead of the two having to land together.
+    "/dossier": "phansora.products.research_atlas.api:app",
     "/book-alchemy": "phansora.products.book_alchemy.server:app",
     "/studio": "phansora.products.narrava_studio.server:app",
 }
@@ -44,7 +49,8 @@ _PRODUCT_APPS = {
 _PREFIX_TO_KEY = {
     "/spokenverse": "spokenverse",
     "/chrono": "chrono_origin",
-    "/dossier": "dossier_nova",
+    "/research-atlas": "research_atlas",
+    "/dossier": "research_atlas",
     "/book-alchemy": "book_alchemy",
     "/studio": "narrava_studio",
 }
