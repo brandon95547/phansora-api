@@ -122,6 +122,12 @@ Return ONLY valid JSON in exactly this shape:
   "observations": [
     {"observation": "something notable about the RECORD -- a recurring name, an overlap between sources, a dense cluster of events", "sources": ["Source 1", "..."]}
   ],
+  "threads": [
+    {"name": "short label for a subject area the collection keeps returning to, in the sources' own terms",
+     "summary": "2-4 sentences on what the collection carries under this subject, attributed throughout",
+     "entities": ["names copied EXACTLY as they appear in the record above, for the people, organizations and places belonging to this thread"],
+     "sources": ["Source 1", "..."]}
+  ],
   "cross_source": {
     "corroborated": [{"statement": "an item more than one source carries", "sources": ["Source 1", "Source 3"]}],
     "single_source": [{"statement": "an item only one source carries", "source": "Source 2"}],
@@ -137,6 +143,12 @@ Return ONLY valid JSON in exactly this shape:
   ],
   "synthesis": "4-10 sentences connecting the collection into a coherent account of what it describes, attributed throughout. Do not conclude, do not advise, do not tell the reader what it means."
 }
+
+Give 3 to 6 threads, ordered by how much of the collection they carry. A thread's
+"entities" must be names that appear in the record above, copied character for character
+-- the report resolves them back to the extracted entries, and a name that does not match
+one is dropped. Do not invent a thread to round the number up; if the collection only
+sustains two, return two.
 
 Use plain ASCII."""
 

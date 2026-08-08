@@ -169,7 +169,7 @@ def run_pipeline(
         "ok": True,
         "output_path": str(out_path),
         "toc_full_path": str(out_path),
-        "sections": list(report.SECTIONS),
+        "sections": list(report.SECTIONS) + [f"Appendix {l} -- {n}" for l, n in report.APPENDICES],
         "source_labels": labels,
         "chunk_count": len(units),
         "chunks_extracted": len(per_chunk),

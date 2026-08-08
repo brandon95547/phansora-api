@@ -36,6 +36,9 @@ class RunPipelineRequest(BaseModel):
     toc_full_path: str | None = None
     max_chunk_chars: int | None = None
     sources: list[SourceItem] | None = None
+    # The report prints this as its H1, so the caller's own name for the job ends up on
+    # the cover. Optional: run_pipeline falls back to a generic title.
+    title: str | None = None
 
 
 def _utc_now_iso() -> str:
@@ -95,12 +98,16 @@ async def _run_pipeline_job(job_id: str, payload: RunPipelineRequest) -> None:
             temp_toc_path = TMP_DIR / f"api_toc_{uuid.uuid4().hex}.md"
             run_toc_path = str(temp_toc_path)
 
+        kwargs = {}
+        if (payload.title or "").strip():
+            kwargs["title"] = payload.title.strip()
         result = await asyncio.to_thread(
             run_pipeline,
             input_path=run_input_path,
             toc_full_path=run_toc_path,
             max_chunk_chars=payload.max_chunk_chars,
             sources=run_sources,
+            **kwargs,
         )
 
         toc_markdown = ""

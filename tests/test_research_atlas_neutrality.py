@@ -157,17 +157,56 @@ class TestMerge:
 
 
 class TestReport:
-    def test_all_sixteen_sections_always_render(self, per_chunk):
+    def test_every_section_and_appendix_always_renders(self, per_chunk):
         rec = E.merge_extractions(per_chunk)
         md = R.render_report(rec, {}, ["brief.pdf", "interview.mp3"])
         for i, name in enumerate(R.SECTIONS, start=1):
             assert f"## {i}. {name}" in md
+        for letter, name in R.APPENDICES:
+            assert f"## Appendix {letter} -- {name}" in md
+
+    def test_the_document_is_split_into_two_parts(self, per_chunk):
+        """Part I is read; Part II is looked things up in. The order is the product."""
+        rec = E.merge_extractions(per_chunk)
+        md = R.render_report(rec, {}, ["brief.pdf", "interview.mp3"])
+        part1, part2 = md.index("# PART I -- RESEARCH REPORT"), md.index("# PART II -- RESEARCH INDEX")
+        assert part1 < part2
+        # Every Part I section precedes the index, and every appendix follows it.
+        assert all(part1 < md.index(f"## {i}. {n}") < part2
+                   for i, n in enumerate(R.SECTIONS, start=1))
+        assert all(md.index(f"## Appendix {l} -- {n}") > part2 for l, n in R.APPENDICES)
+
+    def test_part_one_caps_say_where_the_rest_of_the_material_is(self):
+        """A capped list must never look like a complete one."""
+        many = E.merge_extractions([
+            (f"src{i}.txt", {"people": [{"name": f"Person {j}", "described_as": "named"}
+                                        for j in range(40)],
+                             "organizations": [], "places": [], "timeline": [], "events": [],
+                             "claims": [], "documents": [], "relationships": [], "gaps": []})
+            for i in range(2)
+        ])
+        md = R.render_report(many, {}, ["src0.txt", "src1.txt"])
+        key_people = md[md.index("## 4. Key People"):md.index("## 5. Key Organizations")]
+        assert key_people.count("###") <= R.MAX_KEY_PEOPLE
+        assert "further people are recorded in Appendix A" in key_people
+
+    def test_nothing_extracted_is_dropped_from_the_index(self, per_chunk):
+        """Part I selects; Part II must still carry every extracted item."""
+        rec = E.merge_extractions(per_chunk)
+        md = R.render_report(rec, {}, ["brief.pdf", "interview.mp3"])
+        index = md[md.index("# PART II -- RESEARCH INDEX"):]
+        for p in rec["people"]:
+            assert p["name"] in index
+        for t in rec["timeline"]:
+            assert t["event"] in index
+        for r in rec["relationships"]:
+            assert r["relation"] in index
 
     def test_empty_sections_say_so_instead_of_vanishing(self):
         """Absence is a finding. A missing heading looks like nobody looked."""
         empty = E.merge_extractions([])
         md = R.render_report(empty, {}, ["only.pdf"])
-        assert "## 10. Documents and Supporting Material" in md
+        assert "## Appendix G -- Complete Document and Evidence Index" in md
         assert "No entries of this kind were recorded" in md
 
     def test_chains_span_sources_but_only_use_attributed_links(self, per_chunk):
@@ -175,6 +214,72 @@ class TestReport:
         md = R.render_report(rec, {}, ["brief.pdf", "interview.mp3"])
         assert "Chains formed by the links above" in md
         assert "Alice Reyes -> worked for -> Meridian Group -> operated from -> Harbor Point" in md
+
+    def test_citations_collapse_instead_of_repeating_the_word_source(self):
+        sm = R.SourceMap(["a.txt", "b.txt", "c.txt"])
+        assert sm.cite(["a.txt"]) == "Source 1"
+        assert sm.cite(["c.txt", "a.txt", "b.txt"]) == "Sources 1, 2 and 3"
+        # An unmapped label is still attributed, just less tidily.
+        assert "unmapped.txt" in sm.cite(["a.txt", "unmapped.txt"])
+
+
+class TestImportanceTags:
+    """The tags are counts. Each rung of the printed ladder is asserted here, because
+    the ladder in "How to Read This Report" claims to be exactly this function."""
+
+    @pytest.mark.parametrize("n_sources,mentions,detail,expected", [
+        (3, 0, False, "Core"),         # three sources is Core on its own
+        (2, 1, False, "Core"),         # two sources plus a cross-reference
+        (2, 0, False, "Supporting"),   # two sources, nothing else
+        (1, 3, False, "Supporting"),   # one source, heavily cross-referenced
+        (1, 1, False, "Peripheral"),
+        (1, 0, True, "Peripheral"),    # described, but nothing points at it
+        (1, 0, False, "Reference"),    # a bare name
+    ])
+    def test_ladder(self, n_sources, mentions, detail, expected):
+        assert R._tier(n_sources, mentions, detail) == expected
+
+    @pytest.mark.parametrize("n_sources,expected", [(3, "Core"), (2, "Supporting"), (1, "Reference")])
+    def test_documents_run_on_their_own_ladder(self, n_sources, expected):
+        assert R._document_tier(n_sources) == expected
+
+    def test_a_tag_matches_the_sources_cited_beside_it(self):
+        """Comet Ping Pong is an organization in four sources and a place in one. The
+        place entry must not print [Core] next to a single-source citation."""
+        rec = E.merge_extractions([
+            (f"s{i}.txt", {"people": [], "places": [], "timeline": [], "events": [],
+                           "claims": [], "documents": [], "relationships": [], "gaps": [],
+                           "organizations": [{"name": "Comet Ping Pong", "described_as": "a venue"}]})
+            for i in range(3)
+        ] + [
+            ("s0.txt", {"people": [], "organizations": [], "timeline": [], "events": [],
+                        "claims": [], "documents": [], "relationships": [], "gaps": [],
+                        "places": [{"name": "Comet Ping Pong", "described_as": "an address"}]}),
+        ])
+        corpus = R.Corpus(rec)
+        org = next(o for o in rec["organizations"] if o["name"] == "Comet Ping Pong")
+        place = next(p for p in rec["places"] if p["name"] == "Comet Ping Pong")
+        assert corpus.tier_of_entry(org) == "Core"
+        assert corpus.tier_of_entry(place) != "Core"
+        # Centrality is still a property of the subject, whichever list it was filed in.
+        assert corpus.tier_of("Comet Ping Pong") == "Core"
+
+
+class TestConnectionClusters:
+    def test_clusters_do_not_all_restate_the_same_opening_link(self):
+        """A hub entity is linked to everything, so "longest chain first" returned a
+        dozen chains that all began with the same hop -- one connection, printed twelve
+        times as twelve findings."""
+        links = [{"from": "Hub", "relation": "knows", "to": f"P{i}", "sources": ["s"]}
+                 for i in range(6)]
+        links += [{"from": f"P{i}", "relation": "worked at", "to": f"Org{i}", "sources": ["s"]}
+                  for i in range(6)]
+        links += [{"from": f"Org{i}", "relation": "based in", "to": f"City{i}", "sources": ["s"]}
+                  for i in range(6)]
+        chains = R._build_chains(links, limit=6)
+        openings = {(c[0]["from"], c[0]["to"]) for c in chains}
+        assert len(chains) == 6
+        assert len(openings) == 6
 
     def test_report_is_ascii_only(self, per_chunk):
         """The Node PDF renderer downstream strips non-ASCII glyphs."""
