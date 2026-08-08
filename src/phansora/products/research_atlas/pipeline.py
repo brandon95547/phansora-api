@@ -163,7 +163,12 @@ def run_pipeline(
     print(f"[ATLAS] report written to {out_path} in {elapsed:.1f}s")
 
     return {
+        # The Node worker treats a result without `ok` as a failed run, and the HTTP
+        # layer resolves the finished Markdown through `toc_full_path`. Both keys are
+        # part of the contract this pipeline inherited, not decoration.
+        "ok": True,
         "output_path": str(out_path),
+        "toc_full_path": str(out_path),
         "sections": list(report.SECTIONS),
         "source_labels": labels,
         "chunk_count": len(units),
