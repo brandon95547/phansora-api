@@ -59,11 +59,17 @@ class ScriptGenerateResponse(BaseModel):
 
 # ── Enhance (Write tab: polish narration the user typed) ─────────────────────
 # Not a generation. The words are the user's; this returns the same narration written
-# better. The cap is generous because it is applied to a whole script at once, and the
-# request carries nothing else — no style, no duration — because there is nothing to
-# steer: the text already says what it wants to say.
+# better. The cap is generous because it is applied to a whole script at once.
+#
+# `style` is the VOICE to rewrite it in (see services/enhance_styles) — the one thing
+# there is to steer here, since the text already says what it wants to say and only the
+# way it says it is in question. Bounded string rather than a Literal, and for the same
+# reason doc_style is: a name this version does not know polishes in the default calm
+# voice instead of 422-ing over a creative preference. No duration, no tone: both belong
+# to writing a script, not to rereading one.
 class ScriptEnhanceRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=20000)
+    style: Optional[str] = Field(default=None, max_length=40)
 
 
 class ScriptEnhanceResponse(BaseModel):

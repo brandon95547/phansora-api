@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import List
+from typing import List, Optional
 
 from .. import config
 from ..models import Script, ScriptSegment
-from . import llm, styles
+from . import enhance_styles, llm, styles
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 # Split on sentence-ending punctuation followed by whitespace. Good enough for
@@ -366,29 +366,38 @@ def generate_script(
 # the piece the user already wrote. The model may reword freely, and may not add to,
 # remove from, or reorder what was said — a "better" narration that argues something
 # slightly different is a worse answer than leaving the text alone.
+#
+# The writer also chooses a VOICE (see services/enhance_styles) — dark, angry,
+# investigative, cinematic, calm or light. That decides how the narration sounds, and
+# nothing else: it is spliced into the prompt below between the standing permissions and
+# the standing prohibitions, precisely so it can never be read as permission to break one.
 _ENHANCE_SYSTEM = """
-You are an editor polishing narration that will be read aloud in a video.
+You are an editor rewriting narration that will be read aloud in a video.
 
-The words are the writer's. Return the SAME narration, written better.
+The words are the writer's. Return the SAME narration, in the voice described below.
+
+{voice}
 
 You may:
 - Fix grammar, spelling, punctuation and tense.
-- Reword a sentence when different wording says the same thing more clearly, or reads
-  better aloud.
+- Reword a sentence, freely, so it carries the voice above — including changing its
+  register, its rhythm and how formal or informal it sounds.
 - Split a sentence that is hard to follow, or join two that are stronger together.
 - Replace a vague or repeated word with a more precise one.
+- Re-order the words WITHIN a sentence for emphasis.
 
 You must not:
 - Add any fact, name, number, claim, opinion or example that is not already there.
+- Add imagery, atmosphere, drama or emphasis that the writer's text does not support —
+  the voice is in how a thing is said, never in saying more than was said.
 - Remove anything the writer said, or soften a point they made.
 - Change the order in which the ideas are presented.
 - Change the language, the person (I / we / you), or the tense the piece is written in.
-- Change the register: keep casual writing casual and formal writing formal.
 - Add a title, headings, labels, stage directions or markdown.
 - Add or remove paragraph breaks.
 
-If a passage is already good, leave it exactly as it is. Returning the text unchanged is a
-valid answer.
+Where a passage already reads in this voice, leave it exactly as it is. Returning the text
+unchanged is a valid answer.
 
 Output the narration and nothing else: no preamble, no explanation, no quotation marks
 around it, no notes about what you changed.
@@ -400,8 +409,12 @@ around it, no notes about what you changed.
 _ENHANCE_MIN_RATIO = 0.6
 
 
-def enhance_narration(text: str) -> str:
-    """Narration the user wrote -> the same narration, written better.
+def enhance_narration(text: str, style: Optional[str] = None) -> str:
+    """Narration the user wrote -> the same narration, in the voice they picked.
+
+    `style` is one of services/enhance_styles.ENHANCE_STYLES. Missing or unrecognised
+    resolves to the calm documentary voice rather than raising — see enhance_styles.entry
+    for why a creative preference is never worth failing a request over.
 
     Pinned to DeepSeek rather than following the provider switch (see llm.deepseek_text).
 
@@ -414,9 +427,10 @@ def enhance_narration(text: str) -> str:
     if not src:
         return ""
 
+    system = _ENHANCE_SYSTEM.format(voice=enhance_styles.voice_block(style))
     words = _word_count(src)
     budget = max(600, min(8000, int(words * 2.2) + 300))
-    out = _strip_artifacts(llm.deepseek_text(_ENHANCE_SYSTEM, src, max_output_tokens=budget))
+    out = _strip_artifacts(llm.deepseek_text(system, src, max_output_tokens=budget))
 
     if not out:
         raise RuntimeError("The model returned nothing to use.")

@@ -4,7 +4,7 @@ Mounted by phansora.main under ``/studio``. Endpoints:
 
   GET  /voices           -> preset narration voices
   POST /script/generate  -> prompt      -> narrator script (timed beats)   [LLM]
-  POST /script/enhance   -> narration   -> the same narration, polished    [DeepSeek]
+  POST /script/enhance   -> narration   -> the same narration, in a voice  [DeepSeek]
   POST /script/segment   -> pasted text -> timed beats                     [no LLM]
   POST /timeline/build   -> beats       -> preliminary media timeline      [LLM+web]
 
@@ -120,7 +120,7 @@ async def generate_script(req: ScriptGenerateRequest):
 
 @app.post("/script/enhance", response_model=ScriptEnhanceResponse)
 async def enhance_narration(req: ScriptEnhanceRequest):
-    """Narration the user typed -> the same narration, written better.
+    """Narration the user typed -> the same narration, in the voice they picked.
 
     Its own key check rather than _ensure_llm: this one is pinned to DeepSeek, so a host
     running the OpenAI provider would pass the generic check and then fail on the call.
@@ -135,7 +135,7 @@ async def enhance_narration(req: ScriptEnhanceRequest):
         # uvicorn worker — a blocking call on the event loop stalls every other request.
         text = await asyncio.get_running_loop().run_in_executor(
             None,
-            lambda: script.enhance_narration(req.text),
+            lambda: script.enhance_narration(req.text, style=req.style),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Narration enhance failed")
