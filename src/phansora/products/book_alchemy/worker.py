@@ -45,6 +45,23 @@ PHASE_MAX_ATTEMPTS = int(os.getenv("BOOK_ALCHEMY_PHASE_MAX_ATTEMPTS", "2"))
 _stop = asyncio.Event()
 
 
+def _cleanup_ocr_cache(source_path: Path) -> None:
+    """Drop the resume cache that a scanned PDF leaves behind.
+
+    It only exists to survive an interrupted OCR run; once parsing is behind us it
+    is dead weight — one small file per page of the book."""
+    cache = pipeline.ocr_cache_dir(source_path)
+    try:
+        if not cache.is_dir() or cache.name != "ocr_cache":
+            return
+        for entry in cache.iterdir():
+            if entry.is_file():
+                entry.unlink()
+        cache.rmdir()
+    except OSError:
+        log.warning("Could not remove OCR cache %s", cache, exc_info=True)
+
+
 def _cleanup_source(proj: dict) -> None:
     """Delete the uploaded source file (PDF/EPUB/etc.) once parsing is behind us.
 
@@ -62,6 +79,8 @@ def _cleanup_source(proj: dict) -> None:
     try:
         path = Path(source_path).resolve()
         base = storage.BASE_DIR.resolve()
+        if base in path.parents:
+            _cleanup_ocr_cache(path)
         if base in path.parents and path.is_file():
             path.unlink()
             log.info("Deleted source file for project %s: %s", proj.get("id"), path.name)
@@ -112,6 +131,23 @@ async def _fail(project_id: int, proj: dict, message: str) -> None:
     _cleanup_source(proj)
 
 
+async def _heartbeat(project_id: int) -> None:
+    """Hold the lease while a single step runs.
+
+    Renewing only BETWEEN steps was fine when every step was bounded in minutes,
+    but parsing a scanned book is hours of work inside one step: the lease expired
+    while the worker was still busy, leaving the row claimable by anyone. With one
+    worker that was invisible; with two it is the same book read twice.
+    """
+    interval = max(30, LEASE_SECONDS // 3)
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
+        except Exception:  # noqa: BLE001 — a DB blip must not end the run
+            log.warning("Lease renewal failed for project %s", project_id, exc_info=True)
+
+
 async def _process_project(project_id: int, client: DeepSeekClient) -> None:
     """Drive one claimed project until it has nothing more to do, renewing its
     lease. "Nothing more" now includes parking to wait for the listener to ask
@@ -130,16 +166,32 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
         if not cleaned and proj["phase"] not in ("uploaded", "parse"):
             _cleanup_source(proj)
             cleaned = True
+        beat = asyncio.ensure_future(_heartbeat(project_id))
         try:
             await pipeline.run_step(proj, client)
+        except pipeline.RetryableError as exc:
+            # Interrupted, not broken. Leave status 'processing' and let the lease
+            # drop: the next worker claims the row and resumes from what's on disk.
+            log.warning("Project %s interrupted, will resume: %s", project_id, exc)
+            await db.set_project(project_id, stage="Paused — resuming shortly")
+            return
         except pipeline.TerminalError as exc:
             log.warning("Project %s failed (terminal): %s", project_id, exc)
             await _fail(project_id, proj, str(exc))
             return
         except Exception as exc:  # noqa: BLE001
+            # Same reasoning as RetryableError, for the phases that don't name it
+            # themselves: audio rendering loses its ffmpeg and its HTTP call to the
+            # API in the same instant a restart arrives.
+            if _stop.is_set() or pipeline.shutting_down():
+                log.warning("Project %s interrupted by shutdown, will resume: %s", project_id, exc)
+                await db.set_project(project_id, stage="Paused — resuming shortly")
+                return
             log.exception("Project %s step crashed", project_id)
             await _fail(project_id, proj, str(exc))
             return
+        finally:
+            beat.cancel()
         await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
 
 
@@ -179,10 +231,21 @@ async def _sleep_or_stop(seconds: float) -> None:
         pass
 
 
+def _on_signal() -> None:
+    """Stop the loop AND tell the pipeline this is a shutdown.
+
+    systemd kills the whole control group, so a step's child processes (Tesseract,
+    ffmpeg) die at the same moment the worker is asked to stop. Without this flag
+    the pipeline sees only "the child died" and fails a perfectly good book.
+    """
+    _stop.set()
+    pipeline.signal_shutdown()
+
+
 def _install_signals(loop: asyncio.AbstractEventLoop) -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, _stop.set)
+            loop.add_signal_handler(sig, _on_signal)
         except NotImplementedError:  # pragma: no cover (non-unix)
             pass
 

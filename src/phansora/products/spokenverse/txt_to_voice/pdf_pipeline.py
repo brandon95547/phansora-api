@@ -14,11 +14,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -28,6 +29,13 @@ from phansora.shared.ai.deepseek import DeepSeekChatConfig, clean_ocr_text
 from phansora.shared.utils.naming import sanitize_stem
 
 LOG = logging.getLogger("txt_to_voice")
+
+# Called as await on_progress(step, done, total) where step is "ocr" or "clean".
+# Reading a scanned book is by far the longest stretch in this pipeline, and a
+# caller that shows a progress bar has nothing else to go on: the two stages are
+# one function call from the outside, and neither used to say anything until it
+# had finished the whole book.
+ProgressFn = Callable[[str, int, int], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -260,7 +268,45 @@ class PdfConverter:
         flush()
         return batches
 
-    async def _clean_batches(self, batches: List[str], pdf_name: str) -> List[str]:
+    # ------------------------------------------------------------ resume cache
+    #
+    # Both slow stages write each finished unit to `cache_dir` and skip any unit
+    # already sitting there. Recognizing a thousand-page scan takes well over an
+    # hour and cleaning it takes another, and until now that was all-or-nothing
+    # work held in memory: a deploy, a restart or a crash part-way through threw
+    # away every finished page and started again at page one. Nothing here is
+    # required — with no cache_dir the pipeline behaves exactly as before.
+    @staticmethod
+    def _cache_read(path: Optional[Path]) -> Optional[str]:
+        if path is None:
+            return None
+        try:
+            return path.read_text(encoding="utf-8") if path.is_file() else None
+        except OSError:
+            LOG.warning("Unreadable cache entry %s", path, exc_info=True)
+            return None
+
+    @staticmethod
+    def _cache_write(path: Optional[Path], text: str) -> None:
+        """Write via a temp file so a kill mid-write can't leave a half page that
+        a later run would trust."""
+        if path is None:
+            return
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8", errors="replace")
+            tmp.replace(path)
+        except OSError:
+            LOG.warning("Could not write cache entry %s", path, exc_info=True)
+
+    async def _clean_batches(
+        self,
+        batches: List[str],
+        pdf_name: str,
+        *,
+        cache_dir: Optional[Path] = None,
+        on_progress: Optional[ProgressFn] = None,
+    ) -> List[str]:
         """
         Clean OCR text batches concurrently (bounded by clean_concurrency).
         """
@@ -269,44 +315,125 @@ class PdfConverter:
 
         sem = asyncio.Semaphore(max(1, int(self.cfg.clean_concurrency)))
         cleaned_by_idx: Dict[int, str] = {}
+        total = len(batches)
+        done = 0
+
+        def _cache_path(batch: str) -> Optional[Path]:
+            if cache_dir is None:
+                return None
+            # Keyed by content, not position: a resumed run rebuilds batches from
+            # the same pages and so asks the same questions, but keying by index
+            # would silently reuse an answer if the batching ever shifted.
+            digest = hashlib.sha256(batch.encode("utf-8", "replace")).hexdigest()[:32]
+            return cache_dir / f"clean_{digest}.txt"
+
+        async def _tick() -> None:
+            nonlocal done
+            done += 1
+            if on_progress is not None:
+                await on_progress("clean", done, total)
 
         async def run_one(i: int, batch: str) -> None:
+            path = _cache_path(batch)
+            hit = self._cache_read(path)
+            if hit is not None:
+                cleaned_by_idx[i] = hit.strip()
+                await _tick()
+                return
             async with sem:
-                LOG.info("DeepSeek clean batch %d/%d: %s", i + 1, len(batches), pdf_name)
+                LOG.info("DeepSeek clean batch %d/%d: %s", i + 1, total, pdf_name)
                 cleaned = await clean_ocr_text(
                     batch,
                     cfg=self.chat_cfg,
                     max_output_tokens=self.cfg.max_output_tokens,
                 )
-                cleaned_by_idx[i] = (cleaned or "").strip()
+                cleaned = (cleaned or "").strip()
+                cleaned_by_idx[i] = cleaned
+                # An empty answer is a failed call, not a result: leave it uncached
+                # so a resumed run asks again instead of inheriting the hole.
+                if cleaned:
+                    self._cache_write(path, cleaned)
+            await _tick()
 
         tasks = [asyncio.create_task(run_one(i, batch)) for i, batch in enumerate(batches)]
-        await asyncio.gather(*tasks)
-        return [cleaned_by_idx[i] for i in range(len(batches)) if cleaned_by_idx.get(i)]
+        await self._gather_or_cancel(tasks)
+        return [cleaned_by_idx[i] for i in range(total) if cleaned_by_idx.get(i)]
 
-    async def _ocr_pages(self, pages: List[Tuple[int, bytes]], pdf_name: str) -> List[Tuple[int, str]]:
+    async def _ocr_pages(
+        self,
+        pages: List[Tuple[int, bytes]],
+        pdf_name: str,
+        *,
+        cache_dir: Optional[Path] = None,
+        on_progress: Optional[ProgressFn] = None,
+    ) -> List[Tuple[int, str]]:
         """
         OCR page images concurrently and return sorted (page_num, raw_text).
         """
         sem = asyncio.Semaphore(max(1, int(self.cfg.ocr_concurrency)))
         raw_by_page: Dict[int, str] = {}
         total = len(pages)
+        done = 0
+        resumed = 0
+
+        async def _tick() -> None:
+            nonlocal done
+            done += 1
+            if on_progress is not None:
+                await on_progress("ocr", done, total)
 
         async def run_one(page_num: int, image_bytes: bytes) -> None:
+            nonlocal resumed
+            path = None if cache_dir is None else cache_dir / f"page_{page_num:05d}.txt"
+            hit = self._cache_read(path)
+            if hit is not None:
+                raw_by_page[page_num] = hit
+                resumed += 1
+                await _tick()
+                return
             async with sem:
                 LOG.info("OCR (tesseract) page %d/%d: %s", page_num, total, pdf_name)
                 raw = await asyncio.to_thread(ocr_image_bytes, image_bytes, cfg=self.ocr_cfg)
                 raw_by_page[page_num] = raw
+                self._cache_write(path, raw)
+            await _tick()
 
         tasks = [asyncio.create_task(run_one(page_num, image_bytes)) for page_num, image_bytes in pages]
-        await asyncio.gather(*tasks)
+        await self._gather_or_cancel(tasks)
+        if resumed:
+            LOG.info("OCR resumed from cache: %d/%d pages already recognized (%s)", resumed, total, pdf_name)
         return [(p, raw_by_page[p]) for p, _ in pages if p in raw_by_page]
 
-    async def _clean_page_block(self, page_texts: List[Tuple[int, str]], pdf_name: str) -> str:
+    @staticmethod
+    async def _gather_or_cancel(tasks: List["asyncio.Task"]) -> None:
+        """Await every task, and on the first failure cancel the rest.
+
+        Without the cancel, a shutdown that kills the OCR children leaves a
+        thousand queued tasks running behind the raised error, so the worker takes
+        its full stop timeout to die and systemd escalates to SIGKILL.
+        """
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            raise
+
+    async def _clean_page_block(
+        self,
+        page_texts: List[Tuple[int, str]],
+        pdf_name: str,
+        *,
+        cache_dir: Optional[Path] = None,
+        on_progress: Optional[ProgressFn] = None,
+    ) -> str:
         batches = self._build_batches(page_texts)
         if not batches:
             return ""
-        cleaned_parts = await self._clean_batches(batches, pdf_name)
+        cleaned_parts = await self._clean_batches(
+            batches, pdf_name, cache_dir=cache_dir, on_progress=on_progress
+        )
         return "\n\n".join(cleaned_parts).strip()
 
     async def _write_chapter_outputs(
@@ -314,6 +441,9 @@ class PdfConverter:
         page_texts: List[Tuple[int, str]],
         pdf_name: str,
         out_txt_path: Path,
+        *,
+        cache_dir: Optional[Path] = None,
+        on_progress: Optional[ProgressFn] = None,
     ) -> Path:
         chapter_ranges = self._build_chapter_ranges(page_texts)
         if not chapter_ranges:
@@ -325,7 +455,11 @@ class PdfConverter:
 
         written = 0
         for idx, (_chapter_title, chapter_pages) in enumerate(chapter_ranges, start=1):
-            cleaned = await self._clean_page_block(chapter_pages, pdf_name)
+            # Chapter mode reports one tick per chapter rather than per batch, so
+            # the count a caller sees keeps climbing in one direction.
+            cleaned = await self._clean_page_block(chapter_pages, pdf_name, cache_dir=cache_dir)
+            if on_progress is not None:
+                await on_progress("clean", idx, len(chapter_ranges))
             if not cleaned:
                 # If the cleaner drops a chapter entirely, keep raw OCR pages so
                 # chapter count/order are preserved.
@@ -348,11 +482,28 @@ class PdfConverter:
         LOG.info("PDF -> chapter TXT files: %s -> %s (%d files)", pdf_name, out_root, written)
         return out_root
 
-    async def convert_pdf_to_txt_async(self, pdf_path: Path, out_txt_path: Path) -> Path:
+    async def convert_pdf_to_txt_async(
+        self,
+        pdf_path: Path,
+        out_txt_path: Path,
+        *,
+        cache_dir: Optional[Path] = None,
+        on_progress: Optional[ProgressFn] = None,
+    ) -> Path:
+        """Render, recognize and clean a PDF into text.
+
+        `cache_dir` makes the run resumable: finished pages and cleaned batches
+        are written there and reused, so an interrupted book picks up where it
+        stopped instead of starting over. `on_progress` is awaited as
+        (step, done, total) for callers that need to show movement — the two
+        stages together run for hours on a large scan.
+        """
         if not pdf_path.exists() or not pdf_path.is_file():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
         out_txt_path.parent.mkdir(parents=True, exist_ok=True)
+        if cache_dir is not None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
         pdf_bytes = pdf_path.read_bytes()
 
         # 1) Render PDF pages -> images
@@ -363,14 +514,25 @@ class PdfConverter:
         LOG.info("Rendering complete: %s (%d pages)", pdf_path.name, len(pages))
 
         # 2) Tesseract OCR per page -> raw text (concurrent)
-        raw_pages = await self._ocr_pages(pages, pdf_path.name)
+        raw_pages = await self._ocr_pages(
+            pages, pdf_path.name, cache_dir=cache_dir, on_progress=on_progress
+        )
+        # The rendered images are the biggest thing this function holds — a
+        # thousand-page scan is hundreds of megabytes — and nothing reads them
+        # again once the text is out.
+        pages.clear()
 
         # 3) chapter mode
         if self.cfg.to_chapters:
-            return await self._write_chapter_outputs(raw_pages, pdf_path.name, out_txt_path)
+            return await self._write_chapter_outputs(
+                raw_pages, pdf_path.name, out_txt_path,
+                cache_dir=cache_dir, on_progress=on_progress,
+            )
 
         # 4) classic single-output mode
-        final_text = await self._clean_page_block(raw_pages, pdf_path.name)
+        final_text = await self._clean_page_block(
+            raw_pages, pdf_path.name, cache_dir=cache_dir, on_progress=on_progress
+        )
         if not final_text:
             raise RuntimeError("DeepSeek cleaning returned empty output.")
 

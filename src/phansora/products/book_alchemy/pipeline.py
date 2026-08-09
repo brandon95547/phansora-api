@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import math
+import re
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -77,6 +79,45 @@ MAX_PRIOR_COVERAGE_CHARS = 6_000  # what earlier lessons taught, carried into ea
 
 class TerminalError(Exception):
     """A non-recoverable error; the project should be marked failed."""
+
+
+class RetryableError(Exception):
+    """The step was interrupted by something that isn't the book's fault.
+
+    The project keeps its place and is picked up again — by this worker or the
+    next one — rather than being failed and refunded. Restarting the worker is
+    the case that matters: systemd sends SIGTERM to the whole control group, so
+    the Tesseract child of a running OCR dies too, and that used to surface as
+    "OCR failed for scanned PDF: (-15, ...)" and permanently fail a book that had
+    nothing wrong with it.
+    """
+
+
+# Set by the worker's signal handler. A failure that happens while this is true
+# is a consequence of the shutdown, not a verdict on the source document.
+_shutting_down = False
+
+
+def signal_shutdown() -> None:
+    global _shutting_down
+    _shutting_down = True
+
+
+def shutting_down() -> bool:
+    return _shutting_down
+
+
+def _killed_by_signal(exc: BaseException) -> bool:
+    """Did this exception come from a child process being killed?
+
+    pytesseract reports the child's exit status, and a negative status is the
+    POSIX convention for "died on signal N" — SIGTERM from a restart, or SIGKILL
+    from the OOM killer. Neither says anything about the PDF.
+    """
+    status = getattr(exc, "status", None)
+    if isinstance(status, int) and status < 0:
+        return True
+    return bool(re.search(r"^\(-\d+,", str(exc).strip()))
 
 
 # Cursor values that mean "there is nothing for the worker to do here". One list,
@@ -144,7 +185,7 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     if not chunks:
         raise TerminalError("No readable text could be extracted from the source.")
 
-    await db.set_project(pid, stage="Chunking content", progress=8)
+    await db.set_project(pid, stage="Chunking content", progress=CLEAN_PROGRESS_CEILING)
     await db.insert_chunks(pid, chunks)
 
     # Derive a clean course title — uploads can have very long or mis-encoded
@@ -159,6 +200,66 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     )
 
 
+# How the scanned-PDF detour spends the progress bar. Parse owns 4-10%: the OCR
+# read and the cleaning pass split 4-9 between them, leaving 9-10 for chunking.
+# The numbers are small on purpose — this is early work — but they must MOVE.
+# Recognizing a thousand-page scan runs well over an hour, and reporting a single
+# flat 6% for all of it is indistinguishable from a hung job; the stage line
+# carries the page count that actually tells a reader it is alive.
+OCR_PROGRESS_FLOOR = 4
+OCR_PROGRESS_CEILING = 7
+CLEAN_PROGRESS_CEILING = 9
+OCR_PROGRESS_INTERVAL_S = 2.0     # at most one row update this often
+
+
+def _ocr_progress_reporter(pid: int):
+    """Build the callback the PDF pipeline ticks, throttled to spare the DB.
+
+    Pages land every second or so across four OCR workers; the reader gains
+    nothing from a write per page, so updates are rate-limited and only the last
+    one in each stage is guaranteed.
+    """
+    state = {"last_write": 0.0, "last_done": {"ocr": 0, "clean": 0}}
+
+    async def report(step: str, done: int, total: int) -> None:
+        total = max(1, total)
+        finished = done >= total
+        now = time.monotonic()
+        if not finished and (now - state["last_write"]) < OCR_PROGRESS_INTERVAL_S:
+            return
+        # Ticks arrive from concurrent tasks, so a slow write could otherwise
+        # land after a newer one and walk the count backwards.
+        if done <= state["last_done"].get(step, 0) and not finished:
+            return
+        state["last_write"] = now
+        state["last_done"][step] = done
+
+        if step == "ocr":
+            span = OCR_PROGRESS_CEILING - OCR_PROGRESS_FLOOR
+            progress = OCR_PROGRESS_FLOOR + int(span * done / total)
+            stage = f"Reading scanned pages ({done:,}/{total:,})"
+        else:
+            span = CLEAN_PROGRESS_CEILING - OCR_PROGRESS_CEILING
+            progress = OCR_PROGRESS_CEILING + int(span * done / total)
+            stage = f"Cleaning recognized text ({done:,}/{total:,})"
+
+        try:
+            await db.set_project(pid, stage=stage, progress=min(progress, CLEAN_PROGRESS_CEILING))
+        except Exception:  # noqa: BLE001 — a progress write must never end a book
+            log.warning("Could not write OCR progress for project %s", pid, exc_info=True)
+
+    return report
+
+
+def ocr_cache_dir(pdf_path: Path) -> Path:
+    """Where finished OCR pages and cleaned batches are parked for resume.
+
+    Inside the project's own folder, so it is removed with the source file once
+    parsing is behind us.
+    """
+    return pdf_path.parent / "ocr_cache"
+
+
 async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
     """Run the existing SpokenVerse OCR pipeline on a scanned PDF and return a
     ParsedDoc of the recovered text. Requires Tesseract (a SpokenVerse system
@@ -167,14 +268,18 @@ async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
     if not source_path:
         raise TerminalError("Scanned PDF but no source file is available for OCR.")
 
-    await db.set_project(pid, stage="Running OCR (scanned PDF)", progress=6)
+    await db.set_project(pid, stage="Reading scanned pages", progress=OCR_PROGRESS_FLOOR)
     try:
         from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig  # lazy
 
         pdf_path = Path(source_path)
         out_txt = pdf_path.with_suffix(".ocr.txt")
         cfg = PdfToTxtConfig(keep_page_breaks=False, to_chapters=False)
-        await PdfConverter(cfg).convert_pdf_to_txt_async(pdf_path, out_txt)
+        await PdfConverter(cfg).convert_pdf_to_txt_async(
+            pdf_path, out_txt,
+            cache_dir=ocr_cache_dir(pdf_path),
+            on_progress=_ocr_progress_reporter(pid),
+        )
 
         text = out_txt.read_text(encoding="utf-8", errors="ignore").strip()
         if not text:
@@ -184,6 +289,10 @@ async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
     except TerminalError:
         raise
     except Exception as exc:  # noqa: BLE001
+        # A book interrupted by a deploy is not a book that failed. Every page
+        # already recognized is on disk, so the retry resumes rather than restarts.
+        if shutting_down() or _killed_by_signal(exc):
+            raise RetryableError(f"OCR interrupted by shutdown: {exc}") from exc
         log.exception("OCR failed for scanned PDF (project %s)", pid)
         raise TerminalError(_ocr_error_message(exc)) from exc
 
