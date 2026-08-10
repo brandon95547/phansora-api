@@ -29,10 +29,11 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from . import db, prompts
 from .audio import render_script_to_audio
@@ -60,17 +61,52 @@ TARGET_LESSON_WORDS = WORDS_PER_MINUTE * TARGET_LESSON_MINUTES   # 2100
 MAX_LESSON_WORDS = WORDS_PER_MINUTE * MAX_LESSON_MINUTES         # 3000
 MIN_LESSON_WORDS = WORDS_PER_MINUTE * MIN_LESSON_MINUTES         # 1200
 
-# Lesson length relative to its own source segments.
+# --- How long a lesson runs ---------------------------------------------------
+# Lesson length is a function of HOW MANY IDEAS the lesson has to teach, not of
+# how many words the source spent on them. That single change is what turns this
+# product from a re-voicing into a course.
 #
-# This is the dial between the two failure modes actually observed. A parity band
-# (0.85-1.15) leaves no room to say anything differently, so the model reads the
-# source back almost verbatim. Wide open, it invents a course around the material —
-# the first run turned a 334-word letter into ~1,290 words across four lessons, 3.8x.
-# Teaching the same content in your own words genuinely costs more words than the
-# source uses, so the floor sits just under parity and the ceiling well above it,
-# with the prompt saying plainly that the headroom is for explaining, not padding.
-DENSITY_MIN = 0.9
-DENSITY_MAX = 1.6
+# It used to be a density band against source words (DENSITY_MIN 0.9 / MAX 1.6).
+# The floor made compression structurally impossible: a lesson could never run
+# shorter than 90% of its source, so 780,000 words of Bible could not become
+# fewer than about 700,000 narrated ones — ~370 lessons, ~108 hours, most of it
+# reciting genealogies name by name. The band was tuned against a real failure
+# (a 334-word letter blown into ~1,290 words across four lessons), and that
+# failure is still guarded — by the ceiling below, which is still expressed as a
+# share of source words.
+#
+# The ratio is self-adjusting because the concept index already collapses
+# repetition: forty genealogy entries index as ONE concept, so they get one
+# concept's worth of words. Dense argument indexes as a dozen concepts per page
+# and barely compresses, which is correct — you cannot teach twelve ideas in two
+# hundred words.
+#
+# The numbers below are starting points, not measurements. They are the dial to
+# turn if courses come back too long or too thin; every one is env-overridable so
+# a run can be retuned without a deploy.
+class Depth(NamedTuple):
+    words_per_concept: int   # narration words to teach one indexed idea
+    floor_share: float       # never shorter than this share of the source
+    ceiling_share: float     # never longer than this share of the source
+    planning_ratio: float    # expected overall narration:source, for lesson counts
+
+
+DEPTHS: dict[str, Depth] = {
+    # The pre-existing behavior, kept so a reader who wants the whole text read
+    # back still can: near parity, expanding where explaining costs words.
+    "comprehensive": Depth(320, 0.85, 1.60, 1.25),
+    # The default. Teaches every indexed idea; drops the enumeration.
+    "standard": Depth(150, 0.15, 0.60, 0.42),
+    # A survey. Every idea still gets named and taught, in fewer words each.
+    "overview": Depth(80, 0.06, 0.30, 0.20),
+}
+DEFAULT_DEPTH = os.getenv("BOOK_ALCHEMY_DEFAULT_DEPTH", "standard")
+
+# How far the writer may drift either side of the computed target before the
+# length is worth logging. Wide, because the concept count is an estimate and the
+# prompt is explicit that the budget is a guide rather than a quota.
+BUDGET_UNDERSHOOT = 0.75
+BUDGET_OVERSHOOT = 1.25
 
 MAX_TOPICS_PER_SEGMENT = 5        # detail carried into the segmentation prompt
 MAX_SEGMENT_DIGEST_CHARS = 60_000 # keep that prompt inside the context window
@@ -337,14 +373,41 @@ async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
         await db.set_project(pid, analyze_cursor=cursor + 1)
         return
 
+    if not _is_teachable(chunk):
+        # The parser already recognized this as contents/index/copyright matter.
+        # Indexing it would cost a model call to describe something no lesson
+        # will ever teach.
+        await db.set_project(
+            pid, analyze_cursor=cursor + 1,
+            stage=f"Extracting concepts ({cursor + 1}/{total})",
+            progress=min(10 + int(40 * (cursor + 1) / max(1, total)), 49),
+        )
+        return
+
     try:
         extracted = await client.chat_json(
             system=prompts.ANALYZE_SYSTEM,
             user=prompts.analyze_user(chunk["text"], chapter=chunk["chapter"]),
-            max_output_tokens=2000,
+            max_output_tokens=3000,
         )
-        concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
-        await db.insert_concepts(pid, concepts)
+        # The reader of the excerpt gets the final say on apparatus: it can see
+        # that "The book of Job has forty-two chapters" is a chapter listing
+        # written as a sentence, which no pattern over line shapes can.
+        if isinstance(extracted, dict) and extracted.get("teachable") is False:
+            await db.set_chunk_teachable(int(chunk["id"]), False)
+            log.info(
+                "Project %s: chunk %s indexed as apparatus, not teachable", pid, cursor
+            )
+        else:
+            if isinstance(extracted, dict) and extracted.get("truncated"):
+                # The index is the coverage contract now, so a truncated one is
+                # content the lesson will never be required to teach.
+                log.warning(
+                    "Project %s: chunk %s hit the concept-index item ceiling; some "
+                    "ideas in it are outside the coverage contract", pid, cursor,
+                )
+            concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
+            await db.insert_concepts(pid, concepts)
     except Exception as exc:  # noqa: BLE001
         # One chunk that won't parse (e.g. the model emitted JSON too long for the
         # token budget and it truncated) must not fail the whole course. Skip it
@@ -404,13 +467,16 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
         await db.set_project(pid, phase="sessions", stage="Creating sessions", progress=55)
         return
 
-    chunks = await db.get_all_chunks(pid)
-    if not chunks:
+    all_chunks = await db.get_all_chunks(pid)
+    if not all_chunks:
         raise TerminalError("No readable source segments were found.")
+
+    depth = resolve_depth(project.get("options"))
+    chunks = _teachable_chunks(pid, all_chunks)
 
     digests = await _chunk_digests(pid, chunks)
     source_words = sum(d["words"] for d in digests)
-    min_lessons, suggested, max_lessons = _lesson_budget(source_words)
+    min_lessons, suggested, max_lessons = _lesson_budget(source_words, depth)
 
     if max_lessons == 1:
         # Short enough for one sitting. Decided here, not by the model: a source
@@ -430,16 +496,17 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
                 min_lessons=min_lessons,
                 suggested_lessons=suggested,
                 max_lessons=max_lessons,
-                max_lesson_words=MAX_LESSON_WORDS,
+                max_lesson_words=max_source_words_per_lesson(depth),
             ),
             max_output_tokens=8000,
         )
         entries = _entries_from_plan(raw, segment_count=len(digests), max_lessons=max_lessons)
 
-    lessons = _resolve_lessons(entries, digests)
+    lessons = _resolve_lessons(entries, digests, depth)
     log.info(
-        "Project %s: %s source words -> %s lesson(s) (suggested %s, max %s)",
-        pid, source_words, len(lessons), suggested, max_lessons,
+        "Project %s: %s source words -> %s lesson(s) at depth ratio %.2f "
+        "(suggested %s, max %s)",
+        pid, source_words, len(lessons), depth.planning_ratio, suggested, max_lessons,
     )
 
     for lesson in lessons:
@@ -467,7 +534,9 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
     planned = phases_mod.plan_phases([
         {
             "ordinal": l["ordinal"],
-            "seconds": phases_mod.estimate_seconds(source_words=l["words"]),
+            "seconds": phases_mod.estimate_seconds(
+                source_words=l["words"], narration_ratio=depth.planning_ratio
+            ),
             "chapter": chunks[l["start"]]["chapter"],
         }
         for l in lessons
@@ -482,6 +551,11 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
         "work_title": project.get("name"),
         "source_words": source_words,
         "lesson_count": len(lessons),
+        # Recorded so a finished course can be read back against the settings that
+        # produced it — "why is this one 30 hours and that one 8" is otherwise
+        # unanswerable once the run is over.
+        "depth": _as_dict(project.get("options")).get("depth") or DEFAULT_DEPTH,
+        "skipped_apparatus_chunks": len(all_chunks) - len(chunks),
         "phases": planned,
         "sessions": [
             {
@@ -501,18 +575,117 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
     )
 
 
-def _lesson_budget(source_words: int) -> tuple[int, int, int]:
-    """(minimum, suggested, maximum) lesson count for a source of this length.
+def resolve_depth(options: Any) -> Depth:
+    """The depth profile for a project, falling back to the default on anything
+    unrecognized (including projects created before the option existed)."""
+    name = str(_as_dict(options).get("depth") or "").strip().lower()
+    return DEPTHS.get(name) or DEPTHS.get(DEFAULT_DEPTH) or DEPTHS["standard"]
 
-    A source that fits one comfortable sitting returns (1, 1, 1) — the caller
-    then skips the segmentation model entirely, so a short work can never be
-    split into a multi-lesson "course"."""
-    if source_words <= MAX_LESSON_WORDS:
+
+def lesson_word_budget(
+    *, concept_count: int, source_words: int, depth: Depth
+) -> tuple[int, int]:
+    """(min_words, max_words) of narration for one lesson.
+
+    Driven by the number of distinct ideas indexed in the lesson's segments, then
+    clamped to a share of the source so neither failure mode can run away: a
+    lesson cannot balloon past what the source can support, and cannot collapse
+    to a summary when the index came back thin.
+    """
+    target = max(1, concept_count) * depth.words_per_concept
+    floor = int(source_words * depth.floor_share)
+    ceiling = int(source_words * depth.ceiling_share)
+    if ceiling > 0:
+        target = max(floor, min(ceiling, target))
+
+    min_words = max(60, int(target * BUDGET_UNDERSHOOT))
+    max_words = max(min_words + 60, int(target * BUDGET_OVERSHOOT))
+    return min_words, max_words
+
+
+def _lesson_budget(source_words: int, depth: Depth) -> tuple[int, int, int]:
+    """(minimum, suggested, maximum) lesson COUNT for a source of this length.
+
+    Computed in projected NARRATION words, not source words. The listener's unit
+    is a sitting, so what has to divide evenly is the finished audio; dividing
+    source words instead would silently shrink every lesson as compression rose —
+    a 2,100-word lesson target against a 0.42 ratio yields ~5,000 source words per
+    lesson, and using the source figure would have produced 2.4x too many lessons,
+    each about six minutes long.
+
+    A source that fits one comfortable sitting returns (1, 1, 1) — the caller then
+    skips the segmentation model entirely, so a short work can never be split into
+    a multi-lesson "course"."""
+    narration_words = max(0, int(source_words * depth.planning_ratio))
+    if narration_words <= MAX_LESSON_WORDS:
         return 1, 1, 1
-    minimum = max(1, math.ceil(source_words / MAX_LESSON_WORDS))
-    maximum = max(minimum, math.ceil(source_words / MIN_LESSON_WORDS))
-    suggested = min(maximum, max(minimum, math.ceil(source_words / TARGET_LESSON_WORDS)))
+    minimum = max(1, math.ceil(narration_words / MAX_LESSON_WORDS))
+    maximum = max(minimum, math.ceil(narration_words / MIN_LESSON_WORDS))
+    suggested = min(maximum, max(minimum, math.ceil(narration_words / TARGET_LESSON_WORDS)))
     return minimum, suggested, maximum
+
+
+def max_source_words_per_lesson(depth: Depth) -> int:
+    """MAX_LESSON_WORDS expressed in SOURCE words.
+
+    Segmentation reasons about source segments and their word counts, and
+    _split_to_length measures ranges the same way, so the cap they enforce has to
+    be in the same currency they count in.
+    """
+    return max(MIN_LESSON_WORDS, int(MAX_LESSON_WORDS / max(0.01, depth.planning_ratio)))
+
+
+# The most of a source that may be dropped as apparatus before the verdict is
+# refused wholesale. Mirrors chunking.APPARATUS_MAX_SHARE, but guards the OTHER
+# classifier: the parser's regexes are checked there, the analyze phase's
+# judgment is checked here. Both can misfire, and neither is allowed to quietly
+# delete half of what the reader uploaded — a course that narrates some contents
+# pages is a much better failure than one missing a third of the book.
+TEACHABLE_MIN_SHARE = 0.75
+
+
+def _teachable_chunks(project_id: int, chunks: list[Any]) -> list[Any]:
+    """Drop the chunks classified as front/back matter, unless there are too many.
+
+    Positional integrity matters downstream: _resolve_lessons and the
+    create_session loop both index into the list this returns, so the filtering
+    has to happen once, here, and every later reference must use the result.
+    """
+    keep = [c for c in chunks if _is_teachable(c)]
+    if not keep:
+        log.warning(
+            "Project %s: every chunk was classified as apparatus — keeping all %s",
+            project_id, len(chunks),
+        )
+        return list(chunks)
+
+    kept_words = sum(_word_count(c["text"]) for c in keep)
+    total_words = sum(_word_count(c["text"]) for c in chunks) or 1
+    share = kept_words / total_words
+    if share < TEACHABLE_MIN_SHARE:
+        log.warning(
+            "Project %s: apparatus filter would drop %.1f%% of the source words "
+            "(%s of %s chunks kept) — above the ceiling, so keeping everything.",
+            project_id, (1 - share) * 100, len(keep), len(chunks),
+        )
+        return list(chunks)
+
+    if len(keep) != len(chunks):
+        log.info(
+            "Project %s: skipping %s of %s chunks as front/back matter (%.1f%% of words kept)",
+            project_id, len(chunks) - len(keep), len(chunks), share * 100,
+        )
+    return keep
+
+
+def _is_teachable(chunk: Any) -> bool:
+    """Default True: rows written before the column existed have no verdict, and
+    absence of a verdict is not a verdict."""
+    try:
+        value = chunk["teachable"]
+    except (KeyError, TypeError, IndexError):
+        return True
+    return True if value is None else bool(value)
 
 
 async def _chunk_digests(project_id: int, chunks: list[Any]) -> list[dict]:
@@ -589,13 +762,13 @@ def _entries_from_plan(raw: Any, *, segment_count: int, max_lessons: int) -> lis
     return deduped[:max_lessons]
 
 
-def _resolve_lessons(entries: list[dict], digests: list[dict]) -> list[dict]:
+def _resolve_lessons(entries: list[dict], digests: list[dict], depth: Depth) -> list[dict]:
     """Turn start-points into a complete, non-overlapping cover of the segments.
 
     Each lesson runs from its own start to the segment before the next one, the
-    last runs to the end, and any lesson longer than ``MAX_LESSON_WORDS`` is
-    split on segment boundaries (which also keeps each script inside the model's
-    output-token ceiling)."""
+    last runs to the end, and any lesson longer than the depth's source-word cap
+    (see :func:`max_source_words_per_lesson`) is split on segment boundaries —
+    which also keeps each script inside the model's output-token ceiling."""
     total = len(digests)
     ranges: list[dict] = []
     for i, entry in enumerate(entries):
@@ -612,7 +785,7 @@ def _resolve_lessons(entries: list[dict], digests: list[dict]) -> list[dict]:
 
     lessons: list[dict] = []
     for r in ranges:
-        for piece in _split_to_length(r, digests):
+        for piece in _split_to_length(r, digests, depth):
             lessons.append(piece)
 
     for i, lesson in enumerate(lessons, start=1):
@@ -627,14 +800,20 @@ def _resolve_lessons(entries: list[dict], digests: list[dict]) -> list[dict]:
     return lessons
 
 
-def _split_to_length(rng: dict, digests: list[dict]) -> list[dict]:
-    """Split one range into contiguous parts that each fit MAX_LESSON_WORDS."""
+def _split_to_length(rng: dict, digests: list[dict], depth: Depth) -> list[dict]:
+    """Split one range into contiguous parts that each fit a lesson.
+
+    The cap is in SOURCE words because that is what ``digests`` counts; at the
+    default depth a lesson carries roughly 2.4x the source it used to, so
+    splitting on the raw MAX_LESSON_WORDS would cut every lesson into fragments.
+    """
+    cap = max_source_words_per_lesson(depth)
     words = _range_words(digests, rng["start"], rng["end"])
     span = rng["end"] - rng["start"] + 1
-    if words <= MAX_LESSON_WORDS or span <= 1:
+    if words <= cap or span <= 1:
         return [dict(rng)]
 
-    parts = max(2, math.ceil(words / MAX_LESSON_WORDS))
+    parts = max(2, math.ceil(words / cap))
     per_part = words / parts
     out: list[dict] = []
     start = rng["start"]
@@ -706,12 +885,20 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         )
         return
 
-    # Length target: enough headroom to teach the material in different words,
-    # not enough to build a course around it. See DENSITY_MIN/MAX for why the band
-    # sits where it does.
+    # The lesson's coverage contract: the ideas indexed in exactly these segments.
+    # Loaded once and handed to BOTH the writer and the checker — see
+    # validate_script for what happens when those two lists differ.
+    concept_rows = await db.get_concepts_for_chunks(pid, chunk_ids)
+    concepts = [_as_dict(row["content"]) for row in concept_rows]
+    checklist = prompts.concept_checklist(concepts)
+
+    # Length follows the number of ideas, not the length of the source. See the
+    # Depth table for why, and for the clamps that keep both failure modes shut.
+    depth = resolve_depth(project.get("options"))
     source_words = sum(_word_count(c["text"]) for c in chunk_dicts)
-    min_words = max(60, int(source_words * DENSITY_MIN))
-    max_words = max(min_words + 40, int(source_words * DENSITY_MAX))
+    min_words, max_words = lesson_word_budget(
+        concept_count=len(checklist), source_words=source_words, depth=depth,
+    )
     # ~1.4 tokens per word, plus headroom, capped at the DeepSeek output ceiling.
     token_budget = min(8000, int(max_words * 1.7) + 400)
 
@@ -733,6 +920,7 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
                 source_words=source_words,
                 min_words=min_words,
                 max_words=max_words,
+                concepts=concepts,
                 feedback=feedback,
                 previously_taught=prior,
             ),
@@ -744,7 +932,8 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
             temperature=0.0 if attempt == 0 else 0.3,
         )
         validation = await validate_script(
-            client, script=script, chunks=chunk_dicts, previously_taught=prior,
+            client, script=script, chunks=chunk_dicts,
+            concepts=concepts, previously_taught=prior,
         )
         if script.strip() and validation["supported"]:
             break
@@ -754,8 +943,9 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     if script.strip() and not (min_words <= written <= max_words):
         log.info(
             "Project %s session %s: %s narration words against a %s-%s target "
-            "(%s source words)",
+            "(%s source words, %s concepts, %.2fx)",
             pid, sess["ordinal"], written, min_words, max_words, source_words,
+            len(checklist), written / max(1, source_words),
         )
 
     if not script.strip():

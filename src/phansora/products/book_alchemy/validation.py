@@ -17,13 +17,19 @@ async def validate_script(
     *,
     script: str,
     chunks: list[dict],
+    concepts: list[dict] | None = None,
     previously_taught: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Return {supported: bool, flagged: [...], notes: str}.
 
-    ``previously_taught`` is what earlier lessons already covered, and must be the
-    same list the writer was given: without it, a lesson that correctly passes over
-    settled ground reads as an omission and the retry loop restores the repetition.
+    ``concepts`` is the lesson's coverage contract — the ideas the analyze phase
+    indexed in these segments — and ``previously_taught`` is what earlier lessons
+    already covered. BOTH must be the same lists the writer was given. Hand the
+    checker a different contract and it marks the lesson down for not doing
+    something nobody asked it to do, and the retry loop then chases that phantom:
+    with ``concepts`` missing, coverage falls back to the raw segments, every
+    dropped clause reads as an omission, and the regeneration loop rebuilds the
+    1:1 re-voicing this product exists to avoid.
 
     Fails closed on parse errors (treats as unsupported) so a broken check can
     never wave unsupported content through."""
@@ -31,7 +37,7 @@ async def validate_script(
         result = await client.chat_json(
             system=prompts.VALIDATION_SYSTEM,
             user=prompts.validation_user(
-                script, chunks, previously_taught=previously_taught
+                script, chunks, concepts=concepts, previously_taught=previously_taught
             ),
             max_output_tokens=1500,
         )

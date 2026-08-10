@@ -7,7 +7,13 @@ a sitting's worth of listening. Everything else is a preference.
 
 from __future__ import annotations
 
-from phansora.products.book_alchemy.phases import estimate_seconds, plan_phases
+import pytest
+
+from phansora.products.book_alchemy.phases import (
+    DEFAULT_NARRATION_RATIO,
+    estimate_seconds,
+    plan_phases,
+)
 
 CAP = 3 * 3600
 
@@ -134,12 +140,42 @@ def test_estimate_prefers_a_script_over_source_words():
     assert estimate_seconds(source_words=99999, script="word " * 300) == 120
 
 
-def test_estimate_accounts_for_narration_running_longer_than_source():
-    """Reading the cap off TARGET_LESSON_MINUTES would undershoot by ~25%; the
-    density midpoint is what keeps a 3-hour phase actually about 3 hours."""
-    # 2100 source words is the "14 minute" lesson target, but narration expands it.
-    assert estimate_seconds(source_words=2100) > 14 * 60
+def test_estimate_scales_with_the_depth_ratio():
+    """A lesson teaches the ideas in its source, not every word of it, so the
+    duration follows the depth's planning ratio rather than the source length.
+
+    This is the assertion that used to read "narration runs LONGER than source" —
+    true only while the density floor forced every lesson to at least parity.
+    """
+    at_parity = estimate_seconds(source_words=2100, narration_ratio=1.0)
+    assert at_parity == 14 * 60                      # 2100 words at 150 wpm
+
+    compressed = estimate_seconds(source_words=2100, narration_ratio=0.42)
+    assert compressed < at_parity
+    assert compressed == pytest.approx(at_parity * 0.42, rel=0.02)
+
+    expanded = estimate_seconds(source_words=2100, narration_ratio=1.25)
+    assert expanded > at_parity
+
+
+def test_estimate_defaults_to_the_default_depth():
+    """Callers that don't pass a ratio must not silently get parity."""
+    assert estimate_seconds(source_words=2100) == estimate_seconds(
+        source_words=2100, narration_ratio=DEFAULT_NARRATION_RATIO
+    )
+
+
+def test_measured_and_scripted_durations_ignore_the_ratio():
+    """Once there is a real script or real audio, the estimate is not a guess and
+    the depth has nothing left to say about it."""
+    assert estimate_seconds(
+        source_words=2100, script="word " * 300, narration_ratio=0.1
+    ) == 120
+    assert estimate_seconds(
+        source_words=2100, audio_seconds=999, narration_ratio=0.1
+    ) == 999
 
 
 def test_estimate_is_never_negative():
     assert estimate_seconds(source_words=-5) == 0
+    assert estimate_seconds(source_words=2100, narration_ratio=-1) == 0

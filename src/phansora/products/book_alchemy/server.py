@@ -33,6 +33,7 @@ from phansora.shared.utils.uploads import (
 
 try:
     from phansora.products.book_alchemy import db as ba_db
+    from phansora.products.book_alchemy import pipeline as ba_pipeline
     from phansora.products.book_alchemy import storage as ba_storage
     _BOOK_ALCHEMY_OK = True
 except Exception as _ba_exc:  # noqa: BLE001
@@ -115,6 +116,17 @@ if _BOOK_ALCHEMY_OK:
             return int(str(user_id).strip())
         except Exception:  # noqa: BLE001
             raise HTTPException(status_code=400, detail="Valid numeric user_id is required.")
+
+    def _ba_depth(value: str) -> str:
+        """Validate the requested course depth, defaulting rather than rejecting.
+
+        Depth controls how much the course compresses its source (see
+        pipeline.DEPTHS). An unknown value is an out-of-date client, which should
+        get the default course rather than a 400 on an upload it already paid a
+        credit for.
+        """
+        name = str(value or "").strip().lower()
+        return name if name in ba_pipeline.DEPTHS else ba_pipeline.DEFAULT_DEPTH
 
     def _ba_json(value):
         if value is None or isinstance(value, (dict, list)):
@@ -224,6 +236,7 @@ if _BOOK_ALCHEMY_OK:
         url: str = Form(""),
         text: str = Form(""),
         voice: str = Form("default"),
+        depth: str = Form(""),
         file: Optional[UploadFile] = File(None),
     ) -> dict:
         uid = _ba_user_id(user_id)
@@ -255,7 +268,8 @@ if _BOOK_ALCHEMY_OK:
         proj_name = (name or default_name or "Untitled").strip()[:200]
         project_id = await ba_db.create_project(
             user_id=uid, name=proj_name, source_format=fmt,
-            source_path=None, source_url=(url or None), options={"voice": voice},
+            source_path=None, source_url=(url or None),
+            options={"voice": voice, "depth": _ba_depth(depth)},
             max_projects=limit,
         )
         if project_id is None:  # raced another upload past the pre-check

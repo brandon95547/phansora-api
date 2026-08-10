@@ -44,9 +44,29 @@ made countable (~8 consecutive words) because "in your own words" is a quality a
 model cannot check itself against, while a word run is.
 
 The opposite failure is still real — prompts loose enough to teach once produced
-a four-lesson course out of a one-page letter — and the length band in
-``pipeline.py`` (DENSITY_MIN/MAX) remains the dial that holds it, though the band
-is now explicitly not a target to be reached by borrowing.
+a four-lesson course out of a one-page letter — and the length budget in
+``pipeline.py`` remains the dial that holds it, though it is explicitly not a
+target to be reached by borrowing.
+
+WHAT COVERAGE MEANS. The lesson's obligation is the CONCEPT LIST, not the source
+text. Every prompt below that talks about completeness takes an explicit list of
+the ideas the analyze phase indexed in these segments, and "complete" means every
+one of them is taught. It does not mean every sentence has a counterpart.
+
+That distinction is the difference between a course and a reading. Earlier, the
+validator was asked to flag anything "the segments say that the lesson never
+teaches", judged against raw text — so every clause was an obligation, the length
+floor sat just under parity, and the retry loop restored anything dropped. The
+result was a 1:1 re-voicing: a Bible came back as ~370 lessons and ~108 hours,
+because 780,000 source words could not become fewer than about 700,000 narrated
+ones. Teaching an idea once is not the same as reproducing every instance of it,
+and only the concept list can express that difference.
+
+So: forty genealogy entries are ONE concept and are taught as what they are, not
+recited. A law restated in three places is taught once. The compression that
+falls out of this is not summarizing — every indexed idea still gets taught in
+full — it is the removal of repetition and enumeration that only exists because
+the source is a written document being read end to end.
 
 NOTE: prompt wording alone cannot enforce this. The validator is a language model
 asked to compare two texts, and a lifted passage reads to it as perfectly
@@ -61,6 +81,12 @@ into parts — which is what ``SEGMENT_SYSTEM`` below asks for.
 from __future__ import annotations
 
 import json
+
+# Raised from 8 when the index became the coverage contract rather than a hint
+# for boundary placement. At 8, a dense excerpt silently shed ideas that the
+# lesson was then never obliged to teach — invisible content loss. Paired with
+# the `truncated` flag so the remaining ceiling is at least observable.
+MAX_INDEX_ITEMS_PER_ARRAY = 14
 
 GROUNDING = (
     "You are part of Book Alchemy, which turns a written work into a spoken audio "
@@ -156,18 +182,31 @@ def title_user(raw_title: str, sample: str) -> str:
 # ----------------------------------------------------------------- analyze
 ANALYZE_SYSTEM = (
     GROUNDING
-    + "\n\nTask: index ONE excerpt of the source so the pipeline can later decide "
-    "where to cut the work into parts. This index is planning metadata — it is "
-    "never narrated and never reaches the listener, so it should be terse.\n"
-    "Return a JSON object with arrays: concepts, definitions, frameworks, "
-    'examples, conclusions. Each item is {"title": str, "body": str}.\n'
+    + "\n\nTask: index ONE excerpt of the source. This index is never narrated, so "
+    "it should be terse — but it is the CONTRACT the lesson is later held to, so "
+    "it must be complete. An idea you leave out here is an idea the course is "
+    "never required to teach.\n"
+    'Return a JSON object with: teachable (bool), truncated (bool), and the '
+    "arrays concepts, definitions, frameworks, examples, conclusions. Each array "
+    'item is {"title": str, "body": str}.\n'
     "- `title`: what the source covers at that point, in the author's own words "
     "where possible (under 12 words).\n"
     "- `body`: one line recording what this excerpt actually says about it "
     "(under 30 words).\n"
+    "- `teachable`: false if this excerpt is APPARATUS rather than material — a "
+    "table of contents, a chapter or verse listing, an index, a page-number run, "
+    "a copyright or permissions page, a cross-reference table, a publisher's "
+    "note about the edition. These navigate the book; they are not part of what "
+    "it teaches, and a lecturer never reads them aloud. Set it true for anything "
+    "that carries actual content, including prefaces and introductions that make "
+    "real claims. When genuinely unsure, true.\n"
+    "- `truncated`: true if you had to leave indexable ideas out to stay inside "
+    "the item limits below. Do not pad to avoid setting it.\n"
     "Only include what THIS excerpt supports; empty arrays are fine and normal. "
-    "At most 8 items per array. You are labeling the source, not explaining or "
-    "assessing it."
+    f"At most {MAX_INDEX_ITEMS_PER_ARRAY} items per array. Count a repeated "
+    "pattern ONCE — a genealogy, a list of measurements, a formula restated for "
+    "each of forty cases is a single item describing the pattern, never one item "
+    "per instance. You are labeling the source, not explaining or assessing it."
 )
 
 
@@ -233,7 +272,8 @@ def segment_user(
         f"{max_lessons} lessons. {suggested_lessons} is the expected number for a "
         f"source this long. Prefer fewer.\n"
         f"No single lesson may cover more than about {max_lesson_words} words of "
-        f"source.\n\n"
+        f"source. That figure already accounts for the lesson being shorter than "
+        f"the source it teaches from, so do not discount it again.\n\n"
         f"Source segments:\n" + "\n".join(lines)
     )
 
@@ -249,8 +289,16 @@ SCRIPT_SYSTEM = (
     "front of you and reword it as you go — that produces transcription every "
     "time, and transcription is the one result this lesson must not be.\n"
     "\n"
-    "- Cover every idea the segments contain. Completeness of MEANING is the "
-    "requirement; nothing about the original wording needs to survive.\n"
+    "- Teach every idea on the concept list you are given. THAT LIST IS THE JOB. "
+    "Completeness means every listed idea is taught and understandable; it does "
+    "not mean every sentence of the source has a counterpart in your lesson.\n"
+    "- Where the source repeats, enumerates or exhausts, teach the pattern once "
+    "and move on. A genealogy is taught as a genealogy — whose line it traces and "
+    "what it establishes — not recited name by name. A rule restated for forty "
+    "cases is taught as the rule, with the range it covers. Give the specific "
+    "instances only where a particular one carries weight the pattern does not. "
+    "This is the single biggest difference between a course and a reading, and "
+    "you are making a course.\n"
     "- Follow the source's order unless grouping related points teaches better. "
     "Say each point once — a lesson does not circle back.\n"
     "- Teach in your own voice, first person. 'Let's start with…', 'notice that…', "
@@ -296,6 +344,28 @@ def already_taught_block(previously_taught: list[dict] | None) -> str:
     return "Already taught in earlier lessons of this course:\n" + "\n".join(lines) + "\n"
 
 
+def concept_checklist(concepts: list[dict] | None) -> list[str]:
+    """The lesson's coverage contract as flat lines, deduplicated in order.
+
+    Built from what the analyze phase indexed in this lesson's own segments, so
+    it is the same list the validator judges omission against. Each line carries
+    the body as well as the title: "Covenant" alone does not tell a writer what
+    has to be taught, and does not tell a checker what to look for.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for c in concepts or []:
+        title = str(c.get("title") or "").strip()
+        body = str(c.get("body") or "").strip()
+        text = f"{title} — {body}" if title and body else (title or body)
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        lines.append(text)
+    return lines
+
+
 def script_user(
     session_title: str,
     outline: list[str],
@@ -304,10 +374,12 @@ def script_user(
     source_words: int,
     min_words: int,
     max_words: int,
+    concepts: list[dict] | None = None,
     feedback: list[dict] | None = None,
     previously_taught: list[dict] | None = None,
 ) -> str:
-    outline_txt = "\n".join(f"- {b}" for b in (outline or [])) or "- (follow the segments)"
+    checklist = concept_checklist(concepts) or list(outline or [])
+    outline_txt = "\n".join(f"- {b}" for b in checklist) or "- (follow the segments)"
     excerpts = "\n\n".join(
         f"[segment {i + 1}{_ref(c)}]\n{c['text']}" for i, c in enumerate(chunks)
     )
@@ -334,28 +406,39 @@ def script_user(
 
     return (
         f"Lesson title: {session_title}\n\n"
-        f"Points to cover, in source order — every one must be taught:\n{outline_txt}\n"
+        f"Concepts to teach, in source order — every one must be taught, and this "
+        f"list is the whole obligation:\n{outline_txt}\n"
         f"{covered}{fix}\n"
         f"Length: the source below runs about {source_words} words; your lesson "
-        f"should land between {min_words} and {max_words} words. Explaining in your "
-        f"own words naturally runs a little longer than the source — that headroom is "
-        f"for explaining, not for padding. Under the floor means you dropped material "
-        f"or merely summarized it — unless you passed over ground an earlier lesson "
-        f"already covered, which is correct and needs no compensating. Over the "
-        f"ceiling means you added something that is not in the source.\n"
-        f"This is a guide, not a target to hit. Reaching it by carrying the source's "
-        f"own sentences is a FAILED lesson, not a passing one — a short lesson written "
-        f"entirely in your own words beats a long one that leans on the original.\n\n"
-        f"Source segments, in order:\n{excerpts}"
+        f"should land between {min_words} and {max_words} words. That budget comes "
+        f"from how many distinct ideas are on the list above, NOT from how long the "
+        f"source is, so it will often be well short of the source — that is correct "
+        f"and expected wherever the source repeats, enumerates, or works through "
+        f"cases. Being under the source's length is never by itself a fault.\n"
+        f"Over the ceiling means you are reciting instances instead of teaching the "
+        f"pattern, padding, or adding something the source does not contain. Under "
+        f"the floor means an idea on the list is missing or got a passing mention "
+        f"where it needed teaching — check the list, not the word count.\n"
+        f"Never reach for length by carrying the source's own sentences. A short "
+        f"lesson written entirely in your own words beats a long one that leans on "
+        f"the original.\n\n"
+        f"Source segments, in order — these are your material and your fact-check, "
+        f"not a script to work through:\n{excerpts}"
     )
 
 
 # ----------------------------------------------------------------- validation
 VALIDATION_SYSTEM = (
     GROUNDING
-    + "\n\nTask: check a lesson script against the source segments it was built "
-    "from. It must teach every idea in them, add nothing, and share none of the "
-    "original's wording.\n"
+    + "\n\nTask: check a lesson script against the concept list it was required to "
+    "teach and the source segments it was built from. It must teach every listed "
+    "concept, add nothing, and share none of the original's wording.\n"
+    "\n"
+    "COVERAGE IS JUDGED AGAINST THE CONCEPT LIST, NOT THE SEGMENTS. The segments "
+    "are here so you can check that what the script says is true and in its own "
+    "words. They are NOT a checklist. A lesson that teaches every listed concept "
+    "is complete even if it is a third the length of the source, and even if many "
+    "individual sentences have no counterpart in it.\n"
     "\n"
     "Check the wording FIRST, and check it mechanically. Take each sentence of the "
     "script, find the source sentence carrying the same idea, and set them side by "
@@ -371,7 +454,13 @@ VALIDATION_SYSTEM = (
     "the segments do not contain.\n"
     '- "inferred": a motive, intent, feeling, cause, significance or lesson the '
     "source does not state — including 'this shows', 'what matters here'.\n"
-    '- "omitted": something the segments say that the lesson never teaches.\n'
+    '- "omitted": a concept ON THE LIST that the lesson never teaches, or names '
+    "without teaching. Quote the list entry. Judge nothing else as omitted — "
+    "detail dropped from a passage, an example not carried over, instances of a "
+    "repeated pattern the lesson taught once, a figure or name that appeared in "
+    "the source and not in the lesson: none of these is an omission unless a "
+    "listed concept went untaught because of it. If the list is empty, there is "
+    "no omission to find.\n"
     '- "copied": more than about eight consecutive words shared with the source, '
     "or a sentence that follows a source sentence's structure with substitutions. "
     "Quote the run and give its length. The only exception is a brief, deliberate "
@@ -391,6 +480,12 @@ VALIDATION_SYSTEM = (
     "the listener. Judge only against the segments supplied — never against outside "
     "knowledge.\n"
     "\n"
+    "BREVITY IS NOT A DEFECT. Do not flag a lesson for being shorter than its "
+    "source, for compressing a list into the pattern it follows, for teaching a "
+    "repeated formula once, or for leaving out enumerated instances. That is the "
+    "product working as designed. The only length-related failure is the reverse: "
+    "a lesson padded past what the concepts warrant, which is \"filler\".\n"
+    "\n"
     "If a list of material already taught in earlier lessons is supplied: a point "
     "on that list which this lesson passes over or carries in a short clause is "
     "NOT omitted — that is the course working correctly. Teaching such a point "
@@ -409,14 +504,30 @@ def validation_user(
     script: str,
     chunks: list[dict],
     *,
+    concepts: list[dict] | None = None,
     previously_taught: list[dict] | None = None,
 ) -> str:
     excerpts = "\n\n".join(
         f"[segment {i + 1}{_ref(c)}]\n{c['text']}" for i, c in enumerate(chunks)
     )
     covered = already_taught_block(previously_taught)
+    # The same list the writer was handed. If these two ever diverge, the lesson
+    # is marked down for not doing something it was never asked to do, and the
+    # retry loop chases a target that does not exist.
+    checklist = concept_checklist(concepts)
+    contract = (
+        "Concepts this lesson was required to teach (the coverage contract):\n"
+        + "\n".join(f"- {line}" for line in checklist)
+        + "\n\n"
+    ) if checklist else (
+        "No concept list was indexed for these segments. Judge wording, added "
+        "content and attribution as usual, but do not flag anything as "
+        '"omitted" — there is no contract to check coverage against.\n\n'
+    )
     return (
-        f"Source segments:\n{excerpts}\n\n"
+        f"{contract}"
+        f"Source segments (for checking truth and wording, NOT a coverage "
+        f"checklist):\n{excerpts}\n\n"
         + (f"{covered}\n" if covered else "")
         + f"Narration script to check:\n\"\"\"\n{script}\n\"\"\""
     )

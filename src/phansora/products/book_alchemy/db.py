@@ -7,12 +7,25 @@ for both. A lazily-created asyncpg pool is shared across the process.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Optional
 
 import asyncpg
 
+log = logging.getLogger("book_alchemy.db")
+
 _pool: Optional[asyncpg.Pool] = None
+
+# Columns added after the tables were first created by hand. This repo has no
+# migration tool and the schema is not checked in, so each one is applied here,
+# idempotently, the first time a pool is opened. ADD COLUMN IF NOT EXISTS on a
+# nullable column with a default is a catalog-only change in Postgres 11+ — it
+# does not rewrite the table, so this stays cheap however large the table grows.
+_SCHEMA_ADDITIONS = (
+    "ALTER TABLE public.book_alchemy_chunks "
+    "ADD COLUMN IF NOT EXISTS teachable boolean NOT NULL DEFAULT true",
+)
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -27,7 +40,18 @@ async def get_pool() -> asyncpg.Pool:
             min_size=1,
             max_size=int(os.getenv("BOOK_ALCHEMY_DB_POOL", "5")),
         )
+        await _ensure_schema(_pool)
     return _pool
+
+
+async def _ensure_schema(pool: asyncpg.Pool) -> None:
+    """Apply _SCHEMA_ADDITIONS. Never fatal: a read-only or lagging DB role must
+    not stop the API booting, and the failure is loud enough to act on."""
+    for statement in _SCHEMA_ADDITIONS:
+        try:
+            await pool.execute(statement)
+        except Exception:  # noqa: BLE001
+            log.warning("Schema addition failed (continuing): %s", statement, exc_info=True)
 
 
 async def close_pool() -> None:
@@ -246,13 +270,17 @@ async def insert_chunks(project_id: int, chunks: list[dict]) -> None:
     await pool.executemany(
         """
         INSERT INTO public.book_alchemy_chunks
-            (project_id, ordinal, text, chapter, section, page_start, page_end, char_start, char_end)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            (project_id, ordinal, text, chapter, section, page_start, page_end,
+             char_start, char_end, teachable)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         """,
         [
             (
                 project_id, c["ordinal"], c["text"], c.get("chapter"), c.get("section"),
                 c.get("page_start"), c.get("page_end"), c.get("char_start"), c.get("char_end"),
+                # Default True: a chunk from before this column existed, or from a
+                # path that does not classify, is material until proven otherwise.
+                bool(c.get("teachable", True)),
             )
             for c in chunks
         ],
@@ -288,6 +316,14 @@ async def get_chunks_by_ids(project_id: int, ids: list[int]) -> list[asyncpg.Rec
     )
 
 
+async def set_chunk_teachable(chunk_id: int, teachable: bool) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE public.book_alchemy_chunks SET teachable = $2 WHERE id = $1",
+        chunk_id, teachable,
+    )
+
+
 async def get_all_chunks(project_id: int) -> list[asyncpg.Record]:
     pool = await get_pool()
     return await pool.fetch(
@@ -318,6 +354,29 @@ async def get_concepts(project_id: int) -> list[asyncpg.Record]:
     return await pool.fetch(
         "SELECT * FROM public.book_alchemy_concepts WHERE project_id = $1 ORDER BY id ASC",
         project_id,
+    )
+
+
+async def get_concepts_for_chunks(
+    project_id: int, chunk_ids: list[int]
+) -> list[asyncpg.Record]:
+    """Every concept indexed in the given chunks, in source order.
+
+    This is a lesson's coverage contract: the ideas the analyze phase found in
+    exactly the segments the lesson was built from. Ordered by id, which is
+    insertion order, which is chunk order — so the checklist reads in the same
+    sequence the lesson is meant to teach.
+    """
+    if not chunk_ids:
+        return []
+    pool = await get_pool()
+    return await pool.fetch(
+        """
+        SELECT * FROM public.book_alchemy_concepts
+         WHERE project_id = $1 AND source_chunk_ids && $2::bigint[]
+         ORDER BY id ASC
+        """,
+        project_id, chunk_ids,
     )
 
 

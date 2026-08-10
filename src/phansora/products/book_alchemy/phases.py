@@ -29,7 +29,7 @@ from typing import Optional
 # constants, so pipeline must NOT import this one at module level or the two
 # deadlock on each other at import time. pipeline._phase_curriculum imports it
 # inside the function instead. Do not "tidy" that into a top-level import.
-from .pipeline import DENSITY_MAX, DENSITY_MIN, WORDS_PER_MINUTE
+from .pipeline import DEFAULT_DEPTH, DEPTHS, WORDS_PER_MINUTE
 
 # The cap the product promises: roughly one long sitting's worth of listening.
 # Env-overridable purely so an end-to-end test can force several phases out of a
@@ -43,32 +43,42 @@ PHASE_SPLIT_FLOOR = 0.75
 # A trailing runt is not worth a click of its own; fold it into its predecessor.
 PHASE_MERGE_TAIL = 0.30
 
-# Narration runs longer than the source it teaches from: the script explains the
-# material in the instructor's own words, and DENSITY_MIN/MAX bound that at
-# 0.9-1.6x. The midpoint is the planning estimate.
+# A lesson does not run for as long as its source would take to read: it teaches
+# the ideas the source contains and drops the repetition and enumeration, so the
+# narration is a fraction of the source at every depth but "comprehensive". That
+# fraction is the depth's planning_ratio, and it is a PARAMETER here rather than
+# a constant because two projects at different depths get genuinely different
+# durations from the same source.
 #
 # Do NOT estimate from TARGET_LESSON_MINUTES instead. That constant is derived
-# from narration pace, but _lesson_budget applies it to SOURCE words, so a
-# "14-minute" lesson is really closer to 17.5 minutes of finished audio — reading
-# the cap off it undershoots by about a quarter.
-NARRATION_DENSITY = (DENSITY_MIN + DENSITY_MAX) / 2
-SECONDS_PER_SOURCE_WORD = NARRATION_DENSITY * 60.0 / WORDS_PER_MINUTE
+# from narration pace, but the caller passes SOURCE words, so the two only agree
+# when the ratio happens to be 1.0.
+DEFAULT_NARRATION_RATIO = (
+    DEPTHS.get(DEFAULT_DEPTH) or DEPTHS["standard"]
+).planning_ratio
 
 
 def estimate_seconds(
-    *, source_words: int = 0, script: str = "", audio_seconds: Optional[int] = None
+    *,
+    source_words: int = 0,
+    script: str = "",
+    audio_seconds: Optional[int] = None,
+    narration_ratio: Optional[float] = None,
 ) -> int:
     """Best available duration for one lesson: measured beats scripted beats planned.
 
-    At planning time only the last branch can fire — no script exists yet. The
-    earlier two are here because the same estimate is re-derived for display as
-    lessons land, and a real number should always win over a guess.
+    At planning time only the last branch can fire — no script exists yet, so the
+    depth's ``planning_ratio`` is the only thing standing between a source word
+    count and a duration. The earlier two are here because the same estimate is
+    re-derived for display as lessons land, and a real number should always win
+    over a guess; neither of them needs the ratio at all.
     """
     if audio_seconds:
         return int(audio_seconds)
     if script and script.strip():
         return int(len(script.split()) * 60.0 / WORDS_PER_MINUTE)
-    return int(max(0, source_words) * SECONDS_PER_SOURCE_WORD)
+    ratio = DEFAULT_NARRATION_RATIO if narration_ratio is None else max(0.0, narration_ratio)
+    return int(max(0, source_words) * ratio * 60.0 / WORDS_PER_MINUTE)
 
 
 def plan_phases(lessons: list[dict], *, cap_seconds: int = PHASE_TARGET_SECONDS) -> list[dict]:
@@ -79,9 +89,9 @@ def plan_phases(lessons: list[dict], *, cap_seconds: int = PHASE_TARGET_SECONDS)
     and plain text rather than a degraded one.
 
     A phase only ever closes at a lesson boundary, and preferentially at one where
-    the chapter changes. Because a single lesson is capped at MAX_LESSON_WORDS
-    (~25 minutes of audio), a phase can overshoot the cap by at most one lesson.
-    That is the honest contract.
+    the chapter changes. Because a single lesson is capped at MAX_LESSON_WORDS of
+    narration (~20 minutes of audio), a phase can overshoot the cap by at most one
+    lesson. That is the honest contract.
     """
     groups: list[list[dict]] = []
     cur: list[dict] = []

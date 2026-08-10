@@ -23,6 +23,7 @@ class Block:
     section: Optional[str] = None
     page_start: Optional[int] = None
     page_end: Optional[int] = None
+    kind: str = "prose"          # "prose" | "apparatus" — see classify_block
 
 
 @dataclass
@@ -44,6 +45,130 @@ class ScannedPdfError(UnsupportedSourceError):
 
     Distinct from UnsupportedSourceError so the pipeline can fall back to the
     OCR path instead of failing the job."""
+
+
+# ----------------------------------------------------------------- apparatus
+# Front and back matter a course must never narrate: tables of contents, indexes,
+# page numbers, running heads, copyright pages. It is NAVIGATION, not material —
+# a lecturer does not read it aloud. Before this filter existed, a Bible course
+# opened by reciting how many chapters each book has, because every line in the
+# file was treated as something to teach.
+#
+# Deliberately deterministic and deliberately conservative: everything caught
+# here is SHAPED like a reference line. Prose that merely talks about structure
+# reads as prose and survives; catching that is the job of the `teachable`
+# judgment in the analyze phase, which can actually read the sentence. And
+# build_chunks discards the whole verdict if it would drop more than a quarter of
+# a source (APPARATUS_MAX_SHARE), so a mis-tuned pattern here cannot silently gut
+# a book — it can only fail to help.
+
+_DOT_LEADER = re.compile(r"\.\s*\.\s*\.|…")
+_ENDS_IN_PAGE = re.compile(r"\S\s+\d{1,4}$")
+_BARE_PAGE = re.compile(r"^(?:page\s+)?\d{1,4}$", re.I)
+_ROMAN_PAGE = re.compile(r"^[ivxlcdm]{1,7}$", re.I)
+# "Abraham, 14, 22, 31" / "covenant, 88-90, 145" — two or more page refs trailing.
+_INDEX_ENTRY = re.compile(
+    r",\s*\d{1,4}(?:\s*[-–]\s*\d{1,4})?"
+    r"(?:\s*,\s*\d{1,4}(?:\s*[-–]\s*\d{1,4})?)+\s*$"
+)
+_COPYRIGHT = re.compile(
+    r"all rights reserved|isbn\b|library of congress|printed in the "
+    r"united states|no part of this (?:book|publication)|"
+    r"cataloging-in-publication",
+    re.I,
+)
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]?$")
+
+_REFERENCE_LINE_MAX_CHARS = 90    # longer than this and it is a sentence
+_REFERENCE_LINE_MAX_WORDS = 12
+
+APPARATUS_LINE_SHARE = 0.6        # of the lines in a multi-line block
+APPARATUS_MIN_LINES = 3           # below this, one stray match proves nothing
+
+RUNNING_HEAD_MIN_PAGES = 5
+RUNNING_HEAD_SHARE = 0.4          # of pages carrying the same head
+
+
+def _is_reference_line(line: str) -> bool:
+    """Does this single line point at content rather than carry it?"""
+    s = line.strip()
+    if not s:
+        return False
+    if _BARE_PAGE.match(s) or _ROMAN_PAGE.match(s):
+        return True
+    if len(s) > _REFERENCE_LINE_MAX_CHARS:
+        return False
+    if _DOT_LEADER.search(s) and re.search(r"\d\s*$", s):
+        return True
+    if _INDEX_ENTRY.search(s):
+        return True
+    # "Genesis            12" — a label and a page number with no sentence between
+    # them. The sentence-end and word-count guards keep ordinary prose that
+    # happens to close on a number ("...founded in 1948.") out of this.
+    return (
+        bool(_ENDS_IN_PAGE.search(s))
+        and not _SENTENCE_END.search(s)
+        and len(s.split()) <= _REFERENCE_LINE_MAX_WORDS
+    )
+
+
+def classify_block(text: str) -> str:
+    """``"apparatus"`` if this block navigates the book, ``"prose"`` otherwise."""
+    s = (text or "").strip()
+    if not s:
+        return "prose"
+    if _COPYRIGHT.search(s) and len(s) < 1200:
+        return "apparatus"
+
+    lines = [ln for ln in s.split("\n") if ln.strip()]
+    if len(lines) == 1:
+        return "apparatus" if _is_reference_line(lines[0]) else "prose"
+    if len(lines) < APPARATUS_MIN_LINES:
+        return "prose"
+
+    hits = sum(1 for ln in lines if _is_reference_line(ln))
+    return "apparatus" if hits / len(lines) >= APPARATUS_LINE_SHARE else "prose"
+
+
+def _head_key(line: str) -> str:
+    """A running head with its page number generalized away.
+
+    "GENESIS 14" and "GENESIS 15" are the same head, so digits collapse to a
+    placeholder before the lines are counted.
+    """
+    return re.sub(r"\d+", "#", line).strip()
+
+
+def _running_heads(pages: list[str]) -> set[str]:
+    """Keys of the lines repeated at the top or bottom of most pages.
+
+    PyMuPDF's ``get_text("text")`` carries no coordinates, so position is
+    approximated by "first or last line of the page" — which is where a running
+    head lands in practice. Left in, these are narrated once per page.
+    """
+    if len(pages) < RUNNING_HEAD_MIN_PAGES:
+        return set()
+
+    counts: dict[str, int] = {}
+    for text in pages:
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if not lines:
+            continue
+        # A set: on a one-line page the first and last line are the same line.
+        for candidate in {lines[0], lines[-1]}:
+            if 0 < len(candidate) <= _REFERENCE_LINE_MAX_CHARS:
+                key = _head_key(candidate)
+                counts[key] = counts.get(key, 0) + 1
+
+    threshold = max(RUNNING_HEAD_MIN_PAGES, int(len(pages) * RUNNING_HEAD_SHARE))
+    return {key for key, n in counts.items() if n >= threshold}
+
+
+def _strip_running_heads(text: str, heads: set[str]) -> str:
+    if not heads:
+        return text
+    kept = [ln for ln in text.split("\n") if _head_key(ln.strip()) not in heads]
+    return "\n".join(kept)
 
 
 # ----------------------------------------------------------------- dispatch
@@ -81,7 +206,8 @@ def parse_source(
 def _parse_plain(raw: str, title: str) -> ParsedDoc:
     raw = _normalize_ws(raw or "")
     paras = [p.strip() for p in re.split(r"\n{2,}", raw) if p.strip()]
-    return ParsedDoc(title=title, blocks=[Block(text=p) for p in paras] or [Block(text=raw)])
+    blocks = [Block(text=p, kind=classify_block(p)) for p in paras]
+    return ParsedDoc(title=title, blocks=blocks or [Block(text=raw)])
 
 
 def _parse_markdown(raw: str, title: str) -> ParsedDoc:
@@ -107,7 +233,11 @@ def _parse_markdown(raw: str, title: str) -> ParsedDoc:
         else:
             flush()
     flush()
-    cleaned = [Block(text=_strip_md(b.text), chapter=b.chapter) for b in blocks if b.text.strip()]
+    cleaned = [
+        Block(text=stripped, chapter=b.chapter, kind=classify_block(stripped))
+        for b in blocks
+        if (stripped := _strip_md(b.text)).strip()
+    ]
     return ParsedDoc(title=title, blocks=cleaned or [Block(text=_strip_md(raw))])
 
 
@@ -129,7 +259,7 @@ def _parse_html(raw: str, title: str) -> ParsedDoc:
         if el.name in ("h1", "h2", "h3", "h4"):
             current_heading = txt
         else:
-            blocks.append(Block(text=txt, chapter=current_heading))
+            blocks.append(Block(text=txt, chapter=current_heading, kind=classify_block(txt)))
     if not blocks:
         blocks = _parse_plain(soup.get_text(" ", strip=True), page_title).blocks
     return ParsedDoc(title=page_title, blocks=blocks)
@@ -170,25 +300,30 @@ def _parse_pdf(path: Optional[str], title: str) -> ParsedDoc:
 
     if not path:
         raise UnsupportedSourceError("No PDF path provided.")
-    blocks: list[Block] = []
-    total_chars = 0
-    text_pages = 0
-    page_count = 0
+    # Read every page first: running heads can only be identified by comparing
+    # pages against each other, so blocks cannot be built in the same pass.
+    pages: list[str] = []
     with fitz.open(path) as pdf:
         page_count = pdf.page_count
         for pno in range(page_count):
-            page = pdf.load_page(pno)
-            txt = _normalize_ws(page.get_text("text") or "")
-            if len(txt) >= 20:           # a page with real, extractable text
-                text_pages += 1
-            total_chars += len(txt)
-            for para in re.split(r"\n{2,}", txt):
-                para = para.strip()
-                if para:
-                    blocks.append(Block(text=para, page_start=pno + 1, page_end=pno + 1))
+            pages.append(_normalize_ws(pdf.load_page(pno).get_text("text") or ""))
 
     if page_count == 0:
         raise UnsupportedSourceError("PDF has no pages.")
+
+    total_chars = sum(len(t) for t in pages)
+    text_pages = sum(1 for t in pages if len(t) >= 20)   # pages with real text
+
+    heads = _running_heads(pages)
+    blocks: list[Block] = []
+    for pno, txt in enumerate(pages):
+        for para in re.split(r"\n{2,}", _strip_running_heads(txt, heads)):
+            para = para.strip()
+            if para:
+                blocks.append(Block(
+                    text=para, page_start=pno + 1, page_end=pno + 1,
+                    kind=classify_block(para),
+                ))
 
     # Decide text-based vs scanned/image-based. A normal digital PDF has text on
     # (nearly) every page; a scanned book extracts ~nothing. Only when the doc is
@@ -218,7 +353,7 @@ def _parse_docx(path: Optional[str], title: str) -> ParsedDoc:
         if "heading" in style or "title" in style:
             current_heading = txt
         else:
-            blocks.append(Block(text=txt, chapter=current_heading))
+            blocks.append(Block(text=txt, chapter=current_heading, kind=classify_block(txt)))
     return ParsedDoc(title=title, blocks=blocks or [Block(text="")])
 
 
@@ -244,6 +379,11 @@ def _parse_epub(path: Optional[str], title: str) -> ParsedDoc:
         soup = BeautifulSoup(item.get_content(), "html.parser")
         for tag in soup(["script", "style"]):
             tag.decompose()
+        # An EPUB3 navigation document IS an ITEM_DOCUMENT, so the table of
+        # contents arrives here looking exactly like a chapter. Narrating it is
+        # what produced "the book of Job has 42 chapters" courses.
+        if _is_epub_nav(item, soup):
+            continue
         chapter = None
         h = soup.find(["h1", "h2", "h3"])
         if h:
@@ -251,8 +391,48 @@ def _parse_epub(path: Optional[str], title: str) -> ParsedDoc:
         for el in soup.find_all(["p", "li", "blockquote"]):
             txt = _normalize_ws(el.get_text(" ", strip=True))
             if txt:
-                blocks.append(Block(text=txt, chapter=chapter))
+                blocks.append(Block(text=txt, chapter=chapter, kind=classify_block(txt)))
     return ParsedDoc(title=meta_title, blocks=blocks or [Block(text="")])
+
+
+# How much of a document's text may sit inside links before it is navigation
+# rather than content. Real prose carries the occasional link; a contents page is
+# almost nothing but.
+EPUB_NAV_LINK_SHARE = 0.6
+
+
+def _is_epub_nav(item, soup) -> bool:
+    """Is this EPUB document the table of contents rather than a chapter?
+
+    Three independent signals, because EPUB3 and EPUB2 declare it differently and
+    plenty of files declare it not at all:
+      * the spine marks the item ``properties="nav"``;
+      * the markup carries ``<nav epub:type="toc">`` (or a ``toc``/``landmarks`` id);
+      * the document is mostly link text, which is what a hand-rolled contents
+        page looks like when nothing is declared.
+    """
+    props = getattr(item, "properties", None) or []
+    if "nav" in props:
+        return True
+
+    for nav in soup.find_all("nav"):
+        epub_type = nav.get("epub:type") or nav.get("type") or ""
+        if "toc" in str(epub_type).lower() or "landmarks" in str(epub_type).lower():
+            return True
+    if soup.find(attrs={"id": re.compile(r"^(toc|contents|nav)$", re.I)}):
+        return True
+
+    name = (getattr(item, "file_name", "") or "").lower()
+    if re.search(r"(^|/)(nav|toc|contents)[^/]*\.x?html?$", name):
+        return True
+
+    text_len = len(_normalize_ws(soup.get_text(" ", strip=True)))
+    if text_len < 40:
+        return False
+    link_len = sum(
+        len(_normalize_ws(a.get_text(" ", strip=True))) for a in soup.find_all("a")
+    )
+    return (link_len / text_len) >= EPUB_NAV_LINK_SHARE
 
 
 # ----------------------------------------------------------------- mobi (best-effort)
