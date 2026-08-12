@@ -20,9 +20,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from phansora.shared.auth import enforce_user_scope
 
 from phansora.shared.utils.uploads import (
     safe_ext as _safe_ext,
@@ -45,7 +46,11 @@ except Exception as _ba_exc:  # noqa: BLE001
     )
 
 
-app = FastAPI(title="Book Alchemy", version="0.1.0")
+app = FastAPI(
+    title="Book Alchemy",
+    version="0.1.0",
+    dependencies=[Depends(enforce_user_scope)],
+)
 
 # Mirror the SpokenVerse sub-app's CORS config (the two share the api.phansora.com
 # origin and the same CORS_ALLOW_ORIGINS env). The browser calls this API

@@ -23,8 +23,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from phansora.shared.auth import enforce_user_scope
 
 from .config import get_settings  # noqa: E402
 from .models import (  # noqa: E402
@@ -53,6 +54,10 @@ app = FastAPI(
     title="Narrava Studio API",
     description="AI-assisted video production: script -> timed beats -> media timeline.",
     version="0.1.0",
+    # Only the Node worker calls this product today, but the dependency costs one
+    # dict read per request and means a browser token could never act cross-user
+    # here either, should a direct client route ever be added.
+    dependencies=[Depends(enforce_user_scope)],
 )
 
 settings = get_settings()

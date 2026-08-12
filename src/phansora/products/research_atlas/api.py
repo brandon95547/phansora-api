@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from phansora.shared.auth import enforce_user_scope
 from pydantic import BaseModel
 
 from phansora.shared.paths import runtime_root
@@ -16,7 +17,11 @@ BASE_DIR = runtime_root()
 TMP_DIR = BASE_DIR / "tmp" / "research_atlas"
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="research-atlas-api", version="2.0.0")
+app = FastAPI(
+    title="research-atlas-api",
+    version="2.0.0",
+    dependencies=[Depends(enforce_user_scope)],
+)
 
 
 _JOBS: dict[str, dict] = {}
@@ -31,9 +36,16 @@ class SourceItem(BaseModel):
 
 
 class RunPipelineRequest(BaseModel):
+    """What a caller may ask for: CONTENT, never a location on this server's disk.
+
+    `input_path` and `toc_full_path` used to be accepted here and handed straight to
+    `Path(...).read_text()`, with the TOC read back into the job result — so a request
+    naming `/var/www/phansora-api/.env` returned its contents to the caller. Neither
+    field was ever sent by the Node worker; both are gone, and the pipeline's working
+    files are now always temp paths this module chooses (see _run_pipeline_job).
+    """
+
     text: str | None = None
-    input_path: str | None = None
-    toc_full_path: str | None = None
     max_chunk_chars: int | None = None
     sources: list[SourceItem] | None = None
     # The report prints this as its H1, so the caller's own name for the job ends up on
@@ -73,8 +85,10 @@ async def _set_job_state(job_id: str, **kwargs) -> None:
 async def _run_pipeline_job(job_id: str, payload: RunPipelineRequest) -> None:
     temp_input_path: Path | None = None
     temp_toc_path: Path | None = None
-    run_input_path = payload.input_path
-    run_toc_path = payload.toc_full_path
+    # Both start unset: the caller no longer supplies paths, so every file this job
+    # touches is one this module created under TMP_DIR.
+    run_input_path = None
+    run_toc_path = None
     run_sources = None
 
     await _set_job_state(job_id, status="processing", started_at=_utc_now_iso(), error=None)
@@ -167,8 +181,8 @@ async def health() -> dict:
 
 @app.post("/run")
 async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
-    if not payload.text and not payload.input_path and not payload.sources:
-        raise HTTPException(status_code=400, detail="Provide `text`, `input_path`, or `sources`.")
+    if not payload.text and not payload.sources:
+        raise HTTPException(status_code=400, detail="Provide `text` or `sources`.")
 
     job_id = uuid.uuid4().hex
     now = _utc_now_iso()

@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from phansora.config import settings
 from phansora.shared.admin.router import router as admin_router
+from phansora.shared.auth import AuthGate
 from phansora.shared.contact import router as contact_router
 from phansora.shared.conversions.router import router as conversions_router
 
@@ -88,10 +89,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, version=settings.version, lifespan=lifespan)
 
+# The gate is added FIRST so CORS wraps it: an unauthenticated 401 must still carry
+# CORS headers, or the browser reports an opaque network error instead of the truth.
+app.add_middleware(AuthGate)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
-    allow_credentials=True,
+    # No cookies cross this API — auth is a bearer token or an internal header —
+    # and wildcard origins with credentials is the one combination the CORS spec
+    # forbids outright. The sub-apps already say False for the same reason.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

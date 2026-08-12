@@ -12,8 +12,9 @@ load_dotenv()
 
 import asyncio  # noqa: E402
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from phansora.shared.auth import enforce_user_scope
 
 from .config import get_settings  # noqa: E402
 from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
@@ -46,6 +47,7 @@ app = FastAPI(
     description="Trace the earliest known origin of a story, myth, or event using grounded web search.",
     version="0.2.0",
     lifespan=lifespan,
+    dependencies=[Depends(enforce_user_scope)],
 )
 
 settings = get_settings()

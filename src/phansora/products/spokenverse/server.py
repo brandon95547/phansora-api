@@ -24,9 +24,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from phansora.shared.auth import enforce_user_scope
 
 from phansora.shared.paths import runtime_root
 from phansora.shared.utils.uploads import (
@@ -63,7 +64,12 @@ _WHISPER_MODEL_LOCK = Lock()
 # App
 # ----------------------------
 
-app = FastAPI(title="spokenverse-api", version="1.0.0")
+app = FastAPI(
+    title="spokenverse-api",
+    version="1.0.0",
+    # Every route is user-scoped; a browser token may only act as its own user.
+    dependencies=[Depends(enforce_user_scope)],
+)
 
 _cors_origins_raw = os.getenv(
     "CORS_ALLOW_ORIGINS",
