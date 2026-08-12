@@ -34,11 +34,18 @@ def test_shared_does_not_import_products():
     reference phansora.products."""
     import pathlib
 
+    import re
+
     shared_dir = pathlib.Path(__file__).resolve().parents[1] / "src" / "phansora" / "shared"
+    # An IMPORT, not any mention. The substring test also matched shared/__init__.py's
+    # own docstring — the sentence stating this very rule — so the guard reported a
+    # violation that was really the rule being written down, and the one genuine
+    # offender sat behind that noise.
+    importing = re.compile(r"^\s*(?:from\s+phansora\.products|import\s+phansora\.products)", re.M)
     offenders = [
         str(p)
         for p in shared_dir.rglob("*.py")
-        if "phansora.products" in p.read_text(encoding="utf-8")
+        if importing.search(p.read_text(encoding="utf-8"))
     ]
     assert not offenders, f"shared/ must not import products: {offenders}"
 

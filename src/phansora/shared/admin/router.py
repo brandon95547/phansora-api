@@ -54,12 +54,12 @@ def _frontend_dir() -> Path:
 
 
 def _chrono_cache_dir() -> Path:
-    try:
-        from phansora.products.chrono_origin.config import get_settings as chrono_settings
-
-        return Path(chrono_settings().chrono_cache_dir).resolve()
-    except Exception:  # noqa: BLE001 — product may not be loaded
-        return Path(os.getenv("CHRONO_CACHE_DIR", "./data/chrono_origin/cache")).resolve()
+    # Read from the environment rather than by importing the product's Settings.
+    # shared/ must not depend on products/ (test_smoke guards that direction, and this
+    # was the one violation), and the import bought nothing: Chrono's Settings declares
+    # no env_prefix, so `chrono_cache_dir` IS os.environ["CHRONO_CACHE_DIR"] with this
+    # very default — the try branch and the except branch computed the same path.
+    return Path(os.getenv("CHRONO_CACHE_DIR", "./data/chrono_origin/cache")).resolve()
 
 
 def _hf_cache_dir() -> Path:

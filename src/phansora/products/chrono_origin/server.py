@@ -15,6 +15,7 @@ import asyncio  # noqa: E402
 from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from phansora.shared.auth import enforce_user_scope
+from phansora.shared.errors import fail
 
 from .config import get_settings  # noqa: E402
 from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
@@ -101,10 +102,13 @@ async def trace(req: TraceRequest):
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail=f"Trace exceeded {timeout}s timeout.")
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        # RuntimeError reaches here from the LLM client, whose message embeds the
+        # provider's raw response body — not something to hand back to a browser.
+        raise fail(503, "The tracing service is unavailable.", exc, logger=logger,
+                   context="Chrono upstream unavailable")
     except Exception as exc:
         logger.exception("Trace failed")
-        raise HTTPException(status_code=500, detail=f"Trace failed: {exc}")
+        raise fail(500, "The trace failed.", exc, logger=logger, context="Trace failed")
     return result
 
 
@@ -148,8 +152,11 @@ async def expand(req: ExpandRequest):
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail=f"Expand exceeded {timeout}s timeout.")
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        # RuntimeError reaches here from the LLM client, whose message embeds the
+        # provider's raw response body — not something to hand back to a browser.
+        raise fail(503, "The tracing service is unavailable.", exc, logger=logger,
+                   context="Chrono upstream unavailable")
     except Exception as exc:
         logger.exception("Expand failed")
-        raise HTTPException(status_code=500, detail=f"Expand failed: {exc}")
+        raise fail(500, "The expand failed.", exc, logger=logger, context="Expand failed")
     return result

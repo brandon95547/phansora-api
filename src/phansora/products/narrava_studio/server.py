@@ -26,6 +26,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from phansora.shared.auth import enforce_user_scope
+from phansora.shared.errors import fail
 
 from .config import get_settings  # noqa: E402
 from .models import (  # noqa: E402
@@ -119,7 +120,7 @@ async def generate_script(req: ScriptGenerateRequest):
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Script generation failed")
-        raise HTTPException(status_code=502, detail=f"Script generation failed: {exc}")
+        raise fail(502, "Script generation failed.", exc, logger=logger, context="Script generation failed")
     return ScriptGenerateResponse(script=result)
 
 
@@ -144,7 +145,7 @@ async def enhance_narration(req: ScriptEnhanceRequest):
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Narration enhance failed")
-        raise HTTPException(status_code=502, detail=f"Enhancing the narration failed: {exc}")
+        raise fail(502, "Enhancing the narration failed.", exc, logger=logger, context="Narration enhance failed")
     return ScriptEnhanceResponse(text=text)
 
 
@@ -187,7 +188,7 @@ async def generate_media_animation(req: AnimationGenerateRequest):
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Animation generation failed")
-        raise HTTPException(status_code=502, detail=f"Animation generation failed: {exc}")
+        raise fail(502, "Animation generation failed.", exc, logger=logger, context="Animation generation failed")
     return AnimationGenerateResponse(
         html=html,
         duration_sec=req.duration_sec,
@@ -263,7 +264,7 @@ async def suggest_scene(req: SceneSuggestRequest):
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Scene suggestion failed")
-        raise HTTPException(status_code=502, detail=f"Scene suggestion failed: {exc}")
+        raise fail(502, "Scene suggestion failed.", exc, logger=logger, context="Scene suggestion failed")
     return SceneSuggestResponse(
         rationale=suggestion.get("rationale", ""),
         media_type=suggestion.get("media_type", "image"),
@@ -343,7 +344,7 @@ async def build_storyboard(req: StoryboardRequest):
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Storyboard build failed")
-        raise HTTPException(status_code=502, detail=f"Storyboard build failed: {exc}")
+        raise fail(502, "Storyboard build failed.", exc, logger=logger, context="Storyboard build failed")
     return StoryboardResponse(scenes=scenes)
 
 

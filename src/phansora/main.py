@@ -26,6 +26,7 @@ from typing import Dict
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
 from phansora.config import settings
 from phansora.shared.admin.router import router as admin_router
@@ -124,7 +125,22 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "mounted": sorted(_products.keys())}
+    """Healthy means every product that SHOULD be here is here.
+
+    _load_products skips anything that fails to import with only a warning, which is
+    what keeps one product's missing heavy dependency from taking the others down. The
+    cost is that a deploy which lost a dependency answered 200 with a shorter list while
+    a whole product 404'd — a green check on a broken release. Missing products now make
+    this 503, and name themselves so the log is not the only place to look.
+    """
+    expected = set(_PRODUCT_APPS)
+    missing = sorted(expected - set(_products))
+    body = {
+        "status": "degraded" if missing else "ok",
+        "mounted": sorted(_products.keys()),
+        "missing": missing,
+    }
+    return JSONResponse(body, status_code=503 if missing else 200)
 
 
 if __name__ == "__main__":

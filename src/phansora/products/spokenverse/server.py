@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -28,6 +29,9 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Respon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from phansora.shared.auth import enforce_user_scope
+from phansora.shared.errors import fail
+
+logger = logging.getLogger("spokenverse")
 
 from phansora.shared.paths import runtime_root
 from phansora.shared.utils.uploads import (
@@ -297,7 +301,7 @@ async def pdf_to_txt(
         converter = PdfConverter(cfg)
         result_path = await converter.convert_pdf_to_txt_async(pdf_path, out_txt_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF->TXT failed: {e}") from e
+        raise fail(500, "Converting that PDF failed.", e, logger=logger, context="PDF->TXT failed") from e
     finally:
         # keep temp PDF only if you want to debug; otherwise remove it
         try:
@@ -427,7 +431,7 @@ async def txt_to_audio(
         if rc != 0:
             raise RuntimeError(f"TTS conversion returned non-zero status: {rc}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"TXT->Audio failed: {e}") from e
+        raise fail(500, "Generating that audio failed.", e, logger=logger, context="TXT->Audio failed") from e
     finally:
         # Cleanup temp input folder
         try:
@@ -516,7 +520,7 @@ async def audio_to_txt(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Audio->TXT failed: {e}") from e
+        raise fail(500, "Transcribing that audio failed.", e, logger=logger, context="Audio->TXT failed") from e
     finally:
         try:
             audio_path.unlink(missing_ok=True)
@@ -621,7 +625,7 @@ async def voice_preview(
         # uvicorn worker for the whole upload — nothing else got served meanwhile.
         result = await asyncio.to_thread(voice_store.create_pending, safe_user, tmp_path)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not process audio: {e}") from e
+        raise fail(400, "That audio could not be processed.", e, logger=logger, context="Voice clip processing failed") from e
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -646,17 +650,18 @@ async def voice_preview(
             _transcribe_audio_to_text_sync, ref_clip, model, wlang
         )).strip()
     except Exception as tr_err:  # noqa: BLE001
-        print(f"[create-voice] ref transcription skipped: {tr_err}", flush=True)
+        logger.warning("create-voice: reference transcription skipped: %s", tr_err)
 
     try:
         synthesize_to_file = get_synthesizer()
         sample_out = voice_store.pending_sample_path(safe_user, token)
-        engine_call = {
-            "text": VOICE_SAMPLE_TEXT, "out_path": str(sample_out), "voice": str(ref_clip),
-            "prompt_text": ref_text, **knobs,
-        }
-        # TESTING: log the exact call sent to the engine on create-voice generate.
-        print(f"[create-voice] synthesize_to_file <- {json.dumps(engine_call)}", flush=True)
+        # The knobs, not the payload. This logged the whole engine_call as JSON, which
+        # includes prompt_text — the transcript of the clip the user just recorded of
+        # their own voice. That is their speech in the server log, on every create.
+        logger.debug(
+            "create-voice: synthesizing sample (language=%s speed=%s instruct=%s ref_text_chars=%d)",
+            knobs["language"], knobs["speed"], bool(knobs["instruct_text"]), len(ref_text or ""),
+        )
         await synthesize_to_file(
             text=VOICE_SAMPLE_TEXT,
             out_path=sample_out,
@@ -670,11 +675,9 @@ async def voice_preview(
             instruct_text=knobs["instruct_text"],
         )
     except Exception as e:
-        import traceback
-        print("[create-voice] synthesis failed:", flush=True)
-        traceback.print_exc()
+        logger.exception("create-voice: synthesis failed")
         voice_store.discard_pending(safe_user, token)
-        raise HTTPException(status_code=500, detail=f"Could not generate a voice sample: {e}") from e
+        raise fail(500, "Could not generate a voice sample.", e, logger=logger, context="Voice sample generation failed") from e
 
     # Match the sample's loudness to all other TTS output (EBU R128 / -16 LUFS).
     # Best-effort: keep the raw sample if loudnorm fails, so the preview still works.
@@ -864,7 +867,7 @@ async def delete_user_audio_file(user_id: str, filename: str) -> dict:
     try:
         audio_path.unlink()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete audio file: {e}") from e
+        raise fail(500, "Failed to delete that audio file.", e, logger=logger, context="Audio delete failed") from e
 
     return {"ok": True, "deleted": safe_name}
 

@@ -239,7 +239,10 @@ if _BOOK_ALCHEMY_OK:
         name: str = Form(""),
         source_format: str = Form(""),
         url: str = Form(""),
-        text: str = Form(""),
+        # Bounded like every other text field on this API. Unbounded, a paste was
+        # written to disk and run through the whole course pipeline at whatever size
+        # arrived. 2M characters is a very long book and still a small file.
+        text: str = Form("", max_length=2_000_000),
         voice: str = Form("default"),
         depth: str = Form(""),
         file: Optional[UploadFile] = File(None),

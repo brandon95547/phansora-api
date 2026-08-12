@@ -30,9 +30,11 @@ sample (what the user hears when playing the voice back).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -142,8 +144,36 @@ def _load_manifest(user_id: str) -> List[dict]:
     return []
 
 
+# Every mutation is load-modify-save on one JSON file, so two of them for the same user
+# interleave and the later write silently drops the earlier one's entry — two browser tabs,
+# or an approve landing while a delete is in flight. `create_pending` runs in a worker
+# thread, so this is reachable even on a single-worker process.
+#
+# One lock per user rather than one global: approving a voice should not queue behind an
+# unrelated user's delete. The dict itself is guarded, because building the per-user lock
+# is the same read-modify-write race one level up.
+_MANIFEST_LOCKS: dict[str, threading.Lock] = {}
+_MANIFEST_LOCKS_GUARD = threading.Lock()
+
+
+def _manifest_lock(user_id: str) -> threading.Lock:
+    with _MANIFEST_LOCKS_GUARD:
+        return _MANIFEST_LOCKS.setdefault(user_id, threading.Lock())
+
+
 def _save_manifest(user_id: str, items: List[dict]) -> None:
-    _manifest_path(user_id).write_text(json.dumps(items, indent=2), encoding="utf-8")
+    # Written to a temp file and moved into place: os.replace is atomic on POSIX, so a
+    # reader never catches a half-written manifest and a crash mid-write leaves the old
+    # one intact rather than a truncated file.
+    path = _manifest_path(user_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(items, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _probe_duration(path: Path) -> float:
@@ -287,26 +317,34 @@ def approve(user_id: str, token: str, name: str) -> Optional[dict]:
         return None
     # Names must be unique per user (case-insensitive). Check before moving any
     # files so a rejected approval leaves the pending clip intact for a retry.
-    items = _load_manifest(user_id)
-    if any((v.get("name") or "").strip().casefold() == clean_name.casefold() for v in items):
-        raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
-    dst = _user_dir(user_id) / f"{tok}.wav"
-    shutil.move(str(pending), str(dst))
-    # Keep the synthesized sample as the playback clip; the reference clip above is
-    # what TTS clones from.
-    sample = pending_sample_path(user_id, token)
-    if sample.exists():
-        shutil.move(str(sample), str(voice_sample_path(user_id, tok)))
-    record = {
-        "id": tok,
-        "name": clean_name,
-        "created_at": time.time(),
-        # Persist the knobs used for the approved sample so TTS reuses them later.
-        **_read_pending_settings(user_id, token),
-    }
-    pending_settings_path(user_id, token).unlink(missing_ok=True)
-    items.append(record)  # already loaded above for the duplicate-name check
-    _save_manifest(user_id, items)
+    # Held across the whole check-then-append: the uniqueness test and the write have to
+    # see the same manifest, or two approvals racing both pass the check and the second
+    # save drops the first voice entirely.
+    lock = _manifest_lock(user_id)
+    lock.acquire()
+    try:
+        items = _load_manifest(user_id)
+        if any((v.get("name") or "").strip().casefold() == clean_name.casefold() for v in items):
+            raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
+        dst = _user_dir(user_id) / f"{tok}.wav"
+        shutil.move(str(pending), str(dst))
+        # Keep the synthesized sample as the playback clip; the reference clip above is
+        # what TTS clones from.
+        sample = pending_sample_path(user_id, token)
+        if sample.exists():
+            shutil.move(str(sample), str(voice_sample_path(user_id, tok)))
+        record = {
+            "id": tok,
+            "name": clean_name,
+            "created_at": time.time(),
+            # Persist the knobs used for the approved sample so TTS reuses them later.
+            **_read_pending_settings(user_id, token),
+        }
+        pending_settings_path(user_id, token).unlink(missing_ok=True)
+        items.append(record)  # already loaded above for the duplicate-name check
+        _save_manifest(user_id, items)
+    finally:
+        lock.release()
     return record
 
 
@@ -418,8 +456,11 @@ def delete_voice(user_id: str, voice_id: str) -> bool:
     existed = p.exists()
     p.unlink(missing_ok=True)
     voice_sample_path(user_id, vid).unlink(missing_ok=True)
-    items = [v for v in _load_manifest(user_id) if v.get("id") != vid]
-    _save_manifest(user_id, items)
+    # Load and save inside one lock: read it outside and a concurrent approve's new
+    # entry, written between the two, is dropped by this save.
+    with _manifest_lock(user_id):
+        items = [v for v in _load_manifest(user_id) if v.get("id") != vid]
+        _save_manifest(user_id, items)
     return existed
 
 
@@ -432,15 +473,17 @@ def rename_voice(user_id: str, voice_id: str, name: str) -> Optional[dict]:
     if not clean_name:
         raise ValueError("A voice name is required.")
     vid = _safe_token(voice_id)
-    items = _load_manifest(user_id)
-    target = next((v for v in items if v.get("id") == vid), None)
-    if target is None:
-        return None
-    if any(
-        v.get("id") != vid and (v.get("name") or "").strip().casefold() == clean_name.casefold()
-        for v in items
-    ):
-        raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
-    target["name"] = clean_name
-    _save_manifest(user_id, items)
+    # Same check-then-write as approve, and locked for the same reason.
+    with _manifest_lock(user_id):
+        items = _load_manifest(user_id)
+        target = next((v for v in items if v.get("id") == vid), None)
+        if target is None:
+            return None
+        if any(
+            v.get("id") != vid and (v.get("name") or "").strip().casefold() == clean_name.casefold()
+            for v in items
+        ):
+            raise ValueError(f'You already have a voice named "{clean_name}". Please choose another name.')
+        target["name"] = clean_name
+        _save_manifest(user_id, items)
     return {**target, **clamp_settings(**{k: target.get(k) for k in SETTING_KEYS})}

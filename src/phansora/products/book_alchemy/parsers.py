@@ -286,11 +286,19 @@ def _parse_url(url: str, title: str) -> ParsedDoc:
         pass
 
     if html is None:
-        import urllib.request
+        # Was urllib.request.urlopen, whose default opener honours file:// — so a
+        # `url` of file:///var/www/phansora-api/.env parsed this server's secrets
+        # into the caller's book. safe_fetch allows only http(s) and only public
+        # addresses, re-checked on every redirect.
+        from phansora.shared.net.safe_fetch import UnsafeUrlError, fetch_text
 
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 BookAlchemy"})
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-            html = resp.read().decode("utf-8", errors="ignore")
+        try:
+            html = fetch_text(url, user_agent="Mozilla/5.0 BookAlchemy", timeout=30)
+        except UnsafeUrlError as exc:
+            # Re-raised as the pipeline's own input error so it reaches the reader as
+            # "that link cannot be used" rather than as an unhandled 500. The message
+            # is this server's own words, naming only what the caller already sent.
+            raise UnsupportedSourceError(str(exc)) from exc
     return _parse_html(html, title or url)
 
 

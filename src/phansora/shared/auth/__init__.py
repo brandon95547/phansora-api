@@ -45,8 +45,10 @@ TOKEN_QUERY_PARAM = "pt"
 TOKEN_TTL_SECONDS = 12 * 3600  # page loads mint a fresh one; long enough for a work session
 
 # The uid charset mirrors SpokenVerse's _safe_user_id: ids are opaque strings here,
-# numeric in practice. Bounded so a token can never smuggle something path-shaped.
-_UID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+# numeric in practice. Bounded so a token can never smuggle something path-shaped — and
+# NO DOT, which is the token's own field separator: a uid containing one would split into
+# a different (uid, exp) than the one that was signed.
+_UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Paths that stay reachable without credentials, by design rather than omission:
 #   /            service name + mounted products; what uptime tooling probes
