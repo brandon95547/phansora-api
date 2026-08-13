@@ -357,19 +357,47 @@ if _BOOK_ALCHEMY_OK:
         cleaned = re.sub(r"\s+", " ", cleaned)
         return cleaned[:120] or "course"
 
+    def _ba_narration_txt(items, course_name: str) -> str:
+        """The whole course as one readable transcript, or "" if there is nothing to write.
+
+        The words cost nothing to include: every lesson's script is already on the row its
+        audio came from, so this is the same narration the listener hears, in the same
+        order, for reading along or searching the course.
+
+        Lessons are numbered exactly as the audio files are, so a line in here can be
+        traced to the track it belongs to. A lesson whose audio did not make it into the
+        zip is left out of the transcript too — the file describes what is in the download,
+        not what the project holds.
+        """
+        blocks = []
+        for ordinal, title, _path, script in items:
+            text = str(script or "").strip()
+            if not text:
+                continue
+            blocks.append(f"{ordinal:02d} - {title}\n\n{text}")
+        if not blocks:
+            return ""
+        return f"{course_name}\n\n\n" + "\n\n\n".join(blocks) + "\n"
+
     def _ba_build_zip(items, course_name: str) -> str:
-        """Build a zip of session audio (named by session title). Blocking; run
-        in a thread. Returns the temp zip path."""
+        """Build a zip of session audio (named by session title) plus the course
+        transcript. Blocking; run in a thread. Returns the temp zip path."""
         import tempfile
         import zipfile
 
         tmp = tempfile.NamedTemporaryFile(prefix="ba_zip_", suffix=".zip", delete=False)
         tmp.close()
         with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
-            for ordinal, title, path in items:
+            for ordinal, title, path, _script in items:
                 ext = path.suffix or ".mp3"
                 arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
                 zf.write(str(path), arcname=arcname)
+            # Only when there is narration to write: an empty transcript beside the audio
+            # reads as a broken file rather than an absent one. Scripts predate the audio
+            # in every path that produces it, so in practice this is always present.
+            narration = _ba_narration_txt(items, course_name)
+            if narration:
+                zf.writestr(f"{course_name} - Narration.txt", narration)
         return tmp.name
 
     def _ba_unlink_quiet(path: str) -> None:
@@ -392,7 +420,9 @@ if _BOOK_ALCHEMY_OK:
         for s in sessions:
             ap = s["audio_path"]
             if ap and Path(ap).exists() and Path(ap).is_file():
-                items.append((int(s["ordinal"]), s["title"], Path(ap)))
+                # The script rides along with the audio it was voiced from, so the
+                # transcript in the zip cannot drift out of step with the tracks.
+                items.append((int(s["ordinal"]), s["title"], Path(ap), s["script"]))
         if not items:
             raise HTTPException(status_code=404, detail="No audio is available to download yet.")
 
