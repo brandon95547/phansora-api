@@ -29,6 +29,18 @@ _API_BASE = os.getenv("PHANSORA_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 _HTTP_TIMEOUT_S = float(os.getenv("BOOK_ALCHEMY_TTS_HTTP_TIMEOUT_S", "3600"))
 
 
+def _internal_headers() -> dict:
+    """Credentials for the API's AuthGate (shared/auth).
+
+    This is a server-to-server call: the worker has already resolved which project
+    — and therefore which user — it is rendering for, so it authenticates as the
+    trusted internal caller rather than minting a user token. The worker loads the
+    same .env as the API, so the key is the one the gate checks against.
+    """
+    key = (os.getenv("PHANSORA_INTERNAL_KEY") or "").strip()
+    return {"X-Phansora-Internal-Key": key} if key else {}
+
+
 async def render_script_to_audio(
     *,
     script: str,
@@ -60,7 +72,7 @@ async def render_script_to_audio(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, data=form) as resp:
+        async with session.post(url, data=form, headers=_internal_headers()) as resp:
             if resp.status >= 400:
                 body = await resp.text()
                 raise RuntimeError(f"txt-to-audio HTTP {resp.status}: {body[:800]}")
