@@ -388,7 +388,11 @@ async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
         extracted = await client.chat_json(
             system=prompts.ANALYZE_SYSTEM,
             user=prompts.analyze_user(chunk["text"], chapter=chunk["chapter"]),
-            max_output_tokens=3000,
+            # Sized for the closed-book notes (bodies up to ~60 words), which are
+            # now the writer's only material — a truncated note is course content
+            # lost, not just a thinner index. chat_json retries bigger on
+            # truncation anyway; starting near the need avoids the doubled call.
+            max_output_tokens=6000,
         )
         # The reader of the excerpt gets the final say on apparatus: it can see
         # that "The book of Job has forty-two chapters" is a chapter listing
@@ -891,6 +895,16 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     concept_rows = await db.get_concepts_for_chunks(pid, chunk_ids)
     concepts = [_as_dict(row["content"]) for row in concept_rows]
     checklist = prompts.concept_checklist(concepts)
+    if not checklist:
+        # The writer no longer sees the chunk text, so with no notes it has only
+        # the outline titles to teach from — a thin lesson the validator will
+        # judge against the full source. Rare (analyze skips individual failed
+        # chunks), but worth a trace when a lesson comes out flagged and empty.
+        log.warning(
+            "Project %s session %s: no concept notes for its chunks; the "
+            "closed-book writer has only the outline to teach from",
+            pid, sess["ordinal"],
+        )
 
     # Length follows the number of ideas, not the length of the source. See the
     # Depth table for why, and for the clamps that keep both failure modes shut.
@@ -915,9 +929,11 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         regen = attempt
         script = await client.chat(
             system=prompts.SCRIPT_SYSTEM,
+            # Closed-book: the writer gets the concept notes and never the chunk
+            # text. chunk_dicts still feed validate_script below — the checker is
+            # the one place the source is allowed back in.
             user=prompts.script_user(
-                sess["title"], outline, chunk_dicts,
-                source_words=source_words,
+                sess["title"], outline,
                 min_words=min_words,
                 max_words=max_words,
                 concepts=concepts,

@@ -37,11 +37,22 @@ constraint was to stay close to the original, and a measured course came back
 faithful, adds nothing, omits nothing, and lands inside the length band. It was
 the optimal strategy the prompt permitted.
 
-Hence the framing below: the excerpts are NOTES to understand, not text to edit,
-and the lesson is written from memory afterwards. Fidelity of MEANING is
-demanded; fidelity of WORDING is named as the failure mode it is. The rule is
-made countable (~8 consecutive words) because "in your own words" is a quality a
-model cannot check itself against, while a word run is.
+The first fix was framing: the excerpts are NOTES to understand, not text to
+edit, and the lesson is written from memory afterwards; the rule was made
+countable (~8 consecutive words) because "in your own words" is a quality a
+model cannot check itself against, while a word run is. That held on short test
+passages and failed on a real book — **82.1% verbatim** (2,881 of 3,509 words in
+runs of eight or more, 107 lifted passages, the longest 158 words). At length, a
+model with the prose in its context follows the prose, whatever the
+instructions around it say.
+
+So the writer no longer sees the prose. The analyze phase distills each excerpt
+into meaning-complete notes in its own words (exact only for proper nouns,
+numbers, dates and terms of art), the script phase teaches from those notes
+with the source closed, and only the validator reads the original — checking
+truth, coverage and copying after the fact. What is not in the writer's context
+cannot be copied out of it; the residual risk is source wording that survives
+into a note, which is why the analyze prompt bans it there.
 
 The opposite failure is still real — prompts loose enough to teach once produced
 a four-lesson course out of a one-page letter — and the length budget in
@@ -112,7 +123,7 @@ GROUNDING = (
     "idea, but distinct ideas must remain."
 )
 
-# ----------------------------------------------------------------- title# ----------------------------------------------------------------- title
+# ----------------------------------------------------------------- title
 TITLE_SYSTEM = (
     "You produce a clean, concise title for a written work being adapted to "
     "audio. Return ONLY the title as plain text — no quotes, no markdown, no "
@@ -134,16 +145,23 @@ def title_user(raw_title: str, sample: str) -> str:
 # ----------------------------------------------------------------- analyze
 ANALYZE_SYSTEM = (
     GROUNDING
-    + "\n\nTask: index ONE excerpt of the source. This index becomes the lesson's "
-    "coverage contract, so include every distinct substantive idea the excerpt teaches. "
-    "Keep the index terse; do not turn every sentence into its own item.\n"
+    + "\n\nTask: take notes on ONE excerpt of the source. The lesson is later "
+    "written from these notes with the source closed — the writer never sees "
+    "this excerpt — so the notes are both the coverage contract and the entire "
+    "teaching material. An idea left out here is never taught; a fact recorded "
+    "loosely is taught wrong. Include every distinct substantive idea, but do "
+    "not turn every sentence into its own item.\n"
     'Return a JSON object with: teachable (bool), truncated (bool), and the '
     "arrays concepts, definitions, frameworks, examples, conclusions. Each array "
     'item is {"title": str, "body": str}.\n'
-    "- `title`: what the source covers at that point, in the author's own words "
-    "where possible (under 12 words).\n"
-    "- `body`: one line recording what this excerpt actually says about it "
-    "(under 30 words).\n"
+    "- `title`: what the source covers at that point, in your own words "
+    "(under 12 words).\n"
+    "- `body`: the complete meaning of what this excerpt says about it, in your "
+    "own words (under 60 words): every fact, name, figure, relationship and "
+    "conclusion a lesson needs to teach the idea in full, and nothing the "
+    "excerpt does not say. Keep exact only proper nouns, numbers, dates, and "
+    "established terms of art — any other source wording that survives into a "
+    "note comes out of the course as copying.\n"
     "- `teachable`: false if this excerpt is APPARATUS rather than material — a "
     "table of contents, a chapter or verse listing, an index, a page-number run, "
     "a copyright or permissions page, a cross-reference table, a publisher's "
@@ -156,8 +174,8 @@ ANALYZE_SYSTEM = (
     "Only include what THIS excerpt supports; empty arrays are fine and normal. "
     f"At most {MAX_INDEX_ITEMS_PER_ARRAY} items per array. Count a repeated "
     "pattern ONCE — a genealogy, a list of measurements, a formula restated for "
-    "each of forty cases is a single item describing the pattern, never one item "
-    "per instance. You are labeling the source, not explaining or assessing it."
+    "each of forty cases is a single item describing the pattern and its range, "
+    "never one item per instance. You are distilling the source, not assessing it."
 )
 
 
@@ -232,12 +250,23 @@ def segment_user(
 # ----------------------------------------------------------------- session script
 SCRIPT_SYSTEM = (
     GROUNDING
-    + "\n\nTask: teach the source segments below as one spoken lesson.\n"
+    + "\n\nTask: teach one spoken lesson from the concept notes below.\n"
     "\n"
-    "- Teach every idea on the concept list. That list is the coverage contract.\n"
+    "The book is closed: you are not shown the source text, only the notes taken "
+    "from it. The notes are the whole of what this lesson may contain.\n"
+    "\n"
+    "- Teach every idea on the note list. That list is the coverage contract, and "
+    "it is also the boundary: state no fact, name, figure, event, example, or "
+    "analogy the notes do not support — not from your own knowledge of the "
+    "subject, however sure you are. A gap in the notes stays a gap.\n"
+    "- A note is compressed; teaching it is not expanding it word by word. Say "
+    "what it means, connect it to what came before, let one point lead to the "
+    "next the way a lecture does.\n"
+    "- Where a note records a repeated pattern (a genealogy, a rule over many "
+    "cases), teach the pattern and its range. Do not invent the instances back.\n"
     "- If material was already taught in an earlier lesson, do not repeat it unless "
-    "the current source adds something new.\n"
-    "- Follow the source order unless a small rearrangement makes the lesson clearer.\n"
+    "these notes add something new.\n"
+    "- Follow the notes' order unless a small rearrangement makes the lesson clearer.\n"
     "- Say each point once.\n"
     "- Open directly on the material. Do not announce the lesson.\n"
     "- Do not close with a recap, summary, or takeaways.\n"
@@ -290,25 +319,24 @@ def concept_checklist(concepts: list[dict] | None) -> list[str]:
 def script_user(
     session_title: str,
     outline: list[str],
-    chunks: list[dict],
     *,
-    source_words: int,
     min_words: int,
     max_words: int,
     concepts: list[dict] | None = None,
     feedback: list[dict] | None = None,
     previously_taught: list[dict] | None = None,
 ) -> str:
+    # Deliberately NO source excerpts. The writer teaching with the prose in front
+    # of it is what produced the 82%-verbatim course (see the module docstring);
+    # the notes are the only material, so source wording cannot be carried over.
+    # The validator still reads the excerpts — see validation_user.
     checklist = concept_checklist(concepts) or list(outline or [])
-    outline_txt = "\n".join(f"- {b}" for b in checklist) or "- (follow the segments)"
-    excerpts = "\n\n".join(
-        f"[segment {i + 1}{_ref(c)}]\n{c['text']}" for i, c in enumerate(chunks)
-    )
+    notes_txt = "\n".join(f"- {b}" for b in checklist) or "- (no notes were indexed for this lesson)"
     covered = already_taught_block(previously_taught)
     if covered:
         covered = (
             f"\n{covered}"
-            "Anything on that list is settled. Teach it again only if these segments "
+            "Anything on that list is settled. Teach it again only if these notes "
             "genuinely extend it, and then teach only what is new.\n"
         )
 
@@ -320,21 +348,21 @@ def script_user(
             for f in feedback[:12]
         )
         fix = (
-            "\nA previous attempt was rejected. Write the lesson again from the source "
-            "and concept list, fixing these problems:\n"
+            "\nA previous attempt was rejected. Write the lesson again from the "
+            "notes, fixing these problems:\n"
             f"{problems}\n"
         )
 
     return (
         f"Lesson title: {session_title}\n\n"
-        f"Concepts to teach — every distinct idea on this list must be present:\n"
-        f"{outline_txt}\n"
+        f"Concept notes, in source order — the complete material for this lesson. "
+        f"Every idea on this list must be taught, and nothing beyond it may be "
+        f"stated:\n"
+        f"{notes_txt}\n"
         f"{covered}{fix}\n"
-        f"Length: aim for {min_words} to {max_words} spoken words. Do not add material "
-        f"just to reach the range, and do not borrow wording from the source to make "
-        f"the lesson longer.\n\n"
-        f"Source segments — use these for information and fact-checking, not as prose "
-        f"to rewrite:\n{excerpts}"
+        f"Length: aim for {min_words} to {max_words} spoken words. Do not add "
+        f"material just to reach the range — the notes decide the content; the "
+        f"range only paces how fully each idea is unpacked."
     )
 
 
