@@ -13,7 +13,7 @@ ProgressCallback = Callable[[int, str], None]
 
 def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
-from ..models import Citation, OriginResult, TimelineEvent, TraceRequest, TraceResponse
+from ..models import Citation, EvidenceDossier, OriginResult, TimelineEvent, TraceRequest, TraceResponse
 from ..services.cache import get_cached, normalize_title, save_cached
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from .prompts import (
@@ -23,10 +23,102 @@ from .prompts import (
     EXTRACT_PROMPT,
     RECURSE_PROMPT,
     SEARCH_PROMPT,
+    SOURCE_HIERARCHY,
     SYNTHESIZE_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
+
+_VALID_TIERS = {"primary", "repository", "academic", "press", "low_authority", "unknown"}
+_VALID_EVIDENCE_TYPES = {
+    "primary_document",
+    "archaeological",
+    "contemporary_record",
+    "near_contemporary_account",
+    "later_historical_account",
+    "scholarly_inference",
+    "tradition",
+    "disputed",
+    "absent",
+}
+_VALID_CONFIDENCE_LABELS = {"high", "moderate", "low", "speculative"}
+
+# A source URL is a weak signal, but a reliable one at the bottom of the hierarchy:
+# these hosts are discovery aids, never the evidentiary foundation of a trace.
+_LOW_AUTHORITY_HOSTS = (
+    "wikipedia.org", "wikimedia.org", "fandom.com", "reddit.com", "quora.com",
+    "medium.com", "substack.com", "blogspot.com", "wordpress.com", "tumblr.com",
+    "youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com", "tiktok.com",
+    "pinterest.com", "stackexchange.com", "answers.com",
+)
+_REPOSITORY_HOSTS = (
+    ".museum", "britishmuseum.org", "bl.uk", "loc.gov", "archives.gov", "nationalarchives",
+    "bnf.fr", "vatlib.it", "metmuseum.org", "getty.edu", "smithsonian", "digitallibrary",
+    "archive.org", "perseus.tufts.edu", "hathitrust.org",
+)
+_ACADEMIC_HOSTS = (
+    ".edu", ".ac.uk", "jstor.org", "doi.org", "cambridge.org", "oup.com", "academia.edu",
+    "springer.com", "tandfonline.com", "sciencedirect.com", "brill.com", "degruyter.com",
+    "jhu.edu", "persee.fr", "openedition.org",
+)
+
+
+def _default_tier(url: str) -> str:
+    """Fall back to a host-based tier when the model does not label a citation."""
+    u = (url or "").lower()
+    if any(h in u for h in _LOW_AUTHORITY_HOSTS):
+        return "low_authority"
+    if any(h in u for h in _REPOSITORY_HOSTS):
+        return "repository"
+    if any(h in u for h in _ACADEMIC_HOSTS):
+        return "academic"
+    return "unknown"
+
+
+def _coerce_dossier(raw: Any, *, fallback_claim: str, confidence: float) -> Optional[EvidenceDossier]:
+    """Build an EvidenceDossier from model output, tolerating missing/invalid fields.
+
+    Anything the model left out becomes an explicit "None identified" rather than a
+    silently absent field — an unanswered evidence question is itself information.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def text(key: str, default: str) -> str:
+        val = raw.get(key)
+        if isinstance(val, (int, float)):
+            val = str(val)
+        if not isinstance(val, str) or not val.strip():
+            return default
+        return val.strip()
+
+    ev_type = raw.get("evidence_type")
+    if ev_type not in _VALID_EVIDENCE_TYPES:
+        ev_type = "scholarly_inference"
+
+    label = raw.get("confidence_label")
+    if label not in _VALID_CONFIDENCE_LABELS:
+        # Derive it from the numeric confidence so the two never disagree.
+        label = (
+            "high" if confidence >= 0.75
+            else "moderate" if confidence >= 0.5
+            else "low" if confidence >= 0.3
+            else "speculative"
+        )
+
+    return EvidenceDossier(
+        claim=text("claim", fallback_claim or "—"),
+        earliest_supporting_source=text("earliest_supporting_source", "None identified"),
+        estimated_source_date=text("estimated_source_date", "Unknown"),
+        earliest_surviving_copy=text("earliest_surviving_copy", "None identified"),
+        contemporary_evidence=text("contemporary_evidence", "None identified"),
+        independent_corroboration=text("independent_corroboration", "None identified"),
+        contradictory_evidence=text("contradictory_evidence", "None identified"),
+        evidence_type=ev_type,
+        confidence_label=label,
+        why=text("why", ""),
+        missing_piece=text("missing_piece", ""),
+    )
 
 
 def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -53,11 +145,18 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
         year = m.get("year")
         era = m.get("era_label")
         when = f"{year}" if isinstance(year, int) else (era or "unknown")
-        lines.append(
+        line = (
             f"- when={when} | precision={m.get('precision', 'unknown')} | "
             f"source={m.get('source_title', '?')} | claim={m.get('claim', '')} | "
-            f"cites={m.get('citations', [])}"
+            f"cites={m.get('citations', [])} | tier={m.get('source_tier', 'unknown')}"
         )
+        # Carry the evidence signals the extract stage picked up into synthesis, so
+        # the dossier is built from what was actually read rather than re-guessed.
+        if m.get("surviving_copy"):
+            line += f" | earliest_surviving_copy={m['surviving_copy']}"
+        if m.get("chain"):
+            line += f" | REPEATS={m['chain']}"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -222,12 +321,18 @@ class TraceOrchestrator:
             title=req.title,
             context=req.context or "(none)",
             max_queries=max_queries,
+            source_hierarchy=SOURCE_HIERARCHY,
         )
         return self.client.reason_json(prompt, use_reasoning_model=False)
 
     def _search_one(self, req: TraceRequest, query: str) -> GroundedAnswer:
         ctx = f"(context: {req.context})" if req.context else ""
-        prompt = SEARCH_PROMPT.format(title=req.title, context_clause=ctx, query=query)
+        prompt = SEARCH_PROMPT.format(
+            title=req.title,
+            context_clause=ctx,
+            query=query,
+            source_hierarchy=SOURCE_HIERARCHY,
+        )
         try:
             return self.client.grounded_search(prompt)
         except Exception as exc:
@@ -295,6 +400,7 @@ class TraceOrchestrator:
             title=title,
             mentions_block=_format_mentions_block(mentions),
             citations_block=_format_citations_block(citations),
+            source_hierarchy=SOURCE_HIERARCHY,
         )
         return self.client.reason_json(prompt, use_reasoning_model=True)
 
@@ -311,15 +417,24 @@ class TraceOrchestrator:
         duration: float,
     ) -> TraceResponse:
         url_lookup = {c["url"]: c for c in citations if c.get("url")}
+        # Tier labels the synthesis stage assigned, falling back to a host heuristic.
+        declared_tiers = final.get("source_tiers")
+        declared_tiers = declared_tiers if isinstance(declared_tiers, dict) else {}
+
+        def tier_for(url: str) -> str:
+            t = declared_tiers.get(url)
+            return t if t in _VALID_TIERS else _default_tier(url)
 
         def to_citations(urls: List[str]) -> List[Citation]:
             out: List[Citation] = []
             for u in urls or []:
                 meta = url_lookup.get(u, {"url": u})
-                out.append(Citation(url=meta.get("url", u), title=meta.get("title")))
+                url = meta.get("url", u)
+                out.append(Citation(url=url, title=meta.get("title"), tier=tier_for(url)))
             return out
 
         origin_data = final.get("origin") or {}
+        origin_conf = float(origin_data.get("confidence", 0.5) or 0.5)
         origin = OriginResult(
             year=origin_data.get("year"),
             era_label=origin_data.get("era_label"),
@@ -327,11 +442,17 @@ class TraceOrchestrator:
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
             citations=to_citations(origin_data.get("citations", [])),
-            confidence=float(origin_data.get("confidence", 0.5) or 0.5),
+            confidence=origin_conf,
+            evidence=_coerce_dossier(
+                origin_data.get("evidence"),
+                fallback_claim=origin_data.get("summary", ""),
+                confidence=origin_conf,
+            ),
         )
 
         timeline: List[TimelineEvent] = []
         for ev in final.get("timeline") or []:
+            conf = float(ev.get("confidence", 0.5) or 0.5)
             timeline.append(
                 TimelineEvent(
                     year=ev.get("year"),
@@ -340,14 +461,21 @@ class TraceOrchestrator:
                     source_title=ev.get("source_title", "Unknown"),
                     claim=ev.get("claim", ""),
                     citations=to_citations(ev.get("citations", [])),
-                    confidence=float(ev.get("confidence", 0.5) or 0.5),
+                    confidence=conf,
+                    evidence=_coerce_dossier(
+                        ev.get("evidence"), fallback_claim=ev.get("claim", ""), confidence=conf
+                    ),
                 )
             )
 
         # chronological sort, oldest first; null years go last
         timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
 
-        all_citations = [Citation(url=c["url"], title=c.get("title")) for c in citations if c.get("url")]
+        all_citations = [
+            Citation(url=c["url"], title=c.get("title"), tier=tier_for(c["url"]))
+            for c in citations
+            if c.get("url")
+        ]
 
         return TraceResponse(
             title=req.title,
@@ -384,6 +512,7 @@ class TraceOrchestrator:
             when=when,
             parent_source_title=req.parent_source_title,
             parent_claim=req.parent_claim or "(no prior claim recorded)",
+            source_hierarchy=SOURCE_HIERARCHY,
         )
         try:
             answer = self.client.grounded_search(search_prompt)
@@ -406,7 +535,11 @@ class TraceOrchestrator:
                 parent_era_label=req.parent_era_label,
                 events=[],
                 queries_run=list(answer.queries or []),
-                citations=[Citation(url=c["url"], title=c.get("title")) for c in citations if c.get("url")],
+                citations=[
+                    Citation(url=c["url"], title=c.get("title"), tier=_default_tier(c["url"]))
+                    for c in citations
+                    if c.get("url")
+                ],
                 duration_seconds=round(time.time() - started, 2),
             )
 
@@ -435,12 +568,14 @@ class TraceOrchestrator:
             out: List[Citation] = []
             for u in urls or []:
                 meta = url_lookup.get(u, {"url": u})
-                out.append(Citation(url=meta.get("url", u), title=meta.get("title")))
+                url = meta.get("url", u)
+                out.append(Citation(url=url, title=meta.get("title"), tier=_default_tier(url)))
             return out
 
         events: List[TimelineEvent] = []
         for ev in raw_events[: req.max_events]:
             try:
+                conf = float(ev.get("confidence", 0.5) or 0.5)
                 events.append(
                     TimelineEvent(
                         year=ev.get("year"),
@@ -449,7 +584,10 @@ class TraceOrchestrator:
                         source_title=ev.get("source_title", "Unknown"),
                         claim=ev.get("claim", ""),
                         citations=to_citations(ev.get("citations", [])),
-                        confidence=float(ev.get("confidence", 0.5) or 0.5),
+                        confidence=conf,
+                        evidence=_coerce_dossier(
+                            ev.get("evidence"), fallback_claim=ev.get("claim", ""), confidence=conf
+                        ),
                     )
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -463,6 +601,10 @@ class TraceOrchestrator:
             parent_era_label=req.parent_era_label,
             events=events,
             queries_run=list(answer.queries or []),
-            citations=[Citation(url=c["url"], title=c.get("title")) for c in citations if c.get("url")],
+            citations=[
+                Citation(url=c["url"], title=c.get("title"), tier=_default_tier(c["url"]))
+                for c in citations
+                if c.get("url")
+            ],
             duration_seconds=round(time.time() - started, 2),
         )
