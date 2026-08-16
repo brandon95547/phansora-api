@@ -20,7 +20,7 @@ from phansora.shared.errors import fail
 from .config import get_settings  # noqa: E402
 from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
 from .pipeline.orchestrator import TraceOrchestrator  # noqa: E402
-from .services.cache import delete_cached, normalize_title  # noqa: E402
+from .services.cache import delete_cached  # noqa: E402
 from .services.job_manager import JobManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -123,9 +123,15 @@ def submit_trace_job(req: TraceRequest):
 
 @app.post("/cache/invalidate")
 def invalidate_cache(req: CacheKeyRequest):
-    """Drop the cached trace for a title so a re-trace runs fresh. Called by the
-    Node app when a user deletes an origin trace. Idempotent."""
-    removed = delete_cached(normalize_title(req.title))
+    """Drop every cached variant of a title so a re-trace runs fresh. Called by the
+    Node app when a user deletes an origin trace. Idempotent.
+
+    delete_cached takes the raw title and normalises internally — it has to, now that one
+    title can have several cached entries (one per context/depth/sources combination) and
+    the caller knows only the title. `removed` is a count rather than a bool for the same
+    reason.
+    """
+    removed = delete_cached(req.title)
     return {"ok": True, "removed": removed}
 
 

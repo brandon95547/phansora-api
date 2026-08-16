@@ -42,7 +42,7 @@ from ..models import (
     TraceRequest,
     TraceResponse,
 )
-from ..services.cache import get_cached, normalize_title, save_cached
+from ..services.cache import get_cached, normalize_title, request_key, save_cached
 from phansora.shared.ai import usage
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
@@ -291,9 +291,19 @@ class TraceOrchestrator:
         started = time.time()
         usage.start()
         normalized = normalize_title(req.title)
+        # The WHOLE request, not just the title: context, depth, sources and language all
+        # change the answer, and keying on the title alone meant the first run of a title
+        # answered every later variation of it.
+        key = request_key(
+            req.title,
+            context=req.context,
+            max_depth=req.max_depth,
+            max_sources_per_stage=req.max_sources_per_stage,
+            language=req.language,
+        )
 
         progress(2, "Checking cache")
-        cached = get_cached(normalized)
+        cached = get_cached(req.title, key)
         if cached:
             logger.info("Cache hit for %s", normalized)
             progress(100, "Loaded from cache")
@@ -474,7 +484,7 @@ class TraceOrchestrator:
         )
 
         try:
-            save_cached(normalized, response.model_dump())
+            save_cached(req.title, key, response.model_dump())
         except Exception as exc:  # pragma: no cover
             logger.warning("Failed to write cache: %s", exc)
 

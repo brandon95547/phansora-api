@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     # Cache
     chrono_cache_dir: str = "./data/chrono_origin/cache"
+    # How long a cached trace stays servable. The product's own description is "real
+    # Google-grounded AI search"; with no expiry a trace answered once was answered
+    # forever, so a user paying for a fresh look could be handed a months-old one with
+    # nothing on screen to say so. 0 disables expiry.
+    chrono_cache_ttl_days: int = 30
 
     @property
     def cors_origins_list(self) -> List[str]:
