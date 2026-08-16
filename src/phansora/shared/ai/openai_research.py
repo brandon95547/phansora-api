@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from . import usage
 from .research import GroundedAnswer
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,7 @@ class OpenAIResearchClient:
             reasoning={"effort": self._cfg.search_effort},
             max_output_tokens=self._cfg.search_max_output_tokens,
         )
+        usage.record_response(resp)
 
         citations: List[Dict[str, str]] = []
         queries: List[str] = []
@@ -179,5 +181,6 @@ class OpenAIResearchClient:
             text={"format": {"type": "json_object"}},
             max_output_tokens=self._cfg.reason_max_output_tokens,
         )
+        usage.record_response(resp)
         raw = getattr(resp, "output_text", "") or ""
         return _parse_json(raw or "{}")

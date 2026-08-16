@@ -40,18 +40,49 @@ def _spine(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [n for n in nodes if not n.get("parent")]
 
 
-def _edges(nodes: List[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
-    """(source_id, target_id, kind) — 'primary' along the spine, 'branch' for
-    parent→child links."""
-    edges: List[Tuple[str, str, str]] = []
+def _connections(doc: Dict[str, Any]) -> List[Dict[str, Any]]:
+    cs = doc.get("connections")
+    return [c for c in cs if isinstance(c, dict)] if isinstance(cs, list) else []
+
+
+def _edges(nodes: List[Dict[str, Any]], connections: List[Dict[str, Any]] | None = None) -> List[Tuple[str, str, str, str]]:
+    """(source_id, target_id, kind, label).
+
+    When the document carries evaluated ``connections``, those ARE the edges and
+    they bring their relation with them: an exported graph should show that one
+    text derives from another, and should show a merely-sequential pair as
+    exactly that rather than as an unlabelled arrow the reader will read as
+    causation. Structure-derived edges ('primary' along the spine, 'branch' for
+    parent→child) remain the fallback for documents with no assessment.
+    """
+    ids = {str(n.get("id")) for n in nodes}
+    edges: List[Tuple[str, str, str, str]] = []
+
+    if connections:
+        seen: set[Tuple[str, str]] = set()
+        for c in connections:
+            s, t = str(c.get("from_id") or ""), str(c.get("to_id") or "")
+            if s not in ids or t not in ids or s == t or (s, t) in seen:
+                continue
+            seen.add((s, t))
+            relation = str(c.get("relation") or "no_established_link")
+            kind = "sequence" if relation == "no_established_link" else "primary"
+            edges.append((s, t, kind, relation.replace("_", " ")))
+        # Branch structure is layout, not an assessed claim, so it is still
+        # derived even when connections are present.
+        for n in nodes:
+            p = n.get("parent")
+            if p and str(p) in ids and (str(p), str(n.get("id"))) not in seen:
+                edges.append((str(p), str(n.get("id")), "branch", ""))
+        return edges
+
     spine = _spine(nodes)
     for a, b in zip(spine, spine[1:]):
-        edges.append((str(a.get("id")), str(b.get("id")), "primary"))
-    ids = {str(n.get("id")) for n in nodes}
+        edges.append((str(a.get("id")), str(b.get("id")), "primary", ""))
     for n in nodes:
         p = n.get("parent")
         if p and str(p) in ids:
-            edges.append((str(p), str(n.get("id")), "branch"))
+            edges.append((str(p), str(n.get("id")), "branch", ""))
     return edges
 
 
@@ -177,9 +208,12 @@ def to_dot(doc: Dict[str, Any]) -> str:
     for n in nodes:
         label = f"{_title(n)}\\n{_year_label(n)}"
         lines.append(f"  {q(n.get('id'))} [label={q(label)}];")
-    for s, t, kind in _edges(nodes):
-        style = "" if kind == "primary" else " [style=dashed]"
-        lines.append(f"  {q(s)} -> {q(t)}{style};")
+    for s, t, kind, label in _edges(nodes, _connections(doc)):
+        attrs = [] if kind == "primary" else ["style=dashed"]
+        if label:
+            attrs.append(f"label={q(label)}")
+        suffix = f" [{', '.join(attrs)}]" if attrs else ""
+        lines.append(f"  {q(s)} -> {q(t)}{suffix};")
     lines.append("}")
     return "\n".join(lines) + "\n"
 
@@ -191,9 +225,10 @@ def to_mermaid(doc: Dict[str, Any]) -> str:
     lines = ["graph LR"]
     for n in nodes:
         lines.append(f'  {safe(n.get("id"))}["{txt(_title(n))}<br/>{txt(_year_label(n))}"]')
-    for s, t, kind in _edges(nodes):
+    for s, t, kind, label in _edges(nodes, _connections(doc)):
         arrow = "-->" if kind == "primary" else "-.->"
-        lines.append(f"  {safe(s)} {arrow} {safe(t)}")
+        edge = f"{arrow}|{txt(label)}|" if label else arrow
+        lines.append(f"  {safe(s)} {edge} {safe(t)}")
     return "\n".join(lines) + "\n"
 
 
@@ -315,6 +350,7 @@ def to_graphml(doc: Dict[str, Any]) -> str:
     for key_id, name in (("d_label", "label"), ("d_when", "when"), ("d_claim", "claim"), ("d_kind", "kind")):
         _sub(root, "key", id=key_id, **{"for": "node", "attr.name": name, "attr.type": "string"})
     _sub(root, "key", id="e_kind", **{"for": "edge", "attr.name": "kind", "attr.type": "string"})
+    _sub(root, "key", id="e_relation", **{"for": "edge", "attr.name": "relation", "attr.type": "string"})
     g = _sub(root, "graph", id="G", edgedefault="directed")
     for n in nodes:
         nel = _sub(g, "node", id=str(n.get("id")))
@@ -323,9 +359,11 @@ def to_graphml(doc: Dict[str, Any]) -> str:
         if _claim(n):
             _sub(nel, "data", _claim(n), key="d_claim")
         _sub(nel, "data", n.get("kind") or "", key="d_kind")
-    for i, (s, t, kind) in enumerate(_edges(nodes)):
+    for i, (s, t, kind, label) in enumerate(_edges(nodes, _connections(doc))):
         eel = _sub(g, "edge", id=f"e{i}", source=s, target=t)
         _sub(eel, "data", kind, key="e_kind")
+        if label:
+            _sub(eel, "data", label, key="e_relation")
     return _xml_str(root)
 
 

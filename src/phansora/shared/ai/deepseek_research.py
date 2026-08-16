@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from . import usage
 from .research import GroundedAnswer
 from .search import SearchConfig, SearchResult, web_search
 
@@ -122,7 +123,9 @@ class DeepSeekResearchClient:
         )
         if resp.status_code >= 400:
             raise RuntimeError(f"DeepSeek HTTP {resp.status_code}: {resp.text[:500]}")
-        choices = resp.json().get("choices") or []
+        body = resp.json()
+        usage.record_response(body)
+        choices = body.get("choices") or []
         if not choices:
             return ""
         return (choices[0].get("message") or {}).get("content") or ""

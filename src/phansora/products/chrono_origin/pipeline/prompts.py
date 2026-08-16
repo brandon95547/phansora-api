@@ -1,10 +1,23 @@
-"""Prompt templates for the trace pipeline."""
+"""Prompt templates for the trace pipeline.
+
+A note on cost, because it shapes every template here. The doctrine below is the
+most expensive text in the product: it used to be pasted into all ~20 search
+calls of a trace, where it could not be acted on — a search step summarising five
+snippets cannot weigh a manuscript's provenance, so it was paying full price for
+instructions it had no way to follow.
+
+So the doctrine is split. The full hierarchy goes only to the two stages that
+exercise judgement: planning what to look for, and deciding what the evidence
+supports. Everything else gets SEARCH_DOCTRINE, the short form covering only what
+a summariser can actually do. Same behaviour, a fraction of the tokens, and the
+savings pay for reading real source pages instead.
+"""
 from __future__ import annotations
 
 # ---------------------------------------------------------------------------
-# The evidence doctrine every stage of the pipeline works under. Chrono Origin
-# ranks a claim by the evidence you can follow backwards from it, never by the
-# reputation of whoever repeated it last.
+# The evidence doctrine. Chrono Origin ranks a claim by the evidence you can
+# follow backwards from it, never by the reputation of whoever repeated it last.
+# Injected into DECOMPOSE and SYNTHESIZE only — the two stages that can act on it.
 # ---------------------------------------------------------------------------
 SOURCE_HIERARCHY = """\
 SOURCE HIERARCHY — work down this list in order, and record which tier each source sits in:
@@ -34,6 +47,18 @@ SOURCE HIERARCHY — work down this list in order, and record which tier each so
 
 Absence of evidence is a finding. "None identified" is always a better answer than a guess,
 an assumed source, or a citation you did not actually see.
+"""
+
+
+# The short form, for stages that summarise rather than judge. Everything a
+# search step can actually act on, and nothing it cannot.
+SEARCH_DOCTRINE = """\
+EVIDENCE RULES for this summary:
+- Prefer original documents, artefacts and the repositories holding them over write-ups about them.
+- Give the COMPOSITION date and the EARLIEST SURVIVING COPY date separately whenever both appear.
+- Judge each source by the evidence it cites, not by its brand — mainstream and alternative alike.
+- If several results repeat one upstream report, say so and name it: that is ONE source, not several.
+- State plainly what is NOT found. Never fill a gap with a plausible guess.
 """
 
 
@@ -68,36 +93,34 @@ You are a research assistant performing a SINGLE web search to help trace the or
 
 Search query: {query}
 
-{source_hierarchy}
+{search_doctrine}
 
 Search the web for this query. Then write a concise (<= 300 words) factual summary of what the
 sources say that is RELEVANT to dating the earliest origin or any historical retelling of this story.
 
-In the summary you must:
-- Name specific dates, eras, manuscript names, shelfmarks, repositories, authors, and cultures
-  whenever the sources do.
-- Separate COMPOSITION date from EARLIEST SURVIVING COPY whenever both are discussed.
-- Say which tier of the hierarchy each source belongs to (primary / repository / academic /
-  press / low-authority).
-- Flag when several results are clearly repeating one upstream report, and name that upstream
-  source if you can identify it.
-- State plainly when something is NOT found, rather than filling the gap.
-
-Do not speculate beyond what the cited sources state.
+Name specific dates, eras, manuscript names, shelfmarks, repositories, authors and cultures
+whenever the sources do, and tag each source with its tier (primary / repository / academic /
+press / low-authority). Do not speculate beyond what the cited sources state.
 """
 
 
+# Extract and plan-the-next-round in one call. These were two calls until the
+# merge: the model that has just read the notes is better placed to say what is
+# still missing than a second call given only the earliest year, and the round's
+# planning now costs nothing extra.
 EXTRACT_PROMPT = """\
-From the research notes below, extract every distinct dated mention (or era-tagged mention) of
-the story "{title}". Each mention must be tied to at least one citation URL from the notes.
+From the research material below, extract every distinct dated mention (or era-tagged mention) of
+the story "{title}". Each mention must be tied to at least one citation URL from the material.
 
 Research notes:
 ---
 {notes}
 ---
-
+{pages_block}
 Available citations (use these URLs verbatim):
 {citations_block}
+
+Earliest mention established so far: {earliest_known}
 
 Return JSON:
 {{
@@ -111,53 +134,45 @@ Return JSON:
       "citations": [<url>, ...],
       "confidence": <0..1>,
       "source_tier": "primary|repository|academic|press|low_authority|unknown",
-      "surviving_copy": <string or null>,      // oldest EXISTING copy + its date, if the notes say
+      "surviving_copy": <string or null>,      // oldest EXISTING copy + its date, if stated
       "chain": <string or null>                // name the upstream source if this just repeats one
     }}
-  ]
+  ],
+  "next_queries": [<string>, ...],   // up to {max_queries}
+  "gaps": [<string>, ...]            // up to 3: what evidence is still missing
 }}
 
-Rules:
-- Only include mentions actually supported by the notes; never infer a source that is not there.
-- "year" is when the source was COMPOSED. If the notes only give the date of a surviving copy,
-  put that in "surviving_copy" and leave "year" null unless composition is separately stated.
+Rules for "mentions":
+- Only include mentions actually supported by the material; never infer a source that is not there.
+- "year" is when the source was COMPOSED. If only a surviving copy's date is given, put that in
+  "surviving_copy" and leave "year" null unless composition is separately stated.
+- Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
 - Keep "surviving_copy" and "chain" under 15 words each.
-- Return ONLY JSON.
-"""
 
-
-RECURSE_PROMPT = """\
-We are trying to push the origin of "{title}" further back in time.
-
-Current earliest known mention:
-- year: {year}
-- era_label: {era_label}
-- source: {source_title}
-- claim: {claim}
-
-Generate {max_queries} NEW web search queries that specifically hunt for OLDER predecessors,
-parallel traditions, source materials, or oral-tradition antecedents that PREDATE the above.
-Prioritise queries likely to surface primary documents, named manuscripts and their holding
-repositories, excavation reports, and critical editions rather than general write-ups. Include at
-least one query aimed at INDEPENDENT corroboration from a different information chain, and one
-aimed at scholarship that DISPUTES the dating above.
-
-Avoid repeating any of these already-tried queries:
+Rules for "next_queries" — searches to run NEXT to push this origin further back:
+- Target OLDER predecessors, parallel traditions, source materials and oral antecedents that
+  predate the earliest mention above.
+- Favour queries likely to surface primary documents, named manuscripts with their holding
+  repositories, excavation reports and critical editions over general write-ups.
+- Include at least one aimed at INDEPENDENT corroboration from a different information chain,
+  and one aimed at scholarship DISPUTING the dating above.
+- Return an empty list if the evidence looks exhausted; do not pad it.
+- Never repeat any of these already-tried queries:
 {prior_queries}
 
-Return JSON: {{"queries": [<string>, ...]}}. Only JSON.
+Return ONLY JSON.
 """
 
 
 SYNTHESIZE_PROMPT = """\
 You are writing the final trace report for the story "{title}".
 
-You have collected these dated mentions across multiple research rounds:
+Dated mentions gathered across all research rounds (already deduplicated):
 {mentions_block}
 
 Available citations:
 {citations_block}
-
+{pages_block}
 {source_hierarchy}
 
 Every entry carries an "evidence" dossier — a plain, arguable statement of what actually backs
@@ -197,6 +212,7 @@ Produce a JSON object:
   "timeline": [
     // chronological, oldest first; one entry per significant retelling / mutation
     {{
+      "id": "t1",                              // unique, stable, referenced by connections
       "year": <signed int or null>,
       "era_label": <string or null>,
       "precision": "...",
@@ -207,12 +223,51 @@ Produce a JSON object:
       "evidence": {{ ...dossier... }}
     }}
   ],
+  "connections": [ ...see CONNECTIONS below... ],
   "source_tiers": {{ "<url>": "primary|repository|academic|press|low_authority|unknown", ... }},
   "reasoning": <short paragraph explaining the chain of evidence and any uncertainty>,
   "confidence": <0..1>
 }}
 
-Rules:
+CONNECTIONS — the most important and most easily faked part of this report.
+
+A timeline implies that each item leads to the next. That implication is a CLAIM, and it is
+usually the weakest one on the page: "A, then B, therefore A caused B" is the error this report
+exists to expose. So every connection is judged on the same terms as any other claim.
+
+Emit up to {max_connections} connections:
+{{
+  "from_id": <id of the earlier item; the origin's id is "origin">,
+  "to_id": <id of the later item>,
+  "relation": "derives_from|retells|translates|responds_to|contradicts|contemporaneous|attests|
+               no_established_link",
+  "citations": [<url>, ...],
+  "evidence": {{
+    "mechanism": <ONE sentence: HOW does the earlier item lead to the later one? Name the route —
+                  a translator, a manuscript family, a named borrowing, a documented transmission>,
+    "supporting_evidence": <what actually evidences this link, or "None identified">,
+    "contradictory_evidence": <scholarship or evidence against the link, or "None identified">,
+    "independent_corroboration": <support from a different information chain, or "None identified">,
+    "evidence_type": <same vocabulary as the dossier, applied to the LINK not the events>,
+    "confidence": <0..1>,
+    "confidence_label": "high|moderate|low|speculative",
+    "why": <1-2 sentences on how strong this link really is>,
+    "missing_piece": <what evidence would settle whether this link is real>
+  }}
+}}
+
+Connection rules — read these twice:
+- Two items being consecutive in time is NOT a connection. If you cannot state a concrete
+  mechanism and name evidence for it, use "no_established_link" and say in "why" that the
+  sequence is chronological only. That is a correct, valuable answer, not a failure.
+- Scholarly consensus that A influenced B is "scholarly_inference", NOT "primary_document",
+  no matter how widely the influence is repeated.
+- Prefer few well-evidenced connections to many speculative ones.
+- Connect the origin to what it actually led to; do not chain every item to its neighbour by default.
+- Where sources disagree about whether a link exists, use "contradicts" or set
+  "contradictory_evidence" and lower the confidence accordingly.
+
+General rules:
 - Every claim must be backed by at least one citation URL from the provided list.
 - Prefer the OLDEST well-attested source as origin; if it's truly oral / prehistoric, set year=null
   and use an era_label.
@@ -221,10 +276,10 @@ Rules:
 - A scholar's conclusion is "scholarly_inference", not a record. A transmitted belief with no
   documentary trail is "tradition". Only use "primary_document", "archaeological" or
   "contemporary_record" when the evidence genuinely is one.
+- Where a SOURCE PAGE was read, prefer what it actually says over any summary of it.
 - Sources that repeat one upstream report count as ONE. Do not describe them as corroboration.
-- "confidence_label" reflects how well-attested the claim is, and must be consistent with the
-  numeric "confidence" (high >= 0.75, moderate 0.5-0.75, low 0.3-0.5, speculative < 0.3).
-- Deduplicate mentions that describe the same source.
+- "confidence_label" must be consistent with the numeric "confidence" (high >= 0.75,
+  moderate 0.5-0.75, low 0.3-0.5, speculative < 0.3).
 - Return ONLY JSON.
 """
 
@@ -239,26 +294,24 @@ Anchor item being expanded:
 - source / event: {parent_source_title}
 - claim: {parent_claim}
 
-{source_hierarchy}
+{search_doctrine}
 
 Search the web to surface specific, dated sub-events tightly related to that anchor:
 contemporaneous retellings, immediate predecessors or successors, manuscript variants,
 translations, recensions, archaeological finds, related contemporary events, named
 people involved, or documented influences.
 
-Write a concise (<= 350 words) factual summary mentioning specific dates, manuscript
-names, shelfmarks, repositories, authors, places, and cultures whenever the sources do.
-Separate composition dates from the dates of surviving copies, note which tier of the
-hierarchy each source sits in, and flag results that merely repeat one upstream report.
-Do not speculate beyond the cited sources.
+Write a concise (<= 350 words) factual summary naming specific dates, manuscript names,
+shelfmarks, repositories, authors, places and cultures whenever the sources do. Do not
+speculate beyond the cited sources.
 """
 
 
 EXPAND_EXTRACT_PROMPT = """\
-From the research notes below, extract distinct dated sub-events that are tightly
+From the research material below, extract distinct dated sub-events that are tightly
 related to this anchor in the history of "{story_title}":
 
-Anchor:
+Anchor (its id is "{parent_id}"):
 - when: {when}
 - source / event: {parent_source_title}
 - claim: {parent_claim}
@@ -267,7 +320,7 @@ Research notes:
 ---
 {notes}
 ---
-
+{pages_block}
 Available citations (use these URLs verbatim):
 {citations_block}
 
@@ -275,6 +328,7 @@ Return JSON:
 {{
   "events": [
     {{
+      "id": "e1",                              // unique, referenced by connections
       "year": <signed integer or null>,        // the COMPOSITION date
       "era_label": <string or null>,
       "precision": "exact|year|decade|century|millennium|era|unknown",
@@ -296,19 +350,43 @@ Return JSON:
         "missing_piece": <the absent evidence that most limits this claim>
       }}
     }}
+  ],
+  "connections": [
+    // ONE per sub-event, stating why it belongs under this anchor at all.
+    {{
+      "from_id": "{parent_id}",
+      "to_id": <the sub-event's id>,
+      "relation": "derives_from|retells|translates|responds_to|contradicts|contemporaneous|attests|
+                   no_established_link",
+      "citations": [<url>, ...],
+      "evidence": {{
+        "mechanism": <ONE sentence: how does the anchor lead to, or relate to, this sub-event?>,
+        "supporting_evidence": <what evidences the link, or "None identified">,
+        "contradictory_evidence": <evidence against it, or "None identified">,
+        "independent_corroboration": <support from a different chain, or "None identified">,
+        "evidence_type": <same vocabulary, applied to the LINK>,
+        "confidence": <0..1>,
+        "confidence_label": "high|moderate|low|speculative",
+        "why": <1-2 sentences on how strong the link is>,
+        "missing_piece": <what would settle it>
+      }}
+    }}
   ]
 }}
 
 Rules:
 - Return AT MOST {max_events} events.
-- Every event must be supported by the notes and cite at least one URL.
-- Each event must be clearly tied to the anchor (same period, same lineage, direct
-  cause/effect, manuscript variant, etc.) - do NOT repeat the anchor itself.
-- Fill the evidence dossier from the notes only. "None identified" is correct and expected
-  when the notes do not establish something; never invent a source or a date to fill a field.
+- Every event must be supported by the material and cite at least one URL.
+- Do NOT repeat the anchor itself.
+- Fill the evidence dossier from the material only. "None identified" is correct and expected
+  when it does not establish something; never invent a source or a date to fill a field.
 - A historian's conclusion is "scholarly_inference", not a record; a transmitted belief with no
   documentary trail is "tradition".
+- Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
 - Sources that repeat one upstream report are ONE source, not corroboration.
+- Being near the anchor in time is NOT a connection. If you cannot name a mechanism, use
+  "no_established_link" and say so — a sub-event shown under a false relationship is worse
+  than one shown with none.
 - Order events chronologically, oldest first.
 - Return ONLY JSON.
 """

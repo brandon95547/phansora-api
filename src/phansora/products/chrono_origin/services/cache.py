@@ -10,6 +10,17 @@ from typing import Any, Optional
 from ..config import get_settings
 
 
+# Bump whenever the trace SHAPE changes — new fields, new stages, reworked
+# prompts. The cache has no TTL, so without a version a title traced under the
+# old pipeline is served unchanged forever: users would keep getting timelines
+# with no connections and no claim classes, and there would be no signal that
+# anything was stale. Bumping partitions the new traces from the old ones rather
+# than deleting anything, so a rollback still finds its own cache intact.
+#
+# v2: evidence dossiers, claim classes, evaluated connections, read source pages.
+SCHEMA_VERSION = "v2"
+
+
 def normalize_title(title: str) -> str:
     t = title.strip().lower()
     t = re.sub(r"\s+", " ", t)
@@ -23,9 +34,10 @@ def _cache_path(key: str) -> Optional[Path]:
         return None
     base = Path(settings.chrono_cache_dir)
     base.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    versioned = f"{SCHEMA_VERSION}:{key}"
+    digest = hashlib.sha1(versioned.encode("utf-8")).hexdigest()[:16]
     safe = re.sub(r"[^a-z0-9\-]+", "-", key)[:60].strip("-") or "trace"
-    return base / f"{safe}-{digest}.json"
+    return base / f"{SCHEMA_VERSION}-{safe}-{digest}.json"
 
 
 def get_cached(key: str) -> Optional[dict[str, Any]]:

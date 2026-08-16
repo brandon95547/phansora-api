@@ -36,6 +36,47 @@ EvidenceType = Literal[
 
 ConfidenceLabel = Literal["high", "moderate", "low", "speculative"]
 
+# The reader-facing question "how do we know this?", answered in five words.
+#
+# EvidenceType above records what KIND of artefact supports a claim; this records
+# what that artefact entitles us to say. They are derived, never independently
+# guessed (see CLAIM_CLASS_BY_EVIDENCE_TYPE), so the two can never drift apart and
+# the classification costs no extra tokens.
+ClaimClass = Literal[
+    "direct_evidence",       # a document, artefact or contemporary record states it
+    "historical_inference",  # reasoned from evidence; no source states it outright
+    "interpretation",        # a scholar's or commentator's reading, contested or not
+    "tradition",             # transmitted belief with no documentary trail
+    "unknown",               # no evidence located either way — a finding, not a blank
+]
+
+CLAIM_CLASS_BY_EVIDENCE_TYPE: dict[str, ClaimClass] = {
+    "primary_document": "direct_evidence",
+    "archaeological": "direct_evidence",
+    "contemporary_record": "direct_evidence",
+    "near_contemporary_account": "historical_inference",
+    "later_historical_account": "historical_inference",
+    "scholarly_inference": "interpretation",
+    "disputed": "interpretation",
+    "tradition": "tradition",
+    "absent": "unknown",
+}
+
+# How one timeline item is held to relate to another. "no_established_link" is the
+# most important member: two events being consecutive is not a connection, and the
+# pipeline must be able to say so instead of inventing a causal story to fill the
+# gap.
+RelationType = Literal[
+    "derives_from",         # B's content demonstrably comes from A
+    "retells",              # same story retold; no textual dependency demonstrated
+    "translates",           # B is a translation, recension or edition of A
+    "responds_to",          # B answers, corrects or argues against A
+    "contradicts",          # B is incompatible with A
+    "contemporaneous",      # same period; no dependency claimed
+    "attests",              # B is evidence that A already existed by then
+    "no_established_link",  # sequential only — the link is not evidenced
+]
+
 
 class TraceRequest(BaseModel):
     title: str = Field(..., min_length=2, description="Story / event title to trace.")
@@ -93,15 +134,35 @@ class EvidenceDossier(BaseModel):
     )
     contradictory_evidence: str = Field(default="None identified")
     evidence_type: EvidenceType = "scholarly_inference"
+    claim_class: ClaimClass = Field(
+        default="interpretation",
+        description="What the evidence entitles us to say. Derived from evidence_type, never guessed separately.",
+    )
     confidence_label: ConfidenceLabel = "moderate"
     why: str = Field(default="", description="Short plain-language explanation of the assessment.")
     missing_piece: str = Field(
         default="",
         description="The single piece of evidence whose absence most limits this claim.",
     )
+    disputed: bool = Field(
+        default=False,
+        description="Sources actively disagree about this claim (not merely unproven).",
+    )
+    # True only when the pipeline actually opened and read a source page for this
+    # claim. False means the provenance fields rest on search summaries alone, and
+    # the UI says so rather than presenting them with equal weight.
+    verified_from_source: bool = Field(default=False)
+    sources_read: List[str] = Field(
+        default_factory=list,
+        description="URLs whose page text was fetched and read when assessing this claim.",
+    )
 
 
 class TimelineEvent(BaseModel):
+    # Stable handle so connections can point at this item. Assigned by the
+    # pipeline ("t0", "t1", …; the origin is always "origin") and kept stable
+    # across the chronological sort, which would otherwise renumber everything.
+    id: str = Field(default="")
     year: Optional[int] = Field(
         default=None,
         description="Signed year. Negative = BCE. Null when only an era marker is known.",
@@ -119,6 +180,7 @@ class TimelineEvent(BaseModel):
 
 
 class OriginResult(BaseModel):
+    id: str = Field(default="origin")
     year: Optional[int] = None
     era_label: Optional[str] = None
     precision: DatePrecision = "unknown"
@@ -129,15 +191,103 @@ class OriginResult(BaseModel):
     evidence: Optional[EvidenceDossier] = None
 
 
+class ConnectionEvidence(BaseModel):
+    """Why one event is held to lead to another — judged on the same terms as a claim.
+
+    A connection is itself a claim, and the weakest link in most historical
+    narratives: "A, then B, therefore A caused B" is exactly the reasoning this
+    product exists to make visible. So a connection carries its own mechanism,
+    its own supporting and contradicting evidence, its own confidence, and its
+    own statement of what is missing.
+    """
+
+    mechanism: str = Field(
+        default="",
+        description="One sentence stating HOW the earlier item leads to the later one.",
+    )
+    supporting_evidence: str = Field(default="None identified")
+    contradictory_evidence: str = Field(
+        default="None identified",
+        description="Evidence or scholarship against this link, including 'the link is merely assumed'.",
+    )
+    independent_corroboration: str = Field(
+        default="None identified",
+        description="Support for the link that does not descend from the same information chain.",
+    )
+    claim_class: ClaimClass = "unknown"
+    evidence_type: EvidenceType = "scholarly_inference"
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    confidence_label: ConfidenceLabel = "moderate"
+    why: str = Field(default="", description="Plain-language reading of how strong the link is.")
+    missing_piece: str = Field(
+        default="",
+        description="What evidence would settle whether this link is real.",
+    )
+    disputed: bool = False
+
+
+class Connection(BaseModel):
+    """A directed, evidence-graded edge between two timeline items."""
+
+    from_id: str = Field(..., description="id of the earlier item.")
+    to_id: str = Field(..., description="id of the later item.")
+    relation: RelationType = "no_established_link"
+    evidence: ConnectionEvidence = Field(default_factory=ConnectionEvidence)
+    citations: List[Citation] = Field(default_factory=list)
+
+
+class EvidenceChain(BaseModel):
+    """A set of citations that all descend from one upstream report.
+
+    Ten sites repeating one article are one chain, and counting them as ten
+    confirmations is the failure mode this exists to prevent. Chains are computed
+    in code from the sources themselves, not asserted by the model.
+    """
+
+    id: str
+    label: str = Field(default="", description="The upstream source this chain traces back to, when identified.")
+    urls: List[str] = Field(default_factory=list)
+    tier: SourceTier = "unknown"
+
+
+class TokenUsage(BaseModel):
+    """What this trace actually cost, so the budget is observable rather than assumed."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    llm_calls: int = 0
+    pages_read: int = 0
+    by_stage: dict = Field(default_factory=dict)
+
+
 class TraceResponse(BaseModel):
     title: str
     normalized_title: str
     origin: OriginResult
     timeline: List[TimelineEvent]
+    # Evaluated edges between items. Empty on traces generated before connections
+    # existed — every consumer must treat absence as "not assessed", never as
+    # "no connections".
+    connections: List[Connection] = Field(default_factory=list)
     reasoning: str
     confidence: float = Field(ge=0.0, le=1.0)
     queries_run: List[str] = Field(default_factory=list)
     citations: List[Citation] = Field(default_factory=list)
+    chains: List[EvidenceChain] = Field(default_factory=list)
+    independent_chain_count: int = Field(
+        default=0,
+        description="Distinct information chains found. The honest count of how many separate things agree.",
+    )
+    sources_read: List[str] = Field(
+        default_factory=list,
+        description="URLs whose full page text was fetched and read during this trace.",
+    )
+    open_questions: List[str] = Field(
+        default_factory=list,
+        description="Evidence the research rounds looked for and did not find. What we do not know.",
+    )
+    usage: Optional[TokenUsage] = None
     iterations: int = 0
     duration_seconds: float = 0.0
 
@@ -151,6 +301,7 @@ class ExpandRequest(BaseModel):
     parent_year: Optional[int] = Field(default=None, description="Signed year of the parent item (negative = BCE).")
     parent_era_label: Optional[str] = Field(default=None, description="Era label of the parent item when no year is known.")
     parent_claim: Optional[str] = Field(default=None, description="Existing claim text for the parent item.")
+    parent_id: str = Field(default="parent", description="id the returned connections should hang off.")
     context: Optional[str] = Field(default=None, description="Optional disambiguating context for the overall story.")
     max_events: int = Field(default=6, ge=1, le=12, description="Max sub-events to return.")
     language: str = Field(default="en")
@@ -163,6 +314,12 @@ class ExpandResponse(BaseModel):
     parent_year: Optional[int] = None
     parent_era_label: Optional[str] = None
     events: List[TimelineEvent] = Field(default_factory=list)
+    # Parent -> sub-event edges, graded exactly like the main trace's connections.
+    # An expansion that cannot justify why a sub-event belongs under its anchor is
+    # showing the user a false relationship, which is worse than showing none.
+    connections: List[Connection] = Field(default_factory=list)
     queries_run: List[str] = Field(default_factory=list)
     citations: List[Citation] = Field(default_factory=list)
+    sources_read: List[str] = Field(default_factory=list)
+    usage: Optional[TokenUsage] = None
     duration_seconds: float = 0.0

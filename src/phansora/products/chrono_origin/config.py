@@ -14,13 +14,24 @@ class Settings(BaseSettings):
     # and read directly by the research clients in phansora.shared.ai; no
     # provider keys live here.
 
-    # Pipeline limits
+    # Pipeline limits. max_depth is a ceiling, not a target: the loop stops as soon
+    # as a round stops finding new evidence, so most traces never reach it.
     chrono_max_depth: int = 4
+    chrono_min_depth: int = 2
     chrono_max_sources_per_stage: int = 8
     chrono_max_queries_per_stage: int = 5
-    # Max web searches per grounded-search call (cost cap; deepseek fallback).
-    chrono_search_max_uses: int = 4
-    chrono_request_timeout_s: int = 120
+    chrono_request_timeout_s: int = 240
+
+    # Reading real source pages. This is the expensive half of the budget and the
+    # only thing that makes a provenance claim checkable rather than recalled, so
+    # it is spent narrowly: a few top-tier pages, truncated, one per domain.
+    chrono_read_sources: int = 4
+    chrono_read_chars: int = 6000
+    chrono_expand_read_sources: int = 2
+
+    # Ceiling on evaluated edges. Well past what a readable timeline needs — it
+    # exists to stop a model emitting an edge for every pair of events.
+    chrono_max_connections: int = 24
 
     # CORS
     cors_allow_origins: str = "*"

@@ -1,9 +1,26 @@
-"""End-to-end trace pipeline: decompose -> search -> extract -> recurse -> synthesize."""
+"""End-to-end trace pipeline: decompose -> search -> extract+plan -> read -> synthesize.
+
+Two principles govern the shape of this file.
+
+TOKENS BUY JUDGEMENT, NOT REPETITION. Anything deterministic — deduplicating
+mentions, deciding which sources are one source repeated, turning an evidence
+type into a claim class — happens in ``evidence.py`` for free. The model is asked
+only for what it alone can do: read sources, weigh them, and say what is missing.
+The loop stops as soon as a round adds nothing new rather than running to a fixed
+depth, because a round that found nothing will keep finding nothing.
+
+EVIDENCE IS READ, NOT RECALLED. Search returns titles and URLs; on the OpenAI
+path it does not even return snippets. A provenance claim built on that is the
+model's memory wearing a citation. So before synthesis the pipeline opens the few
+highest-tier pages and reads them, and every claim records whether it rests on
+text we actually saw.
+"""
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import get_settings
 
@@ -13,19 +30,33 @@ ProgressCallback = Callable[[int, str], None]
 
 def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
-from ..models import Citation, EvidenceDossier, OriginResult, TimelineEvent, TraceRequest, TraceResponse
+from ..models import (
+    Citation,
+    Connection,
+    ConnectionEvidence,
+    EvidenceChain,
+    EvidenceDossier,
+    OriginResult,
+    TimelineEvent,
+    TokenUsage,
+    TraceRequest,
+    TraceResponse,
+)
 from ..services.cache import get_cached, normalize_title, save_cached
+from phansora.shared.ai import usage
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
+from . import evidence as ev
 from .prompts import (
     DECOMPOSE_PROMPT,
     EXPAND_EXTRACT_PROMPT,
     EXPAND_SEARCH_PROMPT,
     EXTRACT_PROMPT,
-    RECURSE_PROMPT,
+    SEARCH_DOCTRINE,
     SEARCH_PROMPT,
     SOURCE_HIERARCHY,
     SYNTHESIZE_PROMPT,
 )
+from .reader import PageRead, format_reads_block, read_best
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +93,14 @@ _ACADEMIC_HOSTS = (
     "jhu.edu", "persee.fr", "openedition.org",
 )
 
+# Phrases the dossier uses for an honest absence. Recognised so "None identified"
+# in contradictory_evidence is never mistaken for an actual dispute.
+_ABSENCE = ("none identified", "none", "n/a", "not identified", "unknown", "")
+
+
+def _is_absent(value: Any) -> bool:
+    return str(value or "").strip().lower() in _ABSENCE
+
 
 def _default_tier(url: str) -> str:
     """Fall back to a host-based tier when the model does not label a citation."""
@@ -75,11 +114,24 @@ def _default_tier(url: str) -> str:
     return "unknown"
 
 
-def _coerce_dossier(raw: Any, *, fallback_claim: str, confidence: float) -> Optional[EvidenceDossier]:
+def _coerce_dossier(
+    raw: Any,
+    *,
+    fallback_claim: str,
+    confidence: float,
+    read_urls: Optional[set] = None,
+    citations: Optional[List[str]] = None,
+) -> Optional[EvidenceDossier]:
     """Build an EvidenceDossier from model output, tolerating missing/invalid fields.
 
     Anything the model left out becomes an explicit "None identified" rather than a
     silently absent field — an unanswered evidence question is itself information.
+
+    Three fields are settled here rather than asked for, because they are facts
+    about the run and not judgements: ``claim_class`` is derived from the evidence
+    type so it cannot be talked up, ``disputed`` follows from contradictory
+    evidence actually being present, and ``verified_from_source`` records whether
+    this pipeline opened any of the cited pages.
     """
     if not isinstance(raw, dict):
         return None
@@ -106,6 +158,10 @@ def _coerce_dossier(raw: Any, *, fallback_claim: str, confidence: float) -> Opti
             else "speculative"
         )
 
+    contradictory = text("contradictory_evidence", "None identified")
+    read = read_urls or set()
+    used = [u for u in (citations or []) if u in read]
+
     return EvidenceDossier(
         claim=text("claim", fallback_claim or "—"),
         earliest_supporting_source=text("earliest_supporting_source", "None identified"),
@@ -113,11 +169,62 @@ def _coerce_dossier(raw: Any, *, fallback_claim: str, confidence: float) -> Opti
         earliest_surviving_copy=text("earliest_surviving_copy", "None identified"),
         contemporary_evidence=text("contemporary_evidence", "None identified"),
         independent_corroboration=text("independent_corroboration", "None identified"),
-        contradictory_evidence=text("contradictory_evidence", "None identified"),
+        contradictory_evidence=contradictory,
         evidence_type=ev_type,
+        claim_class=ev.claim_class_for(ev_type, raw.get("claim_class")),
         confidence_label=label,
         why=text("why", ""),
         missing_piece=text("missing_piece", ""),
+        disputed=(ev_type == "disputed") or not _is_absent(contradictory),
+        verified_from_source=bool(used),
+        sources_read=used,
+    )
+
+
+def _coerce_connection_evidence(raw: Any, *, read_urls: set, citations: List[str]) -> ConnectionEvidence:
+    """Grade a connection on the same terms as a claim, defaulting to honest ignorance."""
+    raw = raw if isinstance(raw, dict) else {}
+
+    def text(key: str, default: str) -> str:
+        val = raw.get(key)
+        if isinstance(val, (int, float)):
+            val = str(val)
+        if not isinstance(val, str) or not val.strip():
+            return default
+        return val.strip()
+
+    try:
+        conf = float(raw.get("confidence", 0.5) or 0.5)
+    except (TypeError, ValueError):
+        conf = 0.5
+    conf = min(1.0, max(0.0, conf))
+
+    ev_type = raw.get("evidence_type")
+    if ev_type not in _VALID_EVIDENCE_TYPES:
+        ev_type = "scholarly_inference"
+
+    label = raw.get("confidence_label")
+    if label not in _VALID_CONFIDENCE_LABELS:
+        label = (
+            "high" if conf >= 0.75
+            else "moderate" if conf >= 0.5
+            else "low" if conf >= 0.3
+            else "speculative"
+        )
+
+    contradictory = text("contradictory_evidence", "None identified")
+    return ConnectionEvidence(
+        mechanism=text("mechanism", "No mechanism established."),
+        supporting_evidence=text("supporting_evidence", "None identified"),
+        contradictory_evidence=contradictory,
+        independent_corroboration=text("independent_corroboration", "None identified"),
+        claim_class=ev.claim_class_for(ev_type, raw.get("claim_class")),
+        evidence_type=ev_type,
+        confidence=conf,
+        confidence_label=label,
+        why=text("why", ""),
+        missing_piece=text("missing_piece", ""),
+        disputed=(ev_type == "disputed") or not _is_absent(contradictory),
     )
 
 
@@ -126,6 +233,14 @@ def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not dated:
         return mentions[0] if mentions else None
     return min(dated, key=lambda m: m["year"])
+
+
+def _describe_earliest(earliest: Optional[Dict[str, Any]]) -> str:
+    if not earliest:
+        return "(nothing established yet)"
+    year = earliest.get("year")
+    when = f"{year}" if isinstance(year, int) else (earliest.get("era_label") or "unknown")
+    return f"{when} — {earliest.get('source_title', '?')}: {earliest.get('claim', '')}"[:300]
 
 
 def _format_citations_block(citations: List[Dict[str, str]]) -> str:
@@ -162,7 +277,7 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
 
 class TraceOrchestrator:
     def __init__(self, client: Optional[object] = None) -> None:
-        # Provider chosen by CHRONO_LLM_PROVIDER (deepseek by default).
+        # Provider chosen by CHRONO_LLM_PROVIDER.
         self.client = client or build_research_client()
         self.settings = get_settings()
 
@@ -174,6 +289,7 @@ class TraceOrchestrator:
     ) -> TraceResponse:
         progress = on_progress or _noop_progress
         started = time.time()
+        usage.start()
         normalized = normalize_title(req.title)
 
         progress(2, "Checking cache")
@@ -184,25 +300,27 @@ class TraceOrchestrator:
             return TraceResponse(**cached)
 
         max_depth = req.max_depth or self.settings.chrono_max_depth
+        min_depth = max(1, min(self.settings.chrono_min_depth, max_depth))
         max_sources = req.max_sources_per_stage or self.settings.chrono_max_sources_per_stage
         max_queries = self.settings.chrono_max_queries_per_stage
 
         all_mentions: List[Dict[str, Any]] = []
         all_citations: Dict[str, Dict[str, str]] = {}
         queries_run: List[str] = []
+        gaps: List[str] = []
         iterations = 0
 
         # Stage 1 - Decompose
         progress(8, "Decomposing query")
+        usage.stage("decompose")
         plan = self._decompose(req, max_queries=max_queries)
         current_queries: List[str] = plan.get("queries", [])[:max_queries]
 
         prev_earliest_year: Optional[int] = None
         stagnant_rounds = 0
 
-        # Reserve 10% for cache/decompose, 80% for the recursive loop, 10% for synthesis.
-        loop_start_pct = 10
-        loop_end_pct = 90
+        # Reserve 10% for cache/decompose, 70% for the loop, 20% for reading+synthesis.
+        loop_start_pct, loop_end_pct = 10, 80
         loop_span = max(1, loop_end_pct - loop_start_pct)
 
         for depth in range(max_depth):
@@ -212,38 +330,68 @@ class TraceOrchestrator:
             if not current_queries:
                 break
 
-            # Stage 2 - Search (one grounded call per query)
+            # Stage 2 - Search. Concurrent: these calls do not depend on each
+            # other, and running five of them in series is the single largest
+            # chunk of a trace's wall clock. Costs nothing in tokens.
             queries_to_run = [q for q in current_queries[:max_queries] if q not in queries_run]
+            if not queries_to_run:
+                break
+            queries_run.extend(queries_to_run)
+            progress(
+                min(depth_pct + 2, loop_end_pct - 1),
+                f"Round {depth + 1}: searching {len(queries_to_run)} angles",
+            )
+            answers = self._search_many(req, queries_to_run)
+
             notes_chunks: List[str] = []
-            for i, q in enumerate(queries_to_run):
-                queries_run.append(q)
-                sub_pct = depth_pct + int((loop_span / max(1, max_depth)) * ((i + 1) / max(1, len(queries_to_run) + 2)))
-                progress(min(sub_pct, loop_end_pct - 1), f"Round {depth + 1}/{max_depth}: searching ({i + 1}/{len(queries_to_run)})")
-                answer = self._search_one(req, q)
+            round_urls: List[str] = []
+            for q, answer in zip(queries_to_run, answers):
                 if answer.text:
                     notes_chunks.append(f"### Query: {q}\n{answer.text}")
                 for c in answer.citations[:max_sources]:
                     url = c.get("url") or ""
-                    if url and url not in all_citations:
+                    if not url:
+                        continue
+                    if url not in all_citations:
                         all_citations[url] = c
+                    round_urls.append(url)
 
             if not notes_chunks:
                 break
 
-            # Stage 3 - Extract dated mentions
-            progress(min(depth_pct + int(loop_span / max_depth * 0.8), loop_end_pct - 1),
-                     f"Round {depth + 1}/{max_depth}: extracting dated mentions")
-            new_mentions = self._extract(
+            # Stage 3 - Extract dated mentions AND plan the next round in one call.
+            progress(
+                min(depth_pct + int(loop_span / max_depth * 0.8), loop_end_pct - 1),
+                f"Round {depth + 1}: extracting dated mentions",
+            )
+            usage.stage("extract")
+            extracted = self._extract(
                 title=req.title,
                 notes="\n\n".join(notes_chunks),
-                citations=list(all_citations.values()),
+                # Only this round's citations. Passing every URL gathered so far
+                # grew the prompt on every round AND invited the model to cite
+                # sources that appear nowhere in the notes it was handed.
+                citations=[all_citations[u] for u in dict.fromkeys(round_urls)],
+                earliest_known=_describe_earliest(_earliest_year(all_mentions)),
+                prior_queries=queries_run,
+                max_queries=max_queries,
             )
-            all_mentions.extend(new_mentions)
+            new_mentions = extracted.get("mentions", [])
+            for g in extracted.get("gaps", []) or []:
+                if isinstance(g, str) and g.strip() and g not in gaps:
+                    gaps.append(g.strip())
 
-            # Stage 4 - Decide whether to recurse for older sources
+            fresh = ev.new_mention_count(all_mentions, new_mentions)
+            all_mentions = ev.dedupe_mentions(all_mentions + new_mentions)
+
+            # ---- Stopping rules. Every extra round is a full set of searches, so
+            # the loop must justify continuing rather than run to the ceiling.
+            if depth + 1 >= min_depth and fresh == 0:
+                logger.info("Round %d added no new mentions; stopping.", depth + 1)
+                break
+
             earliest = _earliest_year(all_mentions)
             earliest_year = earliest.get("year") if earliest else None
-
             if (
                 isinstance(earliest_year, int)
                 and isinstance(prev_earliest_year, int)
@@ -257,19 +405,12 @@ class TraceOrchestrator:
             if stagnant_rounds >= 2:
                 logger.info("No older candidates after 2 rounds; stopping.")
                 break
-            if depth == max_depth - 1:
-                break
-            if earliest is None:
+            if depth == max_depth - 1 or earliest is None:
                 break
 
-            progress(min(depth_pct + int(loop_span / max_depth * 0.95), loop_end_pct - 1),
-                     f"Round {depth + 1}/{max_depth}: hunting for older sources")
-            current_queries = self._recurse(
-                title=req.title,
-                earliest=earliest,
-                prior_queries=queries_run,
-                max_queries=max_queries,
-            )
+            current_queries = [
+                q for q in (extracted.get("next_queries") or []) if isinstance(q, str) and q.strip()
+            ][:max_queries]
 
         # Guard: a trace with no grounded evidence can only synthesize an "unknown"
         # origin — a useless, misleading dossier. Fail loudly instead so the job is
@@ -288,12 +429,34 @@ class TraceOrchestrator:
                 "subject, so no origin could be traced."
             )
 
+        # Stage 4 - Read the strongest sources properly, before judging them.
+        citation_list = list(all_citations.values())
+        mention_tiers = self._mention_tiers(all_mentions)
+
+        def pre_tier(url: str) -> str:
+            t = mention_tiers.get(url)
+            return t if t in _VALID_TIERS else _default_tier(url)
+
+        progress(82, "Reading source pages")
+        want_reads = self.settings.chrono_read_sources
+        # Rank more candidates than we intend to read: the strongest sources are
+        # also the ones most likely to refuse a server-side fetch, and a blocked
+        # page should cost us the next-best source, not the read itself.
+        to_read = ev.select_for_reading(
+            citation_list, all_mentions, pre_tier, limit=want_reads * 2
+        )
+        reads = read_best(to_read, want=want_reads, max_chars=self.settings.chrono_read_chars)
+        read_ok = [r for r in reads if r.ok]
+        logger.info("Read %d source pages (from %d candidates)", len(read_ok), len(to_read))
+
         # Stage 5 - Synthesize
-        progress(loop_end_pct, "Synthesizing timeline")
+        progress(88, "Synthesizing timeline")
+        usage.stage("synthesize")
         final = self._synthesize(
             title=req.title,
             mentions=all_mentions,
-            citations=list(all_citations.values()),
+            citations=citation_list,
+            reads=reads,
         )
 
         progress(97, "Building response")
@@ -301,8 +464,11 @@ class TraceOrchestrator:
             req=req,
             normalized=normalized,
             final=final,
-            citations=list(all_citations.values()),
+            citations=citation_list,
+            mentions=all_mentions,
+            reads=reads,
             queries_run=queries_run,
+            open_questions=gaps,
             iterations=iterations,
             duration=time.time() - started,
         )
@@ -316,6 +482,23 @@ class TraceOrchestrator:
         return response
 
     # ----------------------------------------------------------------- stages
+    @staticmethod
+    def _mention_tiers(mentions: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Tier per URL as claimed at extract time, for use before synthesis runs."""
+        out: Dict[str, str] = {}
+        for m in mentions:
+            tier = m.get("source_tier")
+            if tier not in _VALID_TIERS:
+                continue
+            for url in m.get("citations") or []:
+                # Keep the strongest claim made about a URL across rounds.
+                if url and (
+                    url not in out
+                    or ev.TIER_ORDER.index(tier) < ev.TIER_ORDER.index(out[url])
+                ):
+                    out[url] = tier
+        return out
+
     def _decompose(self, req: TraceRequest, *, max_queries: int) -> Dict[str, Any]:
         prompt = DECOMPOSE_PROMPT.format(
             title=req.title,
@@ -325,13 +508,40 @@ class TraceOrchestrator:
         )
         return self.client.reason_json(prompt, use_reasoning_model=False)
 
+    def _search_many(self, req: TraceRequest, queries: List[str]) -> List[GroundedAnswer]:
+        """Run this round's searches concurrently, in the order asked.
+
+        Each worker meters itself and hands the total back: the usage counter is
+        thread-local so concurrent traces cannot contaminate each other, which
+        also means a worker's calls land in its own meter until absorbed here.
+        """
+        def one(query: str) -> Tuple[GroundedAnswer, Dict[str, Any]]:
+            usage.start()
+            usage.stage("search")
+            try:
+                answer = self._search_one(req, query)
+            except Exception as exc:  # noqa: BLE001 - a dead query must not kill the round
+                logger.warning("Grounded search failed for %r: %s", query, exc)
+                answer = GroundedAnswer(text="", citations=[], queries=[])
+            return answer, usage.snapshot()
+
+        if len(queries) == 1:
+            usage.stage("search")
+            return [self._search_one(req, queries[0])]
+
+        with ThreadPoolExecutor(max_workers=min(5, len(queries))) as pool:
+            results = list(pool.map(one, queries))
+        for _, snap in results:
+            usage.absorb(snap)
+        return [answer for answer, _ in results]
+
     def _search_one(self, req: TraceRequest, query: str) -> GroundedAnswer:
         ctx = f"(context: {req.context})" if req.context else ""
         prompt = SEARCH_PROMPT.format(
             title=req.title,
             context_clause=ctx,
             query=query,
-            source_hierarchy=SOURCE_HIERARCHY,
+            search_doctrine=SEARCH_DOCTRINE,
         )
         try:
             return self.client.grounded_search(prompt)
@@ -345,49 +555,37 @@ class TraceOrchestrator:
         title: str,
         notes: str,
         citations: List[Dict[str, str]],
-    ) -> List[Dict[str, Any]]:
+        earliest_known: str,
+        prior_queries: List[str],
+        max_queries: int,
+        pages_block: str = "",
+    ) -> Dict[str, Any]:
         prompt = EXTRACT_PROMPT.format(
             title=title,
             notes=notes,
+            pages_block=pages_block,
             citations_block=_format_citations_block(citations),
+            earliest_known=earliest_known,
+            max_queries=max_queries,
+            prior_queries="\n".join(f"- {q}" for q in prior_queries[-20:]) or "- (none yet)",
         )
         try:
             # Use the light (non-reasoning) path: extracting dated mentions from the
-            # provided search notes is mechanical, not a reasoning task. Critically, on
-            # GPT-5 Nano the reasoning path burns its whole output-token budget on
+            # provided material is mechanical, not a reasoning task. Critically, on a
+            # reasoning model the heavy path burns its whole output-token budget on
             # reasoning for large note prompts and returns EMPTY json ({} -> no
             # mentions), which collapses the whole trace to "unknown". Low effort leaves
             # room for the JSON output. (Verified: 15k-char prompt -> 0 mentions with
             # reasoning, 7 with the light path.)
             data = self.client.reason_json(prompt, use_reasoning_model=False)
-            return data.get("mentions", []) or []
         except Exception as exc:
             logger.warning("Extraction failed: %s", exc)
-            return []
-
-    def _recurse(
-        self,
-        *,
-        title: str,
-        earliest: Dict[str, Any],
-        prior_queries: List[str],
-        max_queries: int,
-    ) -> List[str]:
-        prompt = RECURSE_PROMPT.format(
-            title=title,
-            year=earliest.get("year"),
-            era_label=earliest.get("era_label"),
-            source_title=earliest.get("source_title", "?"),
-            claim=earliest.get("claim", ""),
-            max_queries=max_queries,
-            prior_queries="\n".join(f"- {q}" for q in prior_queries[-20:]),
-        )
-        try:
-            data = self.client.reason_json(prompt, use_reasoning_model=False)
-            return [q for q in (data.get("queries") or []) if q][:max_queries]
-        except Exception as exc:
-            logger.warning("Recurse query gen failed: %s", exc)
-            return []
+            return {"mentions": [], "next_queries": [], "gaps": []}
+        return {
+            "mentions": data.get("mentions") or [],
+            "next_queries": data.get("next_queries") or [],
+            "gaps": data.get("gaps") or [],
+        }
 
     def _synthesize(
         self,
@@ -395,12 +593,21 @@ class TraceOrchestrator:
         title: str,
         mentions: List[Dict[str, Any]],
         citations: List[Dict[str, str]],
+        reads: List[PageRead],
     ) -> Dict[str, Any]:
+        pages_block = ""
+        if reads:
+            pages_block = (
+                "\nSOURCE PAGES actually read (prefer these over any summary of them):\n"
+                f"{format_reads_block(reads)}\n"
+            )
         prompt = SYNTHESIZE_PROMPT.format(
             title=title,
             mentions_block=_format_mentions_block(mentions),
             citations_block=_format_citations_block(citations),
+            pages_block=pages_block,
             source_hierarchy=SOURCE_HIERARCHY,
+            max_connections=self.settings.chrono_max_connections,
         )
         return self.client.reason_json(prompt, use_reasoning_model=True)
 
@@ -412,83 +619,181 @@ class TraceOrchestrator:
         normalized: str,
         final: Dict[str, Any],
         citations: List[Dict[str, str]],
+        mentions: List[Dict[str, Any]],
+        reads: List[PageRead],
         queries_run: List[str],
+        open_questions: List[str],
         iterations: int,
         duration: float,
     ) -> TraceResponse:
         url_lookup = {c["url"]: c for c in citations if c.get("url")}
-        # Tier labels the synthesis stage assigned, falling back to a host heuristic.
+        read_urls = {r.url for r in reads if r.ok}
+
+        # Tier labels the synthesis stage assigned, falling back to what extract
+        # claimed, then to a host heuristic.
         declared_tiers = final.get("source_tiers")
         declared_tiers = declared_tiers if isinstance(declared_tiers, dict) else {}
+        mention_tiers = self._mention_tiers(mentions)
 
         def tier_for(url: str) -> str:
             t = declared_tiers.get(url)
+            if t in _VALID_TIERS:
+                return t
+            t = mention_tiers.get(url)
             return t if t in _VALID_TIERS else _default_tier(url)
+
+        # Which sources are really one source repeated. Computed from the sources
+        # themselves rather than asked for, so "independent corroboration" has an
+        # arithmetic meaning instead of a rhetorical one.
+        chain_of, chain_groups = ev.build_chains(citations, mentions, tier_for)
 
         def to_citations(urls: List[str]) -> List[Citation]:
             out: List[Citation] = []
             for u in urls or []:
                 meta = url_lookup.get(u, {"url": u})
                 url = meta.get("url", u)
-                out.append(Citation(url=url, title=meta.get("title"), tier=tier_for(url)))
+                out.append(
+                    Citation(
+                        url=url,
+                        title=meta.get("title"),
+                        tier=tier_for(url),
+                        chain=chain_of.get(url),
+                    )
+                )
             return out
 
         origin_data = final.get("origin") or {}
         origin_conf = float(origin_data.get("confidence", 0.5) or 0.5)
+        origin_cites = origin_data.get("citations", []) or []
         origin = OriginResult(
+            id="origin",
             year=origin_data.get("year"),
             era_label=origin_data.get("era_label"),
             precision=origin_data.get("precision", "unknown"),
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
-            citations=to_citations(origin_data.get("citations", [])),
+            citations=to_citations(origin_cites),
             confidence=origin_conf,
             evidence=_coerce_dossier(
                 origin_data.get("evidence"),
                 fallback_claim=origin_data.get("summary", ""),
                 confidence=origin_conf,
+                read_urls=read_urls,
+                citations=origin_cites,
             ),
         )
 
         timeline: List[TimelineEvent] = []
-        for ev in final.get("timeline") or []:
-            conf = float(ev.get("confidence", 0.5) or 0.5)
+        used_ids = {"origin"}
+        for i, entry in enumerate(final.get("timeline") or []):
+            conf = float(entry.get("confidence", 0.5) or 0.5)
+            # Ids come from the model so connections can reference them, but must
+            # be unique and present — a duplicate id would silently reroute edges.
+            raw_id = str(entry.get("id") or "").strip()
+            event_id = raw_id if raw_id and raw_id not in used_ids else f"t{i + 1}"
+            while event_id in used_ids:
+                event_id = f"{event_id}_{i + 1}"
+            used_ids.add(event_id)
+            entry_cites = entry.get("citations", []) or []
             timeline.append(
                 TimelineEvent(
-                    year=ev.get("year"),
-                    era_label=ev.get("era_label"),
-                    precision=ev.get("precision", "unknown"),
-                    source_title=ev.get("source_title", "Unknown"),
-                    claim=ev.get("claim", ""),
-                    citations=to_citations(ev.get("citations", [])),
+                    id=event_id,
+                    year=entry.get("year"),
+                    era_label=entry.get("era_label"),
+                    precision=entry.get("precision", "unknown"),
+                    source_title=entry.get("source_title", "Unknown"),
+                    claim=entry.get("claim", ""),
+                    citations=to_citations(entry_cites),
                     confidence=conf,
                     evidence=_coerce_dossier(
-                        ev.get("evidence"), fallback_claim=ev.get("claim", ""), confidence=conf
+                        entry.get("evidence"),
+                        fallback_claim=entry.get("claim", ""),
+                        confidence=conf,
+                        read_urls=read_urls,
+                        citations=entry_cites,
                     ),
                 )
             )
 
-        # chronological sort, oldest first; null years go last
+        # Chronological sort, oldest first; null years go last. Ids were assigned
+        # before this so they survive the reordering and connections stay valid.
         timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
 
+        connections = self._build_connections(
+            raw=final.get("connections"),
+            valid_ids=used_ids,
+            to_citations=to_citations,
+            read_urls=read_urls,
+        )
+
         all_citations = [
-            Citation(url=c["url"], title=c.get("title"), tier=tier_for(c["url"]))
+            Citation(
+                url=c["url"],
+                title=c.get("title"),
+                tier=tier_for(c["url"]),
+                chain=chain_of.get(c["url"]),
+            )
             for c in citations
             if c.get("url")
         ]
 
+        snap = usage.snapshot()
         return TraceResponse(
             title=req.title,
             normalized_title=normalized,
             origin=origin,
             timeline=timeline,
+            connections=connections,
             reasoning=final.get("reasoning", ""),
             confidence=float(final.get("confidence", 0.5) or 0.5),
             queries_run=queries_run,
             citations=all_citations,
+            chains=[EvidenceChain(**g) for g in chain_groups],
+            independent_chain_count=len(chain_groups),
+            sources_read=sorted(read_urls),
+            open_questions=open_questions,
+            usage=TokenUsage(
+                input_tokens=snap["input_tokens"],
+                output_tokens=snap["output_tokens"],
+                total_tokens=snap["total_tokens"],
+                llm_calls=snap["llm_calls"],
+                pages_read=len(read_urls),
+                by_stage=snap["by_stage"],
+            ),
             iterations=iterations,
             duration_seconds=round(duration, 2),
         )
+
+    def _build_connections(
+        self,
+        *,
+        raw: Any,
+        valid_ids: set,
+        to_citations: Callable[[List[str]], List[Citation]],
+        read_urls: set,
+    ) -> List[Connection]:
+        """Validate, then grade, the edges the model proposed."""
+        cleaned = ev.validate_connections(
+            raw, valid_ids, max_connections=self.settings.chrono_max_connections
+        )
+        out: List[Connection] = []
+        for item in cleaned:
+            cites = item.get("citations", []) or []
+            try:
+                out.append(
+                    Connection(
+                        from_id=item["from_id"],
+                        to_id=item["to_id"],
+                        relation=item["relation"],
+                        evidence=_coerce_connection_evidence(
+                            item.get("evidence"), read_urls=read_urls, citations=cites
+                        ),
+                        citations=to_citations(cites),
+                    )
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Skipping malformed connection: %s", exc)
+        return out
 
     # ------------------------------------------------------------------ expand
     def expand(self, req: "ExpandRequest") -> "ExpandResponse":  # type: ignore[name-defined]
@@ -497,6 +802,7 @@ class TraceOrchestrator:
         from ..models import ExpandRequest, ExpandResponse  # noqa: F401
 
         started = time.time()
+        usage.start()
 
         when = (
             f"{req.parent_year} ({'BCE' if req.parent_year < 0 else 'CE'})"
@@ -504,15 +810,17 @@ class TraceOrchestrator:
             else (req.parent_era_label or "unknown")
         )
         context_clause = f" (context: {req.context})" if req.context else ""
+        parent_id = (req.parent_id or "parent").strip() or "parent"
 
         # Stage 1 - grounded search around the anchor.
+        usage.stage("search")
         search_prompt = EXPAND_SEARCH_PROMPT.format(
             story_title=req.story_title,
             context_clause=context_clause,
             when=when,
             parent_source_title=req.parent_source_title,
             parent_claim=req.parent_claim or "(no prior claim recorded)",
-            source_hierarchy=SOURCE_HIERARCHY,
+            search_doctrine=SEARCH_DOCTRINE,
         )
         try:
             answer = self.client.grounded_search(search_prompt)
@@ -534,6 +842,7 @@ class TraceOrchestrator:
                 parent_year=req.parent_year,
                 parent_era_label=req.parent_era_label,
                 events=[],
+                connections=[],
                 queries_run=list(answer.queries or []),
                 citations=[
                     Citation(url=c["url"], title=c.get("title"), tier=_default_tier(c["url"]))
@@ -543,50 +852,89 @@ class TraceOrchestrator:
                 duration_seconds=round(time.time() - started, 2),
             )
 
-        # Stage 2 - extract structured sub-events.
+        # Stage 2 - read the best source behind this anchor, same reasoning as the
+        # main trace: an expansion that cannot cite read text is asserting, not tracing.
+        want_reads = self.settings.chrono_expand_read_sources
+        to_read = ev.select_for_reading(
+            citations, [], lambda u: _default_tier(u), limit=want_reads * 2
+        )
+        reads = read_best(to_read, want=want_reads, max_chars=self.settings.chrono_read_chars)
+        read_urls = {r.url for r in reads if r.ok}
+        pages_block = ""
+        if reads:
+            pages_block = (
+                "\nSOURCE PAGES actually read (prefer these over any summary of them):\n"
+                f"{format_reads_block(reads)}\n"
+            )
+
+        # Stage 3 - extract structured sub-events plus their links to the anchor.
+        usage.stage("extract")
         extract_prompt = EXPAND_EXTRACT_PROMPT.format(
             story_title=req.story_title,
             when=when,
+            parent_id=parent_id,
             parent_source_title=req.parent_source_title,
             parent_claim=req.parent_claim or "(no prior claim recorded)",
             notes=answer.text,
+            pages_block=pages_block,
             citations_block=_format_citations_block(citations),
             max_events=req.max_events,
         )
         try:
             # Light path — same reason as _extract: mechanical event extraction, and
-            # the reasoning path returns empty JSON on large note prompts with GPT-5 Nano.
+            # the reasoning path returns empty JSON on large note prompts.
             data = self.client.reason_json(extract_prompt, use_reasoning_model=False)
             raw_events = data.get("events") or []
+            raw_connections = data.get("connections") or []
         except Exception as exc:
             logger.warning("Expand extract failed: %s", exc)
-            raw_events = []
+            raw_events, raw_connections = [], []
 
         url_lookup = {c["url"]: c for c in citations if c.get("url")}
+        chain_of, _ = ev.build_chains(citations, [], lambda u: _default_tier(u))
 
         def to_citations(urls: List[str]) -> List[Citation]:
             out: List[Citation] = []
             for u in urls or []:
                 meta = url_lookup.get(u, {"url": u})
                 url = meta.get("url", u)
-                out.append(Citation(url=url, title=meta.get("title"), tier=_default_tier(url)))
+                out.append(
+                    Citation(
+                        url=url,
+                        title=meta.get("title"),
+                        tier=_default_tier(url),
+                        chain=chain_of.get(url),
+                    )
+                )
             return out
 
         events: List[TimelineEvent] = []
-        for ev in raw_events[: req.max_events]:
+        used_ids = {parent_id}
+        for i, entry in enumerate(raw_events[: req.max_events]):
             try:
-                conf = float(ev.get("confidence", 0.5) or 0.5)
+                conf = float(entry.get("confidence", 0.5) or 0.5)
+                raw_id = str(entry.get("id") or "").strip()
+                event_id = raw_id if raw_id and raw_id not in used_ids else f"e{i + 1}"
+                while event_id in used_ids:
+                    event_id = f"{event_id}_{i + 1}"
+                used_ids.add(event_id)
+                entry_cites = entry.get("citations", []) or []
                 events.append(
                     TimelineEvent(
-                        year=ev.get("year"),
-                        era_label=ev.get("era_label"),
-                        precision=ev.get("precision", "unknown"),
-                        source_title=ev.get("source_title", "Unknown"),
-                        claim=ev.get("claim", ""),
-                        citations=to_citations(ev.get("citations", [])),
+                        id=event_id,
+                        year=entry.get("year"),
+                        era_label=entry.get("era_label"),
+                        precision=entry.get("precision", "unknown"),
+                        source_title=entry.get("source_title", "Unknown"),
+                        claim=entry.get("claim", ""),
+                        citations=to_citations(entry_cites),
                         confidence=conf,
                         evidence=_coerce_dossier(
-                            ev.get("evidence"), fallback_claim=ev.get("claim", ""), confidence=conf
+                            entry.get("evidence"),
+                            fallback_claim=entry.get("claim", ""),
+                            confidence=conf,
+                            read_urls=read_urls,
+                            citations=entry_cites,
                         ),
                     )
                 )
@@ -595,16 +943,39 @@ class TraceOrchestrator:
 
         events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
 
+        connections = self._build_connections(
+            raw=raw_connections,
+            valid_ids=used_ids,
+            to_citations=to_citations,
+            read_urls=read_urls,
+        )
+
+        snap = usage.snapshot()
         return ExpandResponse(
             parent_source_title=req.parent_source_title,
             parent_year=req.parent_year,
             parent_era_label=req.parent_era_label,
             events=events,
+            connections=connections,
             queries_run=list(answer.queries or []),
             citations=[
-                Citation(url=c["url"], title=c.get("title"), tier=_default_tier(c["url"]))
+                Citation(
+                    url=c["url"],
+                    title=c.get("title"),
+                    tier=_default_tier(c["url"]),
+                    chain=chain_of.get(c["url"]),
+                )
                 for c in citations
                 if c.get("url")
             ],
+            sources_read=sorted(read_urls),
+            usage=TokenUsage(
+                input_tokens=snap["input_tokens"],
+                output_tokens=snap["output_tokens"],
+                total_tokens=snap["total_tokens"],
+                llm_calls=snap["llm_calls"],
+                pages_read=len(read_urls),
+                by_stage=snap["by_stage"],
+            ),
             duration_seconds=round(time.time() - started, 2),
         )
