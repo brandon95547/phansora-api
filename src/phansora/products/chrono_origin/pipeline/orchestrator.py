@@ -275,6 +275,34 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _as_queries(raw: Any) -> List[str]:
+    """A model's query list, however it chose to shape it.
+
+    The decompose prompt asks for queries "allocated across the hierarchy", and the model
+    answers that instruction two ways: sometimes a list of strings, sometimes a list of
+    {"tier": n, "query": "..."} objects. TraceResponse.queries_run is List[str], so the
+    object form failed Pydantic validation at the very END of a trace — after every search
+    and every model call had been paid for. Runs died at 97%, "Building response", with a
+    string_type error naming a dict.
+
+    Both shapes are legitimate readings of the prompt, so this accepts both rather than
+    trying to make the model more obedient. Anything with no usable query text is dropped:
+    a blank search is a wasted round, not a query.
+    """
+    out: List[str] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            # "query" is what the prompt names it; the others are what models reach for.
+            text = str(item.get("query") or item.get("q") or item.get("text") or "").strip()
+        else:
+            continue
+        if text:
+            out.append(text)
+    return out
+
+
 class TraceOrchestrator:
     def __init__(self, client: Optional[object] = None) -> None:
         # Provider chosen by CHRONO_LLM_PROVIDER.
@@ -324,7 +352,7 @@ class TraceOrchestrator:
         progress(8, "Decomposing query")
         usage.stage("decompose")
         plan = self._decompose(req, max_queries=max_queries)
-        current_queries: List[str] = plan.get("queries", [])[:max_queries]
+        current_queries: List[str] = _as_queries(plan.get("queries"))[:max_queries]
 
         prev_earliest_year: Optional[int] = None
         stagnant_rounds = 0
@@ -482,6 +510,18 @@ class TraceOrchestrator:
             iterations=iterations,
             duration=time.time() - started,
         )
+
+        # An empty trace is a FAILED trace, and must not be stored or cached as a
+        # success. A synthesize step that returned nothing usable still produces a
+        # well-formed TraceResponse — every field simply takes its default — so the
+        # result looked complete: origin with no year, no summary, no citations, and an
+        # empty timeline, marked done, with the user's credit spent. Raising here sends
+        # it down the failure path that already exists, which refunds.
+        if not response.timeline and response.origin.year is None and not response.origin.summary:
+            raise RuntimeError(
+                "The trace produced no timeline and no origin. This usually means the "
+                "model's answer could not be read; the credit has been refunded."
+            )
 
         try:
             save_cached(req.title, key, response.model_dump())

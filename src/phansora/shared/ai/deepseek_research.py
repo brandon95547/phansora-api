@@ -29,6 +29,12 @@ from . import usage
 from .research import GroundedAnswer
 from .search import SearchConfig, SearchResult, web_search
 
+
+# The ceiling the truncation retry may escalate to. Past this a prompt is not merely
+# large, it is wrong — and doubling forever would turn one bad trace into a very
+# expensive one.
+MAX_REASON_TOKENS = int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS_CEILING", "32000"))
+
 logger = logging.getLogger(__name__)
 
 _JSON_SYSTEM = (
@@ -43,16 +49,36 @@ _QUOTED = re.compile(r'"([^"]{3,120})"')
 
 
 def _parse_json(raw: str) -> Dict[str, Any]:
+    """Parse a model's JSON answer, or raise.
+
+    The fallback below only exists to strip prose or a markdown fence from around an
+    OTHERWISE COMPLETE object. It used to be reached by truncated answers too, and on
+    those it did real damage: `rfind("}")` finds the last closing brace of whatever
+    survived, which in a cut-off document is the end of some INNER object. That parses
+    cleanly and returns a dict — one with none of the keys the caller wanted. The caller
+    then filled every missing field with a default, and a trace that had actually failed
+    was stored as a success with an empty origin and an empty timeline.
+
+    So the salvaged slice must start at the FIRST brace and end at the LAST, and it is
+    accepted only if the whole slice parses. A partial answer raises, which is what the
+    truncation retry in reason_json is there to catch.
+    """
     raw = (raw or "").strip()
     if not raw:
         return {}
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError:
         start, end = raw.find("{"), raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return json.loads(raw[start : end + 1])
-        raise
+        if start == -1 or end == -1 or end <= start:
+            raise
+        # No second except: if this slice does not parse either, the answer is
+        # incomplete and the JSONDecodeError is the correct outcome.
+        parsed = json.loads(raw[start : end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
+    return parsed
 
 
 @dataclass
@@ -99,7 +125,7 @@ class DeepSeekResearchClient:
         model: str,
         max_tokens: int,
         json_mode: bool = False,
-    ) -> str:
+    ) -> tuple[str, Optional[str]]:
         payload: Dict[str, Any] = {
             "model": model,
             "messages": [
@@ -127,8 +153,14 @@ class DeepSeekResearchClient:
         usage.record_response(body)
         choices = body.get("choices") or []
         if not choices:
-            return ""
-        return (choices[0].get("message") or {}).get("content") or ""
+            return "", None
+        # finish_reason comes back too. Without it a truncated answer is
+        # indistinguishable from a complete one, which is exactly how a trace that ran
+        # out of budget mid-JSON came back looking like a successful empty result.
+        return (
+            (choices[0].get("message") or {}).get("content") or "",
+            choices[0].get("finish_reason"),
+        )
 
     # --------------------------------------------------------------- reasoning
     def reason_json(
@@ -140,14 +172,44 @@ class DeepSeekResearchClient:
         use_reasoning_model: bool = True,
     ) -> Dict[str, Any]:
         model = self._cfg.reasoning_model if use_reasoning_model else self._cfg.model
-        raw = self._chat(
-            system=_JSON_SYSTEM,
-            user=prompt,
-            model=model,
-            max_tokens=self._cfg.reason_max_tokens,
-            json_mode=True,
-        )
-        return _parse_json(raw or "{}")
+
+        # Retry on TRUNCATION, doubling the budget — the same thing the Book Alchemy
+        # client learned to do.
+        #
+        # This is a REASONING model, and its reasoning tokens are billed against
+        # max_tokens (see shared/ai/deepseek.py). A synthesize prompt carrying a trace's
+        # whole evidence set can spend the entire budget thinking and get cut off
+        # mid-JSON. Nothing here used to notice: the cut-off text went to a parser that
+        # salvaged some inner object from it, and the caller got a dict with none of the
+        # keys it wanted — an empty origin and an empty timeline, reported as success.
+        budget = self._cfg.reason_max_tokens
+        last_raw = ""
+        for _ in range(3):
+            raw, finish = self._chat(
+                system=_JSON_SYSTEM,
+                user=prompt,
+                model=model,
+                max_tokens=budget,
+                json_mode=True,
+            )
+            last_raw = raw or ""
+            if finish == "length" and budget < MAX_REASON_TOKENS:
+                logger.warning(
+                    "Reasoning response truncated at %d tokens; retrying with %d",
+                    budget, min(MAX_REASON_TOKENS, budget * 2),
+                )
+                budget = min(MAX_REASON_TOKENS, budget * 2)
+                continue
+            if finish == "length":
+                # Out of headroom and still cut off. Failing is the honest outcome: a
+                # partial answer here becomes a trace with no origin and no timeline,
+                # and the user has already paid for it.
+                raise RuntimeError(
+                    f"The model's answer was cut off at {budget} tokens and could not be completed."
+                )
+            return _parse_json(last_raw or "{}")
+
+        raise RuntimeError("The model's answer could not be completed within the token budget.")
 
     # ------------------------------------------------------------------ search
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:
@@ -178,13 +240,14 @@ class DeepSeekResearchClient:
             "sources do. Do not invent facts or URLs. If the results are irrelevant, say so briefly."
         )
         try:
-            text = self._chat(
+            text, _finish = self._chat(
                 system="You are a precise research assistant. Ground every statement in the "
                 "provided search results and never fabricate sources.",
                 user=synth_user,
                 model=self._cfg.model,
                 max_tokens=self._cfg.search_max_tokens,
-            ).strip()
+            )
+            text = text.strip()
         except Exception as exc:  # noqa: BLE001
             logger.warning("DeepSeek synthesis failed: %s", exc)
             text = ""
@@ -213,7 +276,7 @@ class DeepSeekResearchClient:
 
         # Fallback: let DeepSeek propose queries from the instruction.
         try:
-            raw = self._chat(
+            raw, _finish = self._chat(
                 system=_JSON_SYSTEM,
                 user=(
                     "From the research instruction below, return JSON "
