@@ -280,6 +280,80 @@ _STRANDS = {
 _NODE_TYPE_STRAND = {"context": "precursor_context"}
 
 
+# A search for each strand, written here rather than asked for. The extract
+# prompt has always been told to cover the open strands first, and it has always
+# had to do that inside one list of six queries also carrying "push further
+# back", "chase this lead", "find independent corroboration" and "find the
+# scholarship that disputes this". Recency won every time, which is how a trace
+# for Jesus Christ ran twenty-four searches without one of them asking what
+# calendar the dates were in, who Paul was, or when the gospels were written.
+#
+# So the open strands get their slots taken off the top and the model plans with
+# what is left. These are deliberately generic: a strand is a KIND of question,
+# and the grounded-search step is what turns "what texts exist and when were
+# they written" into a subject's actual bibliography.
+_STRAND_QUERIES = {
+    "precursor_context": (
+        "what traditions, scriptures, institutions and ideas already existed in the "
+        "culture and period {title} emerged from, and how they were transmitted"
+    ),
+    "term_history": (
+        "earliest attested meaning and use of the term or title now used for {title}, "
+        "before it named {title}, with dates and the texts attesting each sense"
+    ),
+    "reconstructed_date": (
+        "how historians reconstruct the dates for {title} and for the movement or "
+        "community around it, which records if any state them, and why the "
+        "reconstruction is placed earlier than the surviving texts"
+    ),
+    "text_composition": (
+        "estimated composition dates of the earliest texts about or by {title}, "
+        "ordered earliest first, and the scholarly basis for each date"
+    ),
+    "manuscript_witness": (
+        "earliest surviving manuscripts and fragments relating to {title}: shelfmark, "
+        "holding repository, palaeographic date, and how far they postdate composition"
+    ),
+    "external_attestation": (
+        "sources outside the tradition of {title} that mention it, their own "
+        "composition dates, and how those texts themselves survive"
+    ),
+    "linguistic_transmission": (
+        "how the name of {title} moved between languages and scripts form by form, "
+        "with the language, script and date of each attested form"
+    ),
+    "institutional_development": (
+        "when the institutions, canons, offices, titles and doctrines associated with "
+        "{title} are first attested, as distinct from when they are traditionally claimed"
+    ),
+    "dating_framework": (
+        "what calendars and dating systems were actually in use during the period of "
+        "{title}, and when the era system now used to state those dates was devised "
+        "and adopted"
+    ),
+}
+
+
+def _strand_queries(title: str, open_strands: List[str], already_run: List[str], *, limit: int) -> List[str]:
+    """One search per still-open strand, up to ``limit``, skipping repeats."""
+    if limit <= 0:
+        return []
+    seen = {q.strip().lower() for q in already_run}
+    out: List[str] = []
+    for strand in open_strands:
+        template = _STRAND_QUERIES.get(strand)
+        if not template:
+            continue
+        query = template.format(title=title)
+        if query.lower() in seen:
+            continue
+        seen.add(query.lower())
+        out.append(query)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _as_strands(raw: Any) -> List[str]:
     """The planned strands, tolerating both ['name'] and [{'strand': name}] shapes."""
     out: List[str] = []
@@ -333,6 +407,22 @@ def _format_citations_block(citations: List[Dict[str, str]]) -> str:
 
 
 def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
+    """Everything the research rounds established about an item, for synthesis.
+
+    The extract stage types every mention — this is a text being composed, this
+    is a surviving copy of one, this is the calendar the dates were converted
+    into — and the loop measures its own coverage against those types. None of
+    it used to reach synthesis: this block sent the date, the title, the claim
+    and the tier, and dropped the type, the span and the provenance signals on
+    the floor.
+
+    The result was a trace that believed it had researched a subject's texts and
+    then published a report with no text in it. Coverage was measured on the
+    mentions and breadth was decided by a stage that had never been told what
+    kind of thing any of them were, so the loop would exit satisfied while the
+    report it produced was missing whole strands. Everything the extractor
+    established travels now.
+    """
     if not mentions:
         return "(none)"
     lines = []
@@ -340,18 +430,50 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
         year = m.get("year")
         era = m.get("era_label")
         when = f"{year}" if isinstance(year, int) else (era or "unknown")
+        end = m.get("year_end")
+        if isinstance(end, int) and end != year:
+            when = f"{when}..{end}"
         line = (
             f"- when={when} | precision={m.get('precision', 'unknown')} | "
+            f"type={m.get('node_type') or 'event'} | "
             f"source={m.get('source_title', '?')} | claim={m.get('claim', '')} | "
             f"cites={m.get('citations', [])} | tier={m.get('source_tier', 'unknown')}"
         )
         # Carry the evidence signals the extract stage picked up into synthesis, so
         # the dossier is built from what was actually read rather than re-guessed.
+        if m.get("published"):
+            line += f" | source_published={m['published']}"
         if m.get("surviving_copy"):
             line += f" | earliest_surviving_copy={m['surviving_copy']}"
+        if m.get("discovery_only"):
+            line += " | LEAD_ONLY=this appears only on a tier 4-5 page"
+        if m.get("cites"):
+            line += f" | that_page_cites={m['cites']}"
         if m.get("chain"):
             line += f" | REPEATS={m['chain']}"
         lines.append(line)
+    return "\n".join(lines)
+
+
+def _format_strands_block(planned: List[str], covered: set) -> str:
+    """What the research plan asked for, and which parts of it found something.
+
+    Handed to synthesis so it can tell the two kinds of silence apart. A strand
+    the rounds covered and the report omits is a report that threw away research
+    the user paid for; a strand the rounds could not cover is a finding, and
+    belongs in the open questions rather than being quietly dropped.
+    """
+    if not planned:
+        return "(no strand plan recorded)"
+    lines = []
+    for strand in planned:
+        state = "RESEARCHED — must appear as at least one entry" if strand in covered else (
+            "NOT COVERED — say so in the reasoning; do not invent entries for it"
+        )
+        lines.append(f"- {strand}: {state}")
+    extra = sorted(covered - set(planned))
+    for strand in extra:
+        lines.append(f"- {strand}: RESEARCHED (unplanned) — must appear as at least one entry")
     return "\n".join(lines)
 
 
@@ -537,10 +659,20 @@ class TraceOrchestrator:
                 stagnant_rounds += 1
             prev_earliest_year = earliest_year if isinstance(earliest_year, int) else prev_earliest_year
 
-            if stagnant_rounds >= 2:
+            # Stagnation ends a trace only once there is nothing left to look
+            # for. A round can fail to move the origin and fail to close a
+            # strand and still be one round short of the strand it was working
+            # on, and quitting there is how a report comes back with no texts,
+            # no calendar and no language chain while its own plan still listed
+            # all three as open. Open strands buy the loop two more rounds; they
+            # cannot buy it an unbounded number, because a strand this subject
+            # has no evidence for will stay open forever.
+            if stagnant_rounds >= 2 and not open_now:
+                logger.info("Two rounds with no older evidence and no strand left open; stopping.")
+                break
+            if stagnant_rounds >= 4:
                 logger.info(
-                    "Two rounds with no older evidence and no new strand covered; stopping. Open: %s",
-                    open_now or "none",
+                    "Four stagnant rounds; stopping with strands still open: %s", open_now
                 )
                 break
             if not open_now and not went_older and depth + 1 >= min_depth:
@@ -549,9 +681,17 @@ class TraceOrchestrator:
             if depth == max_depth - 1 or earliest is None:
                 break
 
-            current_queries = [
-                q for q in (extracted.get("next_queries") or []) if isinstance(q, str) and q.strip()
-            ][:max_queries]
+            # The open strands take their slots off the top; the model plans the
+            # rest. Reserving at most half the round leaves it room to chase the
+            # leads and contradictions it just found, which is work no template
+            # can write in advance.
+            planned = [
+                q for q in _as_queries(extracted.get("next_queries")) if q.strip()
+            ]
+            reserved = _strand_queries(
+                req.title, open_now, queries_run, limit=max(1, max_queries // 2)
+            )
+            current_queries = list(dict.fromkeys(reserved + planned))[:max_queries]
 
         # Guard: a trace with no grounded evidence can only synthesize an "unknown"
         # origin — a useless, misleading dossier. Fail loudly instead so the job is
@@ -577,8 +717,7 @@ class TraceOrchestrator:
         mention_tiers = self._mention_tiers(all_mentions)
 
         def pre_tier(url: str) -> str:
-            t = mention_tiers.get(url)
-            return t if t in _VALID_TIERS else _default_tier(url)
+            return sp.resolve_tier(mention_tiers.get(url), url)
 
         if self.settings.chrono_chase_enabled:
             progress(78, "Chasing citations backward")
@@ -624,6 +763,14 @@ class TraceOrchestrator:
             mentions=all_mentions,
             citations=citation_list,
             reads=reads,
+            # What the research set out to cover, and what it actually found.
+            # Synthesis used to be handed a flat list of items with no idea that
+            # any of them belonged to a strand, so a strand researched across
+            # four rounds could be collapsed into one line or dropped, and
+            # nothing downstream could tell the difference between "the evidence
+            # was not there" and "the report did not mention it".
+            planned_strands=planned_strands,
+            covered_strands=_strands_covered(all_mentions),
         )
 
         progress(97, "Building response")
@@ -902,6 +1049,8 @@ class TraceOrchestrator:
         mentions: List[Dict[str, Any]],
         citations: List[Dict[str, str]],
         reads: List[PageRead],
+        planned_strands: Optional[List[str]] = None,
+        covered_strands: Optional[set] = None,
     ) -> Dict[str, Any]:
         pages_block = ""
         if reads:
@@ -914,6 +1063,7 @@ class TraceOrchestrator:
             mentions_block=_format_mentions_block(mentions),
             citations_block=_format_citations_block(citations),
             pages_block=pages_block,
+            strands_block=_format_strands_block(planned_strands or [], covered_strands or set()),
             source_hierarchy=SOURCE_HIERARCHY,
             max_connections=self.settings.chrono_max_connections,
         )
@@ -944,11 +1094,13 @@ class TraceOrchestrator:
         mention_tiers = self._mention_tiers(mentions)
 
         def tier_for(url: str) -> str:
-            t = declared_tiers.get(url)
-            if t in _VALID_TIERS:
-                return t
-            t = mention_tiers.get(url)
-            return t if t in _VALID_TIERS else _default_tier(url)
+            claimed = declared_tiers.get(url)
+            if claimed not in _VALID_TIERS:
+                claimed = mention_tiers.get(url)
+            # resolve_tier, not the raw claim: a wiki labelled "primary" by the
+            # model is still a wiki, and letting the label win is how one got
+            # read as a source page and cited as evidence.
+            return sp.resolve_tier(claimed, url)
 
         # Which sources are really one source repeated. Computed from the sources
         # themselves rather than asked for, so "independent corroboration" has an
@@ -1091,16 +1243,32 @@ class TraceOrchestrator:
             node_types={e.id: e.node_type for e in timeline} | {"origin": origin.node_type},
         )
 
-        all_citations = [
-            Citation(
-                url=c["url"],
-                title=c.get("title"),
-                tier=tier_for(c["url"]),
-                chain=chain_of.get(c["url"]),
+        # The trace-level source list. Every citation attached to a NODE carries
+        # its rank and its role, and this list — the one the UI renders as
+        # "sources" — carried neither, so a reader looking at it saw a hundred
+        # and thirty-seven undifferentiated links with the leads and the
+        # manuscript repositories side by side. A trace whose whole argument is
+        # that the tier matters cannot present its own bibliography as a flat
+        # list. Ranked without a claim to be contemporary with, since a source
+        # list is not an argument about any one moment.
+        all_citations = []
+        for c in citations:
+            url = c.get("url")
+            if not url:
+                continue
+            rank = sp.rank_for(tier_for(url), url=url)
+            published, _ = published_for(url)
+            all_citations.append(
+                Citation(
+                    url=url,
+                    title=c.get("title"),
+                    tier=tier_for(url),
+                    tier_rank=rank,
+                    role=sp.role_for(rank),
+                    published=published,
+                    chain=chain_of.get(url),
+                )
             )
-            for c in citations
-            if c.get("url")
-        ]
 
         snap = usage.snapshot()
         return TraceResponse(

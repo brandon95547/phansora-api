@@ -37,7 +37,12 @@ from ..config import get_settings
 # than deleting anything, so a rollback still finds its own cache intact.
 #
 # v2: evidence dossiers, claim classes, evaluated connections, read source pages.
-SCHEMA_VERSION = "v3"
+# v3: node types, per-claim source ranks, the citation chase.
+# v4: strand coverage reaches synthesis, open strands buy their own searches, and
+#     a claimed tier can no longer promote a lead. Every one of those changes what
+#     a trace CONTAINS rather than what it looks like, so a v3 answer served for a
+#     v4 request would be the old research wearing the new pipeline's name.
+SCHEMA_VERSION = "v4"
 
 
 def normalize_title(title: str) -> str:

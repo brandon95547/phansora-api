@@ -86,7 +86,7 @@ class TestPromptDiscipline:
         )
         synthesize = P.SYNTHESIZE_PROMPT.format(
             title="t", mentions_block="", citations_block="", pages_block="",
-            source_hierarchy=P.SOURCE_HIERARCHY, max_connections=24,
+            strands_block="", source_hierarchy=P.SOURCE_HIERARCHY, max_connections=24,
         )
         for prompt in (decompose, synthesize):
             assert "TIER 1 — PRIMARY EVIDENCE" in prompt

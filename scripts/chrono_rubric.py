@@ -11,9 +11,16 @@ The reference is the outline a user wrote by hand for "Jesus Christ" — context
 that is explicitly not influence, the history of the term, reconstructed rather
 than documented dates, composition separated from surviving manuscripts, outside
 attestation with its own disputes, the language chain, later institutional
-development kept later, and the calendar the dates were converted into. Nine of
-the checks below are mechanical; the rest are printed for a human to judge,
-because "did it name the missing contemporary documentation" is not a regex.
+development kept later, and the calendar the dates were converted into. The
+checks below are mechanical; the questions after them are printed for a human to
+judge, because "did it name the missing contemporary documentation" is not a regex.
+
+The list grew after a trace scored 10/10 and was still wrong. Every check it had
+asked whether a KIND of entry was PRESENT, and a report with exactly one entry
+per kind passes all of them while being far too thin to be a history. So the
+calendar, the language chain and the ordering of anything older than the origin
+are now asked about directly, and a trace listing surviving manuscripts of texts
+it never dated fails instead of being waved through.
 
     python scripts/chrono_rubric.py trace.json
 
@@ -99,7 +106,63 @@ def check_composition_split_from_manuscripts(trace) -> Tuple[str, str]:
         return PASS, "a text's composition and its surviving copies are separate entries"
     if "text_composition" in types:
         return FAIL, "texts are dated but no surviving copy is given its own entry"
+    if "manuscript_witness" in types:
+        # The failure this check was too soft to catch. A trace listing surviving
+        # copies without a single composed text has answered "what physically
+        # exists" and never asked "what was written, and when" — which is where
+        # every biographical claim about a text-based subject actually enters.
+        return FAIL, "surviving copies are listed but no text is given a composition date"
     return LOOK, "no text_composition entry — expected for a text-based subject"
+
+
+def check_dating_framework(trace) -> Tuple[str, str]:
+    """Whose calendar are these dates in, and who converted them?
+
+    A report that prints "c. 4 BCE" without saying that nobody alive then was
+    counting from there, and that somebody later did the counting, is presenting
+    an editorial act as an observation.
+    """
+    n = _types(trace).count("dating_framework")
+    if n:
+        return PASS, f"{n} entr{'y' if n == 1 else 'ies'} on how these dates were derived and converted"
+    years = [n.get("year") for n in _nodes(trace) if isinstance(n.get("year"), int)]
+    if years and min(years) < 1500:
+        return FAIL, "dates are stated in a calendar the period did not use, with no entry saying so"
+    return LOOK, "no dating_framework entry"
+
+
+def check_language_chain(trace) -> Tuple[str, str]:
+    """A name crossing languages is a chain, not a footnote."""
+    forms = [n for n in _nodes(trace) if n.get("node_type") == "linguistic_transmission"]
+    if not forms:
+        return LOOK, "no linguistic_transmission entries — fine only if the name never moved"
+    if len(forms) < 2:
+        return FAIL, "one entry summarising a language chain instead of one entry per attested form"
+    return PASS, f"{len(forms)} attested forms, traced separately"
+
+
+def check_ancestry_is_typed_as_ancestry(trace) -> Tuple[str, str]:
+    """Anything older than the origin has to say what it is doing there.
+
+    The board draws the origin as the subject's beginning. An entry dated before
+    it is either the ancestry the subject emerged among — which the vocabulary
+    can say — or a contradiction of the origin the report never noticed.
+    """
+    origin = trace.get("origin") or {}
+    oy = origin.get("year")
+    if not isinstance(oy, int):
+        return LOOK, "the origin has no year to order the rest against"
+    background = {"context", "term_history", "linguistic_transmission", "precursor_context"}
+    earlier = [n for n in (trace.get("timeline") or []) if isinstance(n.get("year"), int) and n["year"] < oy]
+    untyped = [n for n in earlier if str(n.get("node_type") or "event") not in background]
+    if untyped:
+        return FAIL, (
+            f"{len(untyped)} entr(ies) predate the origin without being typed as background, "
+            f"e.g. {untyped[0].get('source_title')!r}"
+        )
+    if not earlier:
+        return LOOK, "nothing predates the origin — thin for a subject with any ancestry"
+    return PASS, f"{len(earlier)} ancestor entr(ies), all typed as background"
 
 
 def check_outside_attestation(trace) -> Tuple[str, str]:
@@ -158,10 +221,19 @@ def check_independent_chains(trace) -> Tuple[str, str]:
 
 
 def check_breadth(trace) -> Tuple[str, str]:
-    """The complaint that started this: the trace was too thin to be a history."""
+    """The complaint that started this: the trace was too thin to be a history.
+
+    The bar was ten entries across four kinds, which a twelve-entry report
+    reviewed as "conspicuously missing" its central figures cleared comfortably.
+    Ten was never the number: the hand-written outline this rubric scores against
+    has four gospels, the letters, the manuscripts, the outside attestations, a
+    four-form name chain and two calendar entries before anything optional. A
+    subject with real ancestry and a textual tradition produces entries in the
+    twenties, and one that produces twelve has summarised rather than traced.
+    """
     kinds = {t for t in _types(trace) if t != "event"}
     count = len(_nodes(trace))
-    if count >= 10 and len(kinds) >= 4:
+    if count >= 16 and len(kinds) >= 6:
         return PASS, f"{count} entries across {len(kinds)} kinds of claim"
     return FAIL, f"only {count} entries across {len(kinds)} kinds of claim beyond plain events"
 
@@ -170,6 +242,9 @@ CHECKS = [
     ("No lead is cited as evidence", check_no_lead_is_evidence),
     ("The origin is not resting on a wiki", check_origin_not_resting_on_a_wiki),
     ("Composition split from surviving copies", check_composition_split_from_manuscripts),
+    ("Says whose calendar these dates are in", check_dating_framework),
+    ("Traces the name form by form", check_language_chain),
+    ("Ancestry is typed as ancestry", check_ancestry_is_typed_as_ancestry),
     ("Attested from outside its own tradition", check_outside_attestation),
     ("Context is not presented as influence", check_context_is_not_influence),
     ("Later development stays later", check_nothing_projected_backward),

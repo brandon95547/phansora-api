@@ -103,27 +103,46 @@ A trace is built from STRANDS. Pick the ones this subject genuinely has; do not 
 A medieval poem has manuscripts, a 1960s assassination has government records, a phrase has
 attestations. The strands:
 
-- precursor_context — what already existed that this emerged among. BACKGROUND ONLY: including
-  it never asserts that it influenced the subject.
+- precursor_context — the intellectual and textual world this emerged INSIDE: the literature,
+  scriptures, languages, institutions and ideas already in circulation, and how they were
+  transmitted. Reach back centuries, not decades — a subject that appears with no ancestry has
+  been researched from its own point of view. BACKGROUND ONLY: including it never asserts that
+  it influenced the subject.
 - term_history — the history of the NAME or TITLE itself, which is usually older than the thing
-  it now names and often meant something else first.
-- reconstructed_date — dates scholars reconstruct where no record states them.
+  it now names and often meant something else first. Trace it back to its EARLIEST attested
+  sense and to the people or things it applied to BEFORE the subject, sense by sense.
+- reconstructed_date — dates scholars reconstruct where no record states them, and the reasoning
+  that puts them there. This covers the existence and dating of MOVEMENTS, communities and
+  phenomena as well as of individuals: where historians place something decades before the
+  earliest text that describes it, that reconstruction is its own item, and the argument for it
+  is the substance of the item.
 - text_composition — when a text was WRITTEN. Distinct from when the events it describes
-  supposedly happened, and distinct from any surviving copy.
+  supposedly happened, and distinct from any surviving copy. Cover the EARLIEST texts first,
+  including ones earlier than the famous ones, and the relationships of dependence between them.
 - manuscript_witness — the physically surviving copies: which one, how old, which repository.
 - external_attestation — sources OUTSIDE the tradition that refer to the subject, and what
   their own texts and transmission actually establish.
-- linguistic_transmission — how a name or term moved across languages and scripts.
+- linguistic_transmission — how a name or term moved across languages and scripts, FORM BY FORM:
+  each attested spelling, in its own language and script, with the date and the text it is
+  attested in. The chain is the point; a single note that "the name is Greek" is not this strand.
 - institutional_development — canons, offices, doctrines, standards and organisations, dated to
   when they are ATTESTED, never projected backward.
-- dating_framework — how the dates themselves were derived, and how they were converted into
-  the calendar being used to state them.
+- dating_framework — the calendars and eras ACTUALLY IN USE at the time (regnal years, consular
+  years, olympiads, a founding era, a local era), and separately when the era system now used to
+  state the subject's dates was devised and adopted. People do not live in a calendar invented
+  after them, and a report that prints their dates without saying who converted them, and when,
+  is presenting an editorial act as a fact.
 
 Produce a JSON object with:
 - "entities": 3-8 key proper nouns / concepts to anchor searches.
 - "strands": the applicable strand names from the list above, each as
   {{"strand": <name>, "why": <one line on what this subject specifically needs here>}}.
   Prefer 5-9 strands. A subject with only two strands is usually a subject researched lazily.
+  Three are near-universal and are usually omitted by mistake rather than by judgement:
+  dating_framework (any subject older than the calendar its dates are stated in),
+  linguistic_transmission (any subject whose name has moved between languages), and
+  precursor_context (any subject that did not appear out of nothing). Include them unless this
+  subject genuinely has no such history.
 - "queries": {max_queries} diverse web search queries covering the strands you chose, weighted
   toward the ones most likely to yield tier 1-2 sources. Include at least one hunting for
   INDEPENDENT corroboration from a different information chain, and at least one hunting for
@@ -213,6 +232,16 @@ Rules for "mentions":
   "surviving_copy" and leave "year" null unless composition is separately stated.
 - A text and its surviving copies are TWO mentions: one "text_composition", one
   "manuscript_witness". Do not merge them.
+- A NAME CROSSING LANGUAGES IS ONE MENTION PER FORM, not one mention about the name. Each
+  attested spelling gets its own "linguistic_transmission" item, whose "source_title" is the
+  form itself with its language and script ("Iesous (Greek, Ἰησοῦς)"), whose date is when that
+  form is attested, and whose claim names the text it is attested in. A single item saying a
+  name "was rendered into Greek and Latin" is the summary this rule exists to prevent.
+- The same applies to a TITLE ACQUIRING A NEW SENSE: one "term_history" item per attested sense,
+  each with the date and the text it is attested in, not one item about the word.
+- A CALENDAR IS NOT A FACT ABOUT THE PAST. Where the material says what dating system people
+  actually used, or when the era used to state these dates was devised, that is a
+  "dating_framework" mention of its own.
 - Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
 - Keep "surviving_copy", "cites" and "chain" under 15 words each.
 
@@ -244,6 +273,8 @@ Items gathered across all research rounds (already deduplicated):
 Available citations:
 {citations_block}
 {pages_block}
+RESEARCH PLAN AND WHAT IT COVERED:
+{strands_block}
 {source_hierarchy}
 
 WHAT THIS REPORT IS. Not a summary of what is believed about the subject, and not a list of
@@ -329,6 +360,28 @@ Produce a JSON object:
 
 STRUCTURAL RULES — these decide whether this report is worth anything:
 
+- EVERY RESEARCHED STRAND APPEARS. The block above says which strands the research rounds
+  actually found material for. Each of those must produce at least one entry, of the matching
+  node_type, built from the items above. Items in the list carry a "type=" — that is the
+  extractor's reading of what kind of thing each one is, and it is the strongest signal you
+  have; do not silently retype an item to something weaker or fold several strands into one
+  entry. Dropping a researched strand throws away the research and tells the reader the evidence
+  was not there.
+- A STRAND WITH SEVERAL ITEMS GETS SEVERAL ENTRIES. Four texts composed at four dates are four
+  "text_composition" entries; the earliest surviving texts get entries even when later ones are
+  more famous. A name crossing four languages is four "linguistic_transmission" entries — one
+  per attested FORM, each titled with the form in its own language and script, dated to when
+  that form is attested, and joined to the previous form by a "translates" connection whose
+  mechanism names the text or translator that carried it across. One entry summarising a chain
+  is not a chain.
+- THE CALENDAR IS PART OF THE ANSWER. Where the subject predates the era system its dates are
+  stated in, emit "dating_framework" entries for BOTH: what people at the time actually dated
+  by, and when and by whom the era now used was devised and adopted. Nobody alive in the period
+  was using the labels at the top of this report, and a reader is owed that.
+- THE ORIGIN IS THE EARLIEST DEFENSIBLE ORIGIN OF THE SUBJECT, NOT THE OLDEST ROW. Entries that
+  legitimately predate it are the ancestry it emerged among: type them "context", "term_history"
+  or "linguistic_transmission", and join them to the origin with "provides_context". They are
+  not competing origins and must not be described as the subject's beginning.
 - A TEXT AND ITS SURVIVING COPIES ARE TWO ENTRIES. The "text_composition" entry carries the
   composition date. The "manuscript_witness" entry carries the physical copy's date, its
   repository and its shelfmark in "provenance". Never merge them, and never present a surviving
@@ -345,9 +398,13 @@ STRUCTURAL RULES — these decide whether this report is worth anything:
 - SAY WHAT IS MISSING. Where a subject has no contemporary documentation, that absence is one of
   the most important findings in the report: name what does not exist, in "missing_piece" and in
   "contemporary_evidence".
-- DATES ARE A CLAIM TOO. Where dates were reconstructed, use "reconstructed_date". Where they
-  were converted into a calendar nobody alive at the time used, give that its own
-  "dating_framework" entry rather than presenting the converted date as a plain fact.
+- DATES ARE A CLAIM TOO. Where dates were reconstructed, use "reconstructed_date", and put the
+  ARGUMENT in the dossier's "why": what a reconstruction is worth is entirely the reasoning
+  behind it. Where a subject, or the movement around it, is placed decades or centuries before
+  the earliest surviving text describing it, say in that entry why historians place it there
+  anyway and what would move it. Where the dates were converted into a calendar nobody alive at
+  the time used, give that its own "dating_framework" entry rather than presenting the converted
+  date as a plain fact.
 - BACKGROUND IS NOT INFLUENCE. Older parallel traditions go in as "context" entries joined with
   "provides_context". Including one never asserts that it shaped the subject.
 
@@ -393,6 +450,10 @@ Connection rules — read these twice:
   "contradictory_evidence" and lower the confidence accordingly.
 
 General rules:
+- LENGTH IS NOT A VIRTUE, BUT NEITHER IS BREVITY. There is no entry limit. Every distinct item
+  above that carries its own date, its own evidence and its own way of being wrong is its own
+  entry. Merging two items because they are related loses the thing this report is for: they
+  rest on different evidence and one can fail without the other.
 - Every claim must be backed by at least one citation URL from the provided list.
 - Where the only citations available for a claim are tier 4-5, say so in "why" and set the
   evidence_type to what those sources can actually support. Do not describe a claim as primary

@@ -78,6 +78,14 @@ LOW_AUTHORITY_HOSTS = (
     "facebook.com", "instagram.com", "tiktok.com", "pinterest.com",
     "stackexchange.com", "answers.com", "britannica.com", "history.com",
     "biography.com", "ancient.eu", "worldhistory.org",
+    # Generated and devotional encyclopaedias. Listed for the same reason
+    # Wikipedia is: not because of who runs them, but because the class of
+    # thing they are — a tertiary write-up with no editorial chain a reader can
+    # follow — is a lead. Tier 5 is where every unrecognised host already lands;
+    # naming these buys the READ budget back, since READ_RANK deliberately opens
+    # unclassified pages and would otherwise spend a fetch on one of these.
+    "grokipedia.com", "thoughtco.com", "learnreligions.com", "christianity.com",
+    "gotquestions.org", "biblestudytools.com", "crosswalk.com", "allaboutgod.com",
 )
 REPOSITORY_HOSTS = (
     ".museum", "britishmuseum.org", "bl.uk", "loc.gov", "archives.gov",
@@ -87,7 +95,7 @@ REPOSITORY_HOSTS = (
     "britishlibrary", "bodleian.ox.ac.uk", "dss.collections.imj.org.il",
 )
 ACADEMIC_HOSTS = (
-    ".edu", ".ac.uk", "jstor.org", "cambridge.org", "oup.com", "academia.edu",
+    ".edu", ".ac.uk", "jstor.org", "cambridge.org", "oup.com",
     "springer.com", "tandfonline.com", "sciencedirect.com", "brill.com",
     "degruyter.com", "jhu.edu", "persee.fr", "openedition.org", "arxiv.org",
     "zenodo.org", "sbl-site.org", "muse.jhu.edu",
@@ -95,9 +103,18 @@ ACADEMIC_HOSTS = (
 # Tier 3 is its own thing and used to hide inside the academic list: a DOI
 # resolver proves a paper exists and who wrote it. It says nothing about whether
 # the paper is right, which is exactly why the mandate gives it a tier of its own.
+#
+# Author-upload platforms belong here rather than with peer review, and that is
+# the correction, not a demotion for its own sake: an Academia.edu or
+# ResearchGate URL establishes that a paper exists and who claims to have
+# written it. Nothing about the upload says it was reviewed, or published, or
+# is the version of record — the authority, when there is any, belongs to
+# wherever it actually appeared, which is what tier 3 exists to send a reader
+# looking for.
 REFERENCE_INDEX_HOSTS = (
     "doi.org", "crossref.org", "openalex.org", "worldcat.org", "semanticscholar.org",
     "orcid.org", "scholar.google", "pubmed.ncbi.nlm.nih.gov",
+    "academia.edu", "researchgate.net", "ssrn.com",
 )
 # Tier 4: institutions writing ABOUT things rather than holding them.
 INSTITUTIONAL_HOSTS = (
@@ -152,6 +169,33 @@ def default_tier(url: str) -> str:
     if any(h in u for h in INSTITUTIONAL_HOSTS):
         return "institutional"
     return "unknown"
+
+
+def resolve_tier(claimed: Any, url: str) -> str:
+    """The tier of a URL, taking the model's label but never above its host.
+
+    Every tier in a trace starts as an assertion by a language model, and the one
+    assertion that must not be taken on trust is the one that promotes a lead.
+    A trace came back having READ a Wikipedia file-description page and an
+    AI-generated wiki, both of which the reader is supposed to skip: the host
+    check was there, but the model had labelled them ``primary``, and a claimed
+    tier was allowed to win. So a known lead host is a floor, not a starting
+    point — nothing a model says about a wiki makes it stop being a wiki.
+
+    Demotion is still free in the other direction: an unrecognised host that the
+    model recognises as a national archive keeps the tier the model gave it,
+    because that is a promotion the host signal genuinely cannot make.
+    """
+    host = default_tier(url)
+    tier = claimed if claimed in EVIDENCE_RANK else host
+    if host == "low_authority":
+        return "low_authority"
+    if EVIDENCE_RANK[tier] < EVIDENCE_RANK[host] and host in ("reference_index", "press"):
+        # Author-upload platforms and news sites, claimed as scholarship or as
+        # the record itself. Both are the same mistake: crediting the container
+        # with the authority of whatever it happens to be carrying.
+        return host
+    return tier
 
 
 def url_year(url: str) -> Optional[int]:

@@ -129,10 +129,21 @@ def dedupe_mentions(mentions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     existing["claim"] = m["claim"]
         except (TypeError, ValueError):
             pass
-        # Absences fill in from whichever round actually found something.
-        for field in ("surviving_copy", "chain", "era_label", "source_tier"):
+        # Absences fill in from whichever round actually found something. The
+        # type and the span belong on this list for the same reason the rest do:
+        # round two often recognises that what round one logged as a plain event
+        # is a text being composed, or that it ran to a second date, and a merge
+        # that dropped that would hand synthesis the poorer of the two readings.
+        for field in (
+            "surviving_copy", "chain", "era_label", "source_tier",
+            "node_type", "year_end", "published", "cites",
+        ):
             if not existing.get(field) and m.get(field):
                 existing[field] = m[field]
+        # A lead stays flagged as a lead until a round finds better; only a
+        # round that produced a real citation clears it.
+        if m.get("discovery_only") and "discovery_only" not in existing:
+            existing["discovery_only"] = True
 
     return [merged[k] for k in order]
 
