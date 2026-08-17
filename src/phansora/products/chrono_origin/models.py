@@ -12,12 +12,28 @@ DatePrecision = Literal["exact", "year", "decade", "century", "millennium", "era
 # ranks evidence by this, not by the outlet's brand: a claim is only as strong as
 # the citation you can follow backwards from it.
 SourceTier = Literal[
-    "primary",        # original / earliest surviving document, inscription, record, photo, map
-    "repository",     # museum, archive, library, manuscript collection, critical edition
-    "academic",       # peer-reviewed papers, university-press books, specialist historians
-    "press",          # journalism and general publications, mainstream or alternative
-    "low_authority",  # wikis, blogs, forums, social media, video — leads only
-    "unknown",
+    "primary",          # tier 1 — the original / earliest surviving document, inscription, record
+    "repository",       # tier 1 — the institution holding or publishing it: archive, museum, library
+    "academic",         # tier 2 — peer-reviewed papers, university-press books, critical editions
+    "reference_index",  # tier 3 — Crossref/DOI, catalogue records: metadata about a work, not the work
+    "institutional",    # tier 4 — university, agency and museum write-ups; follow their citations back
+    "press",            # tier 5, or tier 1 when published contemporaneously with the claim
+    "low_authority",    # tier 5 — wikis, blogs, forums, social media, video: leads only
+    "unknown",          # unclassified: never the evidentiary basis of anything
+]
+
+# Whether a citation may serve as the evidentiary basis of a claim, or is only a
+# lead to follow. Computed from the tier rank in code, never asserted by the model:
+# a source cannot promote itself.
+CitationRole = Literal["evidence", "discovery"]
+
+# Did we actually check? Kept separate from ClaimClass, which asks what the
+# evidence entitles us to SAY. A claim can be a sound historical inference
+# (claim_class) that nobody on this run verified against a source (verification).
+Verification = Literal[
+    "verified",    # an evidence-tier citation, and its page was actually read
+    "unverified",  # evidence exists but was not checked, or rests on metadata alone
+    "unknown",     # no evidence located — a finding, not a blank
 ]
 
 # What KIND of thing supports a claim. Kept separate from confidence: a well-attested
@@ -74,7 +90,37 @@ RelationType = Literal[
     "contradicts",          # B is incompatible with A
     "contemporaneous",      # same period; no dependency claimed
     "attests",              # B is evidence that A already existed by then
+    "provides_context",     # A is background B emerged from; influence NOT claimed
     "no_established_link",  # sequential only — the link is not evidenced
+]
+
+# What KIND of item sits on the timeline. The distinction a timeline of "events"
+# cannot express, and the one this product exists for: when a text was WRITTEN,
+# when the oldest surviving COPY of it was made, what independently ATTESTS it,
+# and what is merely the BACKGROUND it emerged from are four different claims
+# with four different kinds of evidence. Defaults to "event" so every trace
+# written before this taxonomy existed is still valid.
+NodeType = Literal[
+    "event",                     # something that happened, attested as such
+    "reconstructed_date",        # a date scholars reconstruct; no record states it
+    "text_composition",          # when a text was composed — NOT when its events happened
+    "manuscript_witness",        # a physically surviving copy, with its own date and repository
+    "external_attestation",      # an independent source referring to the subject from outside it
+    "term_history",              # the history of a word or title, separate from what it now names
+    "linguistic_transmission",   # how a name or term moved between languages
+    "institutional_development", # canons, creeds, offices — dated to when ATTESTED, never earlier
+    "dating_framework",          # how the dates themselves were derived or converted
+    "context",                   # background; influence explicitly NOT established
+]
+
+# Whether a work is really by whom it is credited to. "Attributed" is the honest
+# default for most ancient texts and has nowhere to live in a plain title string.
+Attribution = Literal[
+    "established",     # authorship is evidenced
+    "attributed",      # traditionally credited; not established
+    "disputed",        # scholars actively disagree
+    "anonymous",       # the work does not name its author
+    "not_applicable",  # this node is not a work
 ]
 
 
@@ -99,6 +145,19 @@ class Citation(BaseModel):
     url: str
     snippet: Optional[str] = None
     tier: SourceTier = "unknown"
+    # The tier as a number, 1 (primary evidence) to 5 (general web). Carried
+    # alongside the string because the string is a category and this is an
+    # ordering — and because it is computed per CLAIM, not per URL: a 1963
+    # newspaper is primary evidence for a 1963 event and general web for a
+    # medieval one. Legacy citations have no rank; the client derives one.
+    tier_rank: int = Field(default=5, ge=1, le=5)
+    # Whether this citation may be the evidentiary basis of the claim, or is a
+    # lead to follow backward. Never taken from the model.
+    role: CitationRole = "discovery"
+    published: Optional[str] = Field(
+        default=None,
+        description="When this source was published, when stated — decides whether it is contemporary with the claim.",
+    )
     # Set when several citations demonstrably descend from one upstream report:
     # they are one source repeated, not independent confirmations.
     chain: Optional[str] = Field(
@@ -133,6 +192,14 @@ class EvidenceDossier(BaseModel):
         description="Support that does NOT descend from the same information chain.",
     )
     contradictory_evidence: str = Field(default="None identified")
+    provenance: str = Field(
+        default="None identified",
+        description="Who holds the object, under what shelfmark, and how it got there.",
+    )
+    scholarly_dispute: str = Field(
+        default="None identified",
+        description="Live disagreement AMONG SCHOLARS about this claim — distinct from evidence against it.",
+    )
     evidence_type: EvidenceType = "scholarly_inference"
     claim_class: ClaimClass = Field(
         default="interpretation",
@@ -148,6 +215,10 @@ class EvidenceDossier(BaseModel):
         default=False,
         description="Sources actively disagree about this claim (not merely unproven).",
     )
+    # Derived in code from the citations' tier ranks and whether a page was read,
+    # for the same reason claim_class is: a claim asked to rate its own
+    # verification will talk itself up.
+    verification: Verification = "unknown"
     # True only when the pipeline actually opened and read a source page for this
     # claim. False means the provenance fields rest on search summaries alone, and
     # the UI says so rather than presenting them with equal weight.
@@ -172,6 +243,15 @@ class TimelineEvent(BaseModel):
         description="Human-readable era when no year is available, e.g. 'Bronze Age oral tradition'.",
     )
     precision: DatePrecision = "unknown"
+    # Set when the item covers a SPAN rather than a moment — a language shifting
+    # over centuries, a canon forming. Without it, everything that is a process
+    # rather than an event has to be either falsely pinned to one year or dropped.
+    year_end: Optional[int] = Field(
+        default=None,
+        description="Signed end year when this item spans a period rather than happening at a moment.",
+    )
+    node_type: NodeType = "event"
+    attribution: Attribution = "not_applicable"
     source_title: str
     claim: str
     citations: List[Citation] = Field(default_factory=list)
@@ -184,6 +264,9 @@ class OriginResult(BaseModel):
     year: Optional[int] = None
     era_label: Optional[str] = None
     precision: DatePrecision = "unknown"
+    year_end: Optional[int] = None
+    node_type: NodeType = "event"
+    attribution: Attribution = "not_applicable"
     source_title: str
     summary: str
     citations: List[Citation] = Field(default_factory=list)
@@ -214,8 +297,13 @@ class ConnectionEvidence(BaseModel):
         default="None identified",
         description="Support for the link that does not descend from the same information chain.",
     )
+    scholarly_dispute: str = Field(
+        default="None identified",
+        description="Live disagreement among scholars about whether this link holds.",
+    )
     claim_class: ClaimClass = "unknown"
     evidence_type: EvidenceType = "scholarly_inference"
+    verification: Verification = "unknown"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence_label: ConfidenceLabel = "moderate"
     why: str = Field(default="", description="Plain-language reading of how strong the link is.")

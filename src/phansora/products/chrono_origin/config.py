@@ -16,18 +16,36 @@ class Settings(BaseSettings):
 
     # Pipeline limits. max_depth is a ceiling, not a target: the loop stops as soon
     # as a round stops finding new evidence, so most traces never reach it.
-    chrono_max_depth: int = 4
+    # Raised from 4/5 when the loop's objective changed from "find something
+    # older" to "cover the strands this subject has". A trace that has to reach
+    # manuscripts, outside attestation, language and later institutional
+    # development needs more rounds than one that stops at the earliest text —
+    # and the loop still exits as soon as a subject is exhausted, so a shallow
+    # subject does not pay for the ceiling.
+    chrono_max_depth: int = 6
     chrono_min_depth: int = 2
     chrono_max_sources_per_stage: int = 8
-    chrono_max_queries_per_stage: int = 5
-    chrono_request_timeout_s: int = 240
+    chrono_max_queries_per_stage: int = 6
+    chrono_request_timeout_s: int = 300
 
     # Reading real source pages. This is the expensive half of the budget and the
     # only thing that makes a provenance claim checkable rather than recalled, so
     # it is spent narrowly: a few top-tier pages, truncated, one per domain.
-    chrono_read_sources: int = 4
+    # Raised from 4: a claim can only be marked verified if its page was actually
+    # read, so the read budget is also the ceiling on how much of a trace can come
+    # back as anything better than "unverified".
+    chrono_read_sources: int = 6
     chrono_read_chars: int = 6000
     chrono_expand_read_sources: int = 2
+
+    # Chasing citations backward. Mining is two HTTP fetches and a regex — it
+    # costs no tokens, so it stays on. The search half only fires for claims that
+    # are still resting on a lead after the rounds finish, which on a
+    # well-sourced subject is none of them.
+    chrono_chase_enabled: bool = True
+    chrono_chase_mine_pages: int = 2
+    chrono_chase_max_targets: int = 3
+    chrono_chase_max_queries: int = 3
 
     # Ceiling on evaluated edges. Well past what a readable timeline needs — it
     # exists to stop a model emitting an edge for every pair of events.

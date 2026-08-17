@@ -37,7 +37,7 @@ from ..config import get_settings
 # than deleting anything, so a rollback still finds its own cache intact.
 #
 # v2: evidence dossiers, claim classes, evaluated connections, read source pages.
-SCHEMA_VERSION = "v2"
+SCHEMA_VERSION = "v3"
 
 
 def normalize_title(title: str) -> str:

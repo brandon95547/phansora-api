@@ -46,21 +46,24 @@ from ..services.cache import get_cached, normalize_title, request_key, save_cach
 from phansora.shared.ai import usage
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
+from . import source_policy as sp
 from .prompts import (
     DECOMPOSE_PROMPT,
     EXPAND_EXTRACT_PROMPT,
     EXPAND_SEARCH_PROMPT,
+    CHASE_SEARCH_PROMPT,
+    EXTRACT_DOCTRINE,
     EXTRACT_PROMPT,
     SEARCH_DOCTRINE,
     SEARCH_PROMPT,
     SOURCE_HIERARCHY,
     SYNTHESIZE_PROMPT,
 )
-from .reader import PageRead, format_reads_block, read_best
+from .reader import PageRead, format_reads_block, mine_references, read_best
 
 logger = logging.getLogger(__name__)
 
-_VALID_TIERS = {"primary", "repository", "academic", "press", "low_authority", "unknown"}
+_VALID_TIERS = sp.VALID_TIERS
 _VALID_EVIDENCE_TYPES = {
     "primary_document",
     "archaeological",
@@ -74,44 +77,29 @@ _VALID_EVIDENCE_TYPES = {
 }
 _VALID_CONFIDENCE_LABELS = {"high", "moderate", "low", "speculative"}
 
-# A source URL is a weak signal, but a reliable one at the bottom of the hierarchy:
-# these hosts are discovery aids, never the evidentiary foundation of a trace.
-_LOW_AUTHORITY_HOSTS = (
-    "wikipedia.org", "wikimedia.org", "fandom.com", "reddit.com", "quora.com",
-    "medium.com", "substack.com", "blogspot.com", "wordpress.com", "tumblr.com",
-    "youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com", "tiktok.com",
-    "pinterest.com", "stackexchange.com", "answers.com",
-)
-_REPOSITORY_HOSTS = (
-    ".museum", "britishmuseum.org", "bl.uk", "loc.gov", "archives.gov", "nationalarchives",
-    "bnf.fr", "vatlib.it", "metmuseum.org", "getty.edu", "smithsonian", "digitallibrary",
-    "archive.org", "perseus.tufts.edu", "hathitrust.org",
-)
-_ACADEMIC_HOSTS = (
-    ".edu", ".ac.uk", "jstor.org", "doi.org", "cambridge.org", "oup.com", "academia.edu",
-    "springer.com", "tandfonline.com", "sciencedirect.com", "brill.com", "degruyter.com",
-    "jhu.edu", "persee.fr", "openedition.org",
-)
-
-# Phrases the dossier uses for an honest absence. Recognised so "None identified"
-# in contradictory_evidence is never mistaken for an actual dispute.
-_ABSENCE = ("none identified", "none", "n/a", "not identified", "unknown", "")
+# The host lists, the tier fallback and the absence vocabulary now live in
+# source_policy, where they can be tested without an API key and where the rules
+# that read them back sit beside them. Aliased here so the call sites below read
+# unchanged.
+_is_absent = sp.is_absent
+_default_tier = sp.default_tier
 
 
-def _is_absent(value: Any) -> bool:
-    return str(value or "").strip().lower() in _ABSENCE
+_VALID_NODE_TYPES = {
+    "event", "reconstructed_date", "text_composition", "manuscript_witness",
+    "external_attestation", "term_history", "linguistic_transmission",
+    "institutional_development", "dating_framework", "context",
+}
+_VALID_ATTRIBUTION = {"established", "attributed", "disputed", "anonymous", "not_applicable"}
 
 
-def _default_tier(url: str) -> str:
-    """Fall back to a host-based tier when the model does not label a citation."""
-    u = (url or "").lower()
-    if any(h in u for h in _LOW_AUTHORITY_HOSTS):
-        return "low_authority"
-    if any(h in u for h in _REPOSITORY_HOSTS):
-        return "repository"
-    if any(h in u for h in _ACADEMIC_HOSTS):
-        return "academic"
-    return "unknown"
+def _node_type(value: Any) -> str:
+    """An unrecognised node type falls back to a plain event, never to a guess."""
+    return value if value in _VALID_NODE_TYPES else "event"
+
+
+def _attribution(value: Any) -> str:
+    return value if value in _VALID_ATTRIBUTION else "not_applicable"
 
 
 def _coerce_dossier(
@@ -121,17 +109,25 @@ def _coerce_dossier(
     confidence: float,
     read_urls: Optional[set] = None,
     citations: Optional[List[str]] = None,
+    citation_ranks: Optional[Dict[str, int]] = None,
 ) -> Optional[EvidenceDossier]:
     """Build an EvidenceDossier from model output, tolerating missing/invalid fields.
 
     Anything the model left out becomes an explicit "None identified" rather than a
     silently absent field — an unanswered evidence question is itself information.
 
-    Three fields are settled here rather than asked for, because they are facts
+    Several fields are settled here rather than asked for, because they are facts
     about the run and not judgements: ``claim_class`` is derived from the evidence
     type so it cannot be talked up, ``disputed`` follows from contradictory
-    evidence actually being present, and ``verified_from_source`` records whether
-    this pipeline opened any of the cited pages.
+    evidence actually being present, ``verified_from_source`` records whether this
+    pipeline opened any of the cited pages, and ``verification`` records whether
+    anything under the claim could serve as evidence at all.
+
+    ``citation_ranks`` is what makes the difference between stating a policy and
+    holding to one. The evidence type is capped at what the strongest citation can
+    actually support, so a claim standing on a wiki cannot describe itself as a
+    primary document — and because claim_class derives from evidence type, that cap
+    reaches the marker on the board without the renderer knowing anything about it.
     """
     if not isinstance(raw, dict):
         return None
@@ -159,29 +155,55 @@ def _coerce_dossier(
         )
 
     contradictory = text("contradictory_evidence", "None identified")
+    dispute = text("scholarly_dispute", "None identified")
     read = read_urls or set()
     used = [u for u in (citations or []) if u in read]
 
+    cites = [u for u in (citations or []) if u]
+    ranks = citation_ranks or {}
+    best = sp.best_rank(ranks.get(u, sp.WORST_RANK) for u in cites)
+    ev_type = sp.cap_evidence_type(ev_type, best)
+    earliest = text("earliest_supporting_source", "None identified")
+    verification = sp.verification_for(
+        best_evidence_rank=best,
+        has_citations=bool(cites),
+        read_from_source=bool(used),
+        earliest_supporting_source=earliest,
+    )
+    # An honest absence is a finding with its own marker on the board, so it has
+    # to travel through evidence_type — the one field claim_class is derived from.
+    if verification == "unknown":
+        ev_type = "absent"
+
     return EvidenceDossier(
         claim=text("claim", fallback_claim or "—"),
-        earliest_supporting_source=text("earliest_supporting_source", "None identified"),
+        earliest_supporting_source=earliest,
         estimated_source_date=text("estimated_source_date", "Unknown"),
         earliest_surviving_copy=text("earliest_surviving_copy", "None identified"),
         contemporary_evidence=text("contemporary_evidence", "None identified"),
         independent_corroboration=text("independent_corroboration", "None identified"),
         contradictory_evidence=contradictory,
+        provenance=text("provenance", "None identified"),
+        scholarly_dispute=dispute,
         evidence_type=ev_type,
         claim_class=ev.claim_class_for(ev_type, raw.get("claim_class")),
         confidence_label=label,
         why=text("why", ""),
         missing_piece=text("missing_piece", ""),
-        disputed=(ev_type == "disputed") or not _is_absent(contradictory),
+        disputed=(ev_type == "disputed") or not _is_absent(contradictory) or not _is_absent(dispute),
+        verification=verification,
         verified_from_source=bool(used),
         sources_read=used,
     )
 
 
-def _coerce_connection_evidence(raw: Any, *, read_urls: set, citations: List[str]) -> ConnectionEvidence:
+def _coerce_connection_evidence(
+    raw: Any,
+    *,
+    read_urls: set,
+    citations: List[str],
+    citation_ranks: Optional[Dict[str, int]] = None,
+) -> ConnectionEvidence:
     """Grade a connection on the same terms as a claim, defaulting to honest ignorance."""
     raw = raw if isinstance(raw, dict) else {}
 
@@ -213,19 +235,77 @@ def _coerce_connection_evidence(raw: Any, *, read_urls: set, citations: List[str
         )
 
     contradictory = text("contradictory_evidence", "None identified")
+    dispute = text("scholarly_dispute", "None identified")
+
+    cites = [u for u in (citations or []) if u]
+    ranks = citation_ranks or {}
+    best = sp.best_rank(ranks.get(u, sp.WORST_RANK) for u in cites)
+    ev_type = sp.cap_evidence_type(ev_type, best)
+    supporting = text("supporting_evidence", "None identified")
+    verification = sp.verification_for(
+        best_evidence_rank=best,
+        has_citations=bool(cites),
+        read_from_source=bool([u for u in cites if u in (read_urls or set())]),
+        earliest_supporting_source=supporting,
+    )
+    if verification == "unknown":
+        ev_type = "absent"
+
     return ConnectionEvidence(
         mechanism=text("mechanism", "No mechanism established."),
-        supporting_evidence=text("supporting_evidence", "None identified"),
+        supporting_evidence=supporting,
         contradictory_evidence=contradictory,
         independent_corroboration=text("independent_corroboration", "None identified"),
+        scholarly_dispute=dispute,
         claim_class=ev.claim_class_for(ev_type, raw.get("claim_class")),
         evidence_type=ev_type,
+        verification=verification,
         confidence=conf,
         confidence_label=label,
         why=text("why", ""),
         missing_piece=text("missing_piece", ""),
-        disputed=(ev_type == "disputed") or not _is_absent(contradictory),
+        disputed=(ev_type == "disputed") or not _is_absent(contradictory) or not _is_absent(dispute),
     )
+
+
+# The strands a trace can be built from. Kept here rather than in the prompt
+# alone so the loop can measure coverage instead of taking the model's word for it.
+_STRANDS = {
+    "precursor_context", "term_history", "reconstructed_date", "text_composition",
+    "manuscript_witness", "external_attestation", "linguistic_transmission",
+    "institutional_development", "dating_framework",
+}
+# A mention's node_type is how a strand reports itself as covered. Two of them
+# differ in name from the strand they satisfy.
+_NODE_TYPE_STRAND = {"context": "precursor_context"}
+
+
+def _as_strands(raw: Any) -> List[str]:
+    """The planned strands, tolerating both ['name'] and [{'strand': name}] shapes."""
+    out: List[str] = []
+    for item in raw or []:
+        name = item.get("strand") if isinstance(item, dict) else item
+        name = str(name or "").strip().lower()
+        if name in _STRANDS and name not in out:
+            out.append(name)
+    return out
+
+
+def _strands_covered(mentions: List[Dict[str, Any]]) -> set:
+    """Which strands this batch of mentions actually produced evidence for."""
+    covered: set = set()
+    for m in mentions or []:
+        if not isinstance(m, dict):
+            continue
+        node_type = str(m.get("node_type") or "").strip().lower()
+        strand = _NODE_TYPE_STRAND.get(node_type, node_type)
+        if strand in _STRANDS:
+            covered.add(strand)
+    return covered
+
+
+def _open_strands(planned: List[str], covered: set) -> List[str]:
+    return [s for s in planned if s not in covered]
 
 
 def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -349,10 +429,19 @@ class TraceOrchestrator:
         iterations = 0
 
         # Stage 1 - Decompose
-        progress(8, "Decomposing query")
+        progress(8, "Planning the research")
         usage.stage("decompose")
         plan = self._decompose(req, max_queries=max_queries)
         current_queries: List[str] = _as_queries(plan.get("queries"))[:max_queries]
+
+        # The strands this subject needs covered. The loop used to run until it
+        # stopped finding anything OLDER, which is why traces came back as a thin
+        # chain of dates: once the earliest text was found there was nothing left
+        # to look for, and manuscripts, outside attestation, language and later
+        # institutional development were never researched at all. A trace is
+        # finished when its strands are covered, not when the origin stops moving.
+        planned_strands = _as_strands(plan.get("strands"))
+        covered_strands: set[str] = set()
 
         prev_earliest_year: Optional[int] = None
         stagnant_rounds = 0
@@ -413,6 +502,7 @@ class TraceOrchestrator:
                 earliest_known=_describe_earliest(_earliest_year(all_mentions)),
                 prior_queries=queries_run,
                 max_queries=max_queries,
+                open_strands=_open_strands(planned_strands, covered_strands),
             )
             new_mentions = extracted.get("mentions", [])
             for g in extracted.get("gaps", []) or []:
@@ -421,6 +511,8 @@ class TraceOrchestrator:
 
             fresh = ev.new_mention_count(all_mentions, new_mentions)
             all_mentions = ev.dedupe_mentions(all_mentions + new_mentions)
+            newly_covered = _strands_covered(new_mentions) - covered_strands
+            covered_strands |= newly_covered
 
             # ---- Stopping rules. Every extra round is a full set of searches, so
             # the loop must justify continuing rather than run to the ceiling.
@@ -428,20 +520,31 @@ class TraceOrchestrator:
                 logger.info("Round %d added no new mentions; stopping.", depth + 1)
                 break
 
+            # A round is productive if it pushed the origin back OR covered a
+            # strand that was still open. Judging only on recency is what made
+            # the loop quit with half the subject unresearched.
             earliest = _earliest_year(all_mentions)
             earliest_year = earliest.get("year") if earliest else None
-            if (
+            went_older = not (
                 isinstance(earliest_year, int)
                 and isinstance(prev_earliest_year, int)
                 and earliest_year >= prev_earliest_year
-            ):
-                stagnant_rounds += 1
-            else:
+            )
+            open_now = _open_strands(planned_strands, covered_strands)
+            if went_older or newly_covered:
                 stagnant_rounds = 0
+            else:
+                stagnant_rounds += 1
             prev_earliest_year = earliest_year if isinstance(earliest_year, int) else prev_earliest_year
 
             if stagnant_rounds >= 2:
-                logger.info("No older candidates after 2 rounds; stopping.")
+                logger.info(
+                    "Two rounds with no older evidence and no new strand covered; stopping. Open: %s",
+                    open_now or "none",
+                )
+                break
+            if not open_now and not went_older and depth + 1 >= min_depth:
+                logger.info("All planned strands covered and the origin has settled; stopping.")
                 break
             if depth == max_depth - 1 or earliest is None:
                 break
@@ -467,13 +570,39 @@ class TraceOrchestrator:
                 "subject, so no origin could be traced."
             )
 
-        # Stage 4 - Read the strongest sources properly, before judging them.
-        citation_list = list(all_citations.values())
+        # Stage 3.5 - Chase. Every claim still resting on a lead gets one attempt
+        # to find what it actually rests on, which is the half of the doctrine
+        # that was never implemented: the prompts have always said to follow a
+        # wiki's references backward, and nothing in the pipeline could.
         mention_tiers = self._mention_tiers(all_mentions)
 
         def pre_tier(url: str) -> str:
             t = mention_tiers.get(url)
             return t if t in _VALID_TIERS else _default_tier(url)
+
+        if self.settings.chrono_chase_enabled:
+            progress(78, "Chasing citations backward")
+            usage.stage("chase")
+            try:
+                chased = self._chase(
+                    req,
+                    mentions=all_mentions,
+                    citations=list(all_citations.values()),
+                    tier_for=pre_tier,
+                    queries_run=queries_run,
+                    max_sources=max_sources,
+                )
+                for url, meta in chased.get("citations", {}).items():
+                    all_citations.setdefault(url, meta)
+                new_mentions = chased.get("mentions", [])
+                if new_mentions:
+                    all_mentions = ev.dedupe_mentions(all_mentions + new_mentions)
+                    mention_tiers = self._mention_tiers(all_mentions)
+            except Exception as exc:  # noqa: BLE001 - a failed chase must not cost a trace
+                logger.warning("Citation chase failed: %s", exc)
+
+        # Stage 4 - Read the strongest sources properly, before judging them.
+        citation_list = list(all_citations.values())
 
         progress(82, "Reading source pages")
         want_reads = self.settings.chrono_read_sources
@@ -585,6 +714,38 @@ class TraceOrchestrator:
             usage.absorb(snap)
         return [answer for answer, _ in results]
 
+    def _search_prompts(self, prompts: List[str]) -> List[GroundedAnswer]:
+        """Run already-formatted search prompts concurrently.
+
+        _search_many builds SEARCH_PROMPT around a bare query; the chase writes
+        its own prompt, so it needs the concurrency without the template.
+        """
+        def one(prompt: str) -> Tuple[GroundedAnswer, Dict[str, Any]]:
+            usage.start()
+            usage.stage("chase")
+            try:
+                answer = self.client.grounded_search(prompt)
+            except Exception as exc:  # noqa: BLE001 - a dead chase is just a dead lead
+                logger.warning("Chase search failed: %s", exc)
+                answer = GroundedAnswer(text="", citations=[], queries=[])
+            return answer, usage.snapshot()
+
+        if not prompts:
+            return []
+        if len(prompts) == 1:
+            usage.stage("chase")
+            try:
+                return [self.client.grounded_search(prompts[0])]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Chase search failed: %s", exc)
+                return [GroundedAnswer(text="", citations=[], queries=[])]
+
+        with ThreadPoolExecutor(max_workers=min(3, len(prompts))) as pool:
+            results = list(pool.map(one, prompts))
+        for _, snap in results:
+            usage.absorb(snap)
+        return [answer for answer, _ in results]
+
     def _search_one(self, req: TraceRequest, query: str) -> GroundedAnswer:
         ctx = f"(context: {req.context})" if req.context else ""
         prompt = SEARCH_PROMPT.format(
@@ -609,6 +770,7 @@ class TraceOrchestrator:
         prior_queries: List[str],
         max_queries: int,
         pages_block: str = "",
+        open_strands: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         prompt = EXTRACT_PROMPT.format(
             title=title,
@@ -617,6 +779,8 @@ class TraceOrchestrator:
             citations_block=_format_citations_block(citations),
             earliest_known=earliest_known,
             max_queries=max_queries,
+            extract_doctrine=EXTRACT_DOCTRINE,
+            open_strands=", ".join(open_strands or []) or "(none — all planned strands covered)",
             prior_queries="\n".join(f"- {q}" for q in prior_queries[-20:]) or "- (none yet)",
         )
         try:
@@ -636,6 +800,100 @@ class TraceOrchestrator:
             "next_queries": data.get("next_queries") or [],
             "gaps": data.get("gaps") or [],
         }
+
+    def _chase(
+        self,
+        req: TraceRequest,
+        *,
+        mentions: List[Dict[str, Any]],
+        citations: List[Dict[str, Any]],
+        tier_for: Callable[[str], str],
+        queries_run: List[str],
+        max_sources: int,
+    ) -> Dict[str, Any]:
+        """Find what the weakly-sourced claims actually rest on.
+
+        Two passes, cheapest first, and the cheap one usually does the work.
+
+        Mining costs no tokens at all: open the lead pages the trace is leaning
+        on, take their reference lists, and hand the URLs to the ranker. A wiki's
+        footnotes are mostly JSTOR, DOIs, archives and university presses, so the
+        page that could never be evidence becomes the thing it was always
+        supposed to be — a way of finding evidence.
+
+        Only then, and only for claims still standing on nothing arguable, spend
+        a search naming the underlying work. Returns whatever it found; finding
+        nothing is a valid outcome and costs the trace nothing but the attempt.
+        """
+        found_citations: Dict[str, Dict[str, str]] = {}
+
+        # --- free pass: harvest the leads' own reference lists
+        lead_pages = ev.select_for_reference_mining(
+            citations, tier_for, limit=self.settings.chrono_chase_mine_pages
+        )
+        harvested = mine_references(lead_pages) if lead_pages else []
+        for ref in harvested:
+            url = ref.get("url") or ""
+            if url and url not in found_citations:
+                found_citations[url] = {"url": url, "title": ref.get("text") or ""}
+        if harvested:
+            logger.info(
+                "Mined %d references from %d lead pages", len(harvested), len(lead_pages)
+            )
+
+        # --- paid pass: ask what the weakest claims are actually built on
+        targets = ev.chase_targets(
+            mentions, tier_for, limit=self.settings.chrono_chase_max_targets
+        )
+        if not targets:
+            logger.info("No claims resting on leads; chase search skipped.")
+            return {"citations": found_citations, "mentions": []}
+
+        refs_block = "; ".join(
+            f"{r.get('text') or ''} <{r.get('url')}>" for r in harvested[:12]
+        ) or "(none harvested)"
+
+        prompts: List[str] = []
+        for m in targets[: self.settings.chrono_chase_max_queries]:
+            weak = next((u for u in (m.get("citations") or []) if u), "(unknown)")
+            prompts.append(
+                CHASE_SEARCH_PROMPT.format(
+                    title=req.title,
+                    claim=str(m.get("claim") or m.get("source_title") or "")[:300],
+                    weak_source=weak,
+                    cites=str(m.get("cites") or "(not stated)")[:200],
+                    references=refs_block[:1200],
+                    search_doctrine=SEARCH_DOCTRINE,
+                )
+            )
+
+        answers = self._search_prompts(prompts)
+        notes: List[str] = []
+        round_urls: List[str] = []
+        for answer in answers:
+            if answer.text:
+                notes.append(answer.text)
+            for c in answer.citations[:max_sources]:
+                url = c.get("url") or ""
+                if url and url not in found_citations:
+                    found_citations[url] = c
+                if url:
+                    round_urls.append(url)
+
+        if not notes:
+            return {"citations": found_citations, "mentions": []}
+
+        usage.stage("extract")
+        extracted = self._extract(
+            title=req.title,
+            notes="\n\n".join(notes),
+            citations=[found_citations[u] for u in dict.fromkeys(round_urls) if u in found_citations],
+            earliest_known=_describe_earliest(_earliest_year(mentions)),
+            prior_queries=queries_run,
+            max_queries=0,  # the chase is the last word; it does not plan another round
+            open_strands=[],
+        )
+        return {"citations": found_citations, "mentions": extracted.get("mentions", [])}
 
     def _synthesize(
         self,
@@ -697,16 +955,53 @@ class TraceOrchestrator:
         # arithmetic meaning instead of a rhetorical one.
         chain_of, chain_groups = ev.build_chains(citations, mentions, tier_for)
 
-        def to_citations(urls: List[str]) -> List[Citation]:
+        # Publication dates, cheapest source first: whatever the synthesis stage
+        # stated, else a year sitting in the URL. Needed because a tier is a
+        # relation between a source and a claim, not a property of a domain — the
+        # same newspaper is primary evidence for the week it was printed and a
+        # secondary account of everything else.
+        declared_dates = final.get("source_dates")
+        declared_dates = declared_dates if isinstance(declared_dates, dict) else {}
+
+        def published_for(url: str) -> Tuple[Optional[str], Optional[int]]:
+            stated = declared_dates.get(url)
+            if isinstance(stated, dict):  # tolerate {"tier":…, "published":…}
+                stated = stated.get("published")
+            year = sp.parse_year(stated) if stated else None
+            if year is None:
+                year = sp.url_year(url)
+            return (str(stated) if stated else (str(year) if year else None)), year
+
+        def rank_urls(urls: List[str], *, claim_year: Any, precision: Any) -> Dict[str, int]:
+            """Rank each citation UNDER THIS CLAIM. The same URL can differ per node."""
+            ranks: Dict[str, int] = {}
+            for u in urls or []:
+                _, pub_year = published_for(u)
+                ranks[u] = sp.rank_for(
+                    tier_for(u),
+                    published_year=pub_year,
+                    claim_year=claim_year if isinstance(claim_year, int) else None,
+                    claim_precision=precision,
+                    url=u,
+                )
+            return ranks
+
+        def to_citations(urls: List[str], ranks: Optional[Dict[str, int]] = None) -> List[Citation]:
             out: List[Citation] = []
+            ranks = ranks or {}
             for u in urls or []:
                 meta = url_lookup.get(u, {"url": u})
                 url = meta.get("url", u)
+                rank = ranks.get(u, sp.EVIDENCE_RANK.get(tier_for(url), sp.WORST_RANK))
+                published, _ = published_for(url)
                 out.append(
                     Citation(
                         url=url,
                         title=meta.get("title"),
                         tier=tier_for(url),
+                        tier_rank=rank,
+                        role=sp.role_for(rank),
+                        published=published,
                         chain=chain_of.get(url),
                     )
                 )
@@ -715,14 +1010,22 @@ class TraceOrchestrator:
         origin_data = final.get("origin") or {}
         origin_conf = float(origin_data.get("confidence", 0.5) or 0.5)
         origin_cites = origin_data.get("citations", []) or []
+        origin_ranks = rank_urls(
+            origin_cites,
+            claim_year=origin_data.get("year"),
+            precision=origin_data.get("precision", "unknown"),
+        )
         origin = OriginResult(
             id="origin",
             year=origin_data.get("year"),
             era_label=origin_data.get("era_label"),
             precision=origin_data.get("precision", "unknown"),
+            year_end=origin_data.get("year_end"),
+            node_type=_node_type(origin_data.get("node_type")),
+            attribution=_attribution(origin_data.get("attribution")),
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
-            citations=to_citations(origin_cites),
+            citations=to_citations(origin_cites, origin_ranks),
             confidence=origin_conf,
             evidence=_coerce_dossier(
                 origin_data.get("evidence"),
@@ -730,6 +1033,7 @@ class TraceOrchestrator:
                 confidence=origin_conf,
                 read_urls=read_urls,
                 citations=origin_cites,
+                citation_ranks=origin_ranks,
             ),
         )
 
@@ -745,15 +1049,23 @@ class TraceOrchestrator:
                 event_id = f"{event_id}_{i + 1}"
             used_ids.add(event_id)
             entry_cites = entry.get("citations", []) or []
+            entry_ranks = rank_urls(
+                entry_cites,
+                claim_year=entry.get("year"),
+                precision=entry.get("precision", "unknown"),
+            )
             timeline.append(
                 TimelineEvent(
                     id=event_id,
                     year=entry.get("year"),
                     era_label=entry.get("era_label"),
                     precision=entry.get("precision", "unknown"),
+                    year_end=entry.get("year_end"),
+                    node_type=_node_type(entry.get("node_type")),
+                    attribution=_attribution(entry.get("attribution")),
                     source_title=entry.get("source_title", "Unknown"),
                     claim=entry.get("claim", ""),
-                    citations=to_citations(entry_cites),
+                    citations=to_citations(entry_cites, entry_ranks),
                     confidence=conf,
                     evidence=_coerce_dossier(
                         entry.get("evidence"),
@@ -761,6 +1073,7 @@ class TraceOrchestrator:
                         confidence=conf,
                         read_urls=read_urls,
                         citations=entry_cites,
+                        citation_ranks=entry_ranks,
                     ),
                 )
             )
@@ -774,6 +1087,8 @@ class TraceOrchestrator:
             valid_ids=used_ids,
             to_citations=to_citations,
             read_urls=read_urls,
+            rank_urls=rank_urls,
+            node_types={e.id: e.node_type for e in timeline} | {"origin": origin.node_type},
         )
 
         all_citations = [
@@ -819,16 +1134,24 @@ class TraceOrchestrator:
         *,
         raw: Any,
         valid_ids: set,
-        to_citations: Callable[[List[str]], List[Citation]],
+        to_citations: Callable[..., List[Citation]],
         read_urls: set,
+        rank_urls: Optional[Callable[..., Dict[str, int]]] = None,
+        node_types: Optional[Dict[str, str]] = None,
     ) -> List[Connection]:
         """Validate, then grade, the edges the model proposed."""
         cleaned = ev.validate_connections(
-            raw, valid_ids, max_connections=self.settings.chrono_max_connections
+            raw,
+            valid_ids,
+            max_connections=self.settings.chrono_max_connections,
+            node_types=node_types,
         )
         out: List[Connection] = []
         for item in cleaned:
             cites = item.get("citations", []) or []
+            # An edge is a claim about a relationship, not about a moment, so its
+            # citations are ranked without a date to be contemporary with.
+            ranks = rank_urls(cites, claim_year=None, precision=None) if rank_urls else {}
             try:
                 out.append(
                     Connection(
@@ -836,9 +1159,12 @@ class TraceOrchestrator:
                         to_id=item["to_id"],
                         relation=item["relation"],
                         evidence=_coerce_connection_evidence(
-                            item.get("evidence"), read_urls=read_urls, citations=cites
+                            item.get("evidence"),
+                            read_urls=read_urls,
+                            citations=cites,
+                            citation_ranks=ranks,
                         ),
-                        citations=to_citations(cites),
+                        citations=to_citations(cites, ranks),
                     )
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -928,6 +1254,7 @@ class TraceOrchestrator:
             notes=answer.text,
             pages_block=pages_block,
             citations_block=_format_citations_block(citations),
+            extract_doctrine=EXTRACT_DOCTRINE,
             max_events=req.max_events,
         )
         try:

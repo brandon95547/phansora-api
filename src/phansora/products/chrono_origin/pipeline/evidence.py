@@ -17,11 +17,16 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ..models import CLAIM_CLASS_BY_EVIDENCE_TYPE
+from .source_policy import EVIDENCE_RANK, READ_RANK, TIER_ORDER, WORST_RANK, rank_for
 
-# Tier ranking, best first. Drives which sources are worth reading in full and
-# which citation represents a chain.
-TIER_ORDER = ("primary", "repository", "academic", "press", "unknown", "low_authority")
-_TIER_RANK = {t: i for i, t in enumerate(TIER_ORDER)}
+# Two rankings, two questions, and conflating them makes traces worse.
+#
+# READ_RANK (from source_policy) orders what is worth OPENING: an unrecognised
+# domain outranks a wiki there, because reading it is how we learn it is a
+# national archive. EVIDENCE_RANK orders what a source can SUPPORT, and there an
+# unclassified page is tier 5 like any other lead. Reading order is imported
+# under its old name so the callers below read as they always did.
+_TIER_RANK = READ_RANK
 
 # Hosts where each URL is a distinct work rather than one publisher's voice.
 # Grouping these by domain would wrongly collapse two unrelated papers into one
@@ -204,11 +209,13 @@ def build_chains(
         chain_of[url] = group["id"]
 
     # A chain is represented by its strongest source: that is the tier at which
-    # the chain can actually be argued, not the best-looking link in it.
+    # the chain can actually be argued, not the best-looking link in it. Ranked
+    # by EVIDENCE_RANK rather than reading order, so the tier printed on a chain
+    # means the same thing as the tier printed on the citations inside it.
     for group in groups.values():
         best = min(
             (tier_for(u) for u in group["urls"]),
-            key=lambda t: _TIER_RANK.get(t, len(TIER_ORDER)),
+            key=lambda t: EVIDENCE_RANK.get(t, WORST_RANK),
             default="unknown",
         )
         group["tier"] = best
@@ -250,6 +257,7 @@ def select_for_reading(
                 cited_by[url] = max(cited_by.get(url, 0.0), conf)
 
     scored: List[Tuple[int, float, str]] = []
+
     for c in citations or []:
         url = (c or {}).get("url") or ""
         if not url:
@@ -274,10 +282,89 @@ def select_for_reading(
     return chosen
 
 
+# ------------------------------------------------------------ chasing leads
+# "Follow their references backward" was doctrine for as long as this product has
+# existed, and was never anything a caller could invoke. These two functions are
+# the mechanism: find the claims resting on leads, and find the lead pages whose
+# footnotes are worth harvesting. Neither spends a token.
+def chase_targets(
+    mentions: List[Dict[str, Any]],
+    tier_for: Any,
+    *,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Mentions whose best citation is a lead (rank 4-5) rather than evidence.
+
+    Returns nothing when a trace is already well-sourced, so a strong subject
+    pays nothing for this pass. Weakest and least confident first: those are the
+    claims where finding the underlying source changes the answer.
+    """
+    if limit <= 0:
+        return []
+
+    scored: List[Tuple[int, float, int, Dict[str, Any]]] = []
+    for i, m in enumerate(mentions or []):
+        if not isinstance(m, dict):
+            continue
+        urls = [u for u in (m.get("citations") or []) if u]
+        if not urls:
+            continue
+        rank = min((EVIDENCE_RANK.get(tier_for(u), WORST_RANK) for u in urls), default=WORST_RANK)
+        if rank < 4:
+            continue  # already resting on something arguable
+        try:
+            conf = float(m.get("confidence", 0.5) or 0.5)
+        except (TypeError, ValueError):
+            conf = 0.5
+        scored.append((-rank, conf, i, m))
+
+    scored.sort(key=lambda t: (t[0], t[1], t[2]))
+    return [m for _, _, _, m in scored[:limit]]
+
+
+def select_for_reference_mining(
+    citations: List[Dict[str, Any]],
+    tier_for: Any,
+    *,
+    limit: int,
+) -> List[str]:
+    """Lead pages worth opening FOR THEIR FOOTNOTES ONLY.
+
+    The mirror image of select_for_reading, and deliberately not a widening of
+    it: that function picks pages to read for their prose, and its refusal to
+    read a wiki is correct and stays. This one opens exactly the pages that
+    function skips, takes only their reference lists, and never lets a word of
+    their text reach the model. Wikipedia becomes what the policy always said it
+    was — a lead generator — instead of either an evidentiary source or nothing.
+    """
+    if limit <= 0:
+        return []
+    chosen: List[str] = []
+    seen: set[str] = set()
+    for c in citations or []:
+        url = (c or {}).get("url") or ""
+        if not url or EVIDENCE_RANK.get(tier_for(url), WORST_RANK) < 5:
+            continue
+        domain = registrable_domain(url)
+        if domain and domain in seen:
+            continue
+        seen.add(domain)
+        chosen.append(url)
+        if len(chosen) >= limit:
+            break
+    return chosen
+
+
 # ---------------------------------------------------------------- connections
+# Background is not influence. A context node joined by "derives_from" asserts
+# the exact fallacy this report exists to expose, so the claim is downgraded to
+# the relation that states the honest version.
+_CAUSAL_RELATIONS = {"derives_from", "retells", "translates", "responds_to"}
+
 _VALID_RELATIONS = {
     "derives_from", "retells", "translates", "responds_to",
-    "contradicts", "contemporaneous", "attests", "no_established_link",
+    "contradicts", "contemporaneous", "attests", "provides_context",
+    "no_established_link",
 }
 
 
@@ -286,6 +373,7 @@ def validate_connections(
     valid_ids: set[str],
     *,
     max_connections: int,
+    node_types: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Keep only connections that point at real items and say something.
 
@@ -295,6 +383,12 @@ def validate_connections(
     no mechanism is downgraded to ``no_established_link`` rather than dropped —
     "these are merely sequential" is a true and useful statement about a timeline,
     and hiding it would let the reader assume a causal story we never verified.
+
+    A fourth rule needs ``node_types``: an edge running out of a context item
+    cannot be causal. "Older religions existed, therefore they shaped this one"
+    is the oldest error in comparative history, and a context item exists
+    precisely to supply background whose influence was NOT established — so the
+    relation is rewritten to ``provides_context`` rather than believed.
     """
     if not isinstance(raw, list):
         return []
@@ -316,6 +410,8 @@ def validate_connections(
         relation = item.get("relation")
         if relation not in _VALID_RELATIONS:
             relation = "no_established_link"
+        if relation in _CAUSAL_RELATIONS and (node_types or {}).get(a) == "context":
+            relation = "provides_context"
 
         ev = item.get("evidence")
         ev = dict(ev) if isinstance(ev, dict) else {}

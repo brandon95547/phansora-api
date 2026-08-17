@@ -20,7 +20,7 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from phansora.shared.net.safe_fetch import UnsafeUrlError, fetch_text
 
@@ -117,6 +117,101 @@ def read_page(url: str, *, max_chars: int = DEFAULT_MAX_CHARS) -> PageRead:
     if not text.strip():
         return PageRead(url=url, title=title, error="No readable text extracted.")
     return PageRead(url=url, title=title, text=text)
+
+
+# ------------------------------------------------------------ mining leads
+# A lead page's value is not its prose — the policy is explicit that a wiki must
+# never be the evidentiary basis of anything — it is the list of real sources at
+# the bottom of it. Wikipedia footnotes point overwhelmingly at JSTOR, DOIs,
+# archive.org, Perseus and university presses, which is exactly the material a
+# trace is supposed to rest on, and until now the pipeline threw the page away
+# without ever looking. So: open the page, take ONLY the reference block, and
+# never let a word of its body text reach the model.
+_REF_HEADING = re.compile(
+    r"<h[23][^>]*>\s*(?:<[^>]+>\s*)*(references|notes|footnotes|bibliography|sources|works cited|citations)\b",
+    re.I,
+)
+_REF_LIST_ATTR = re.compile(
+    r"<(?:ol|ul|div)[^>]*(?:class|id)=\"[^\"]*(?:reference|reflist|footnote|bibliograph|citation)[^\"]*\"[^>]*>",
+    re.I,
+)
+_ANCHOR = re.compile(r"<a\b[^>]*href=\"(https?://[^\"#]+)\"[^>]*>(.*?)</a>", re.I | re.S)
+# Wikipedia's own furniture, plus the licence and tooling links every wiki page
+# carries. Harvesting these would just feed the pipeline more of the same tier.
+_REF_NOISE = (
+    "wikipedia.org", "wikimedia.org", "wikidata.org", "wiktionary.org",
+    "creativecommons.org", "mediawiki.org", "wikisource.org", "archive.today",
+    "web.archive.org/save", "/wiki/", "action=edit", "javascript:",
+)
+MAX_REFERENCES = 40
+
+
+def parse_references(html: str) -> List[Dict[str, str]]:
+    """Outbound links from a page's reference/footnote block, and nothing else.
+
+    Returns ``[{"url":…, "text":…}]``. The refusal to return body text is the
+    property that makes this policy-compliant rather than a loophole, and it is
+    asserted in the tests: mining a lead page must not become a way of reading one.
+    """
+    if not html:
+        return []
+
+    # Start at whichever comes first: a heading that says "References", or a list
+    # whose class says so. Anything before that point is the page itself.
+    starts = [m.start() for m in (_REF_HEADING.search(html), _REF_LIST_ATTR.search(html)) if m]
+    if not starts:
+        return []
+    block = html[min(starts):]
+
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for m in _ANCHOR.finditer(block):
+        url = m.group(1).strip()
+        low = url.lower()
+        if any(n in low for n in _REF_NOISE) or url in seen:
+            continue
+        seen.add(url)
+        text = _WS.sub(" ", _TAGS.sub(" ", m.group(2) or "")).strip()[:200]
+        out.append({"url": url, "text": text})
+        if len(out) >= MAX_REFERENCES:
+            break
+    return out
+
+
+def mine_references(urls: List[str], *, max_workers: int = 2) -> List[Dict[str, str]]:
+    """Fetch lead pages and return the union of their reference links.
+
+    Never raises, never returns page prose, and costs no tokens — the whole pass
+    is two HTTP fetches and a regex.
+    """
+    targets = [u for u in dict.fromkeys(urls or []) if u]
+    if not targets:
+        return []
+
+    def one(url: str) -> List[Dict[str, str]]:
+        try:
+            html = fetch_text(url, timeout=FETCH_TIMEOUT_S, max_bytes=MAX_BYTES)
+        except Exception as exc:  # noqa: BLE001 - a lead we cannot open is just a dead lead
+            logger.debug("Reference mining failed on %s: %s", url, exc)
+            return []
+        refs = parse_references(html)
+        for r in refs:
+            r["found_on"] = url
+        return refs
+
+    workers = max(1, min(max_workers, len(targets)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        harvested = list(pool.map(one, targets))
+
+    out: List[Dict[str, str]] = []
+    seen: set = set()
+    for group in harvested:
+        for r in group:
+            if r["url"] in seen:
+                continue
+            seen.add(r["url"])
+            out.append(r)
+    return out
 
 
 def read_pages(
