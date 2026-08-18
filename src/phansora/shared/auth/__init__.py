@@ -55,10 +55,19 @@ _UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 #   /health      the load balancer's question, must never depend on a secret
 #   /admin       carries its own key check (shared/admin/router.py); one gate, not two
 #
-# /contact and /convert are NOT here although they serve public-site features: the
-# browser posts them to Node, and Node relays with the internal key. Verified against
-# every caller (this repo, the Node app, the static sites) before tightening.
-_PUBLIC_EXACT = {"/", "/health", "/admin"}
+#   /contact     the marketing-site contact form; see below
+#
+# /contact is public because skylanex.com is a *static* site with no server to relay
+# through: its nginx vhost proxies /api/contact straight here, so requiring a key
+# would mean shipping one to the browser. It is safe to open because the recipient is
+# fixed by EMAIL_TO in the environment (a submission cannot choose where mail goes)
+# and shared/contact.py rate limits unauthenticated callers per IP. phansora.com still
+# relays through Node with the key, which only exempts it from that limit.
+#
+# /convert is NOT here: the browser posts it to Node, and Node relays with the
+# internal key. Verified against every caller (this repo, the Node app, the static
+# sites) before tightening.
+_PUBLIC_EXACT = {"/", "/health", "/admin", "/contact"}
 _PUBLIC_PREFIXES = ("/admin/",)
 
 # Interactive docs enumerate every route and schema — exactly the map an attacker
