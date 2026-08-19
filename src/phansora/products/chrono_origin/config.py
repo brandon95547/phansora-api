@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     # Ceiling on evaluated edges. Well past what a readable timeline needs — it
     # exists to stop a model emitting an edge for every pair of events.
-    chrono_max_connections: int = 24
+    chrono_max_connections: int = 8
 
     # CORS
     cors_allow_origins: str = "*"

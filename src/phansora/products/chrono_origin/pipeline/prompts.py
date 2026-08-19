@@ -463,9 +463,6 @@ Produce a JSON object:
     }}
   ],
   "connections": [ ...see CONNECTIONS below... ],
-  "source_tiers": {{ "<url>": "primary|repository|academic|reference_index|institutional|press|
-                     low_authority|unknown", ... }},
-  "source_dates": {{ "<url>": "<publication year or range, or 'unknown'>", ... }},
   "reasoning": <short paragraph on the shape of the chain and where it is thin>,
   "confidence": <0..1>
 }}
@@ -542,9 +539,10 @@ Connection rules — read these twice:
   its neighbour by default.
 
 General rules:
-- LENGTH IS NOT A VIRTUE, BUT NEITHER IS BREVITY. There is no limit on steps or conclusions.
-  Every distinct object with its own date, its own evidence and its own way of being wrong is
-  its own step.
+- AT MOST 14 STEPS AND 8 CONCLUSIONS. Every distinct object with its own date, its own evidence
+  and its own way of being wrong deserves a step, but a chain longer than this is not a chain a
+  reader follows, and the whole answer is generated in one pass — overrun it and the JSON is cut
+  off mid-object and the trace fails outright. Choose the load-bearing objects.
 - Every claim must be backed by at least one citation URL from the provided list.
 - Where the only citations available are tier 4-5, say so in "why" and set the evidence_type to
   what those sources can actually support.

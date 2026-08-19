@@ -317,68 +317,6 @@ def test_the_limit_is_overridable_for_a_backend_that_can_take_it(monkeypatch):
     S._semaphores.clear()
 
 
-# ------------------------------------------------- where the chain starts
-# The reported failure: a Jesus trace opened at 30 CE and contained none of the
-# Hebrew scriptures, Septuagint or Dead Sea Scrolls. The rounds do find that
-# material; synthesis judged it "not about the subject" and left it out, and the
-# result looked well-formed. Nothing errored. These pin the detector that makes it
-# visible, since a prompt can only ask.
-def test_older_evidence_left_out_of_the_chain_is_detected():
-    mentions = [
-        {"node_type": "text", "source_title": "Hebrew scriptures", "year": -400},
-        {"node_type": "text", "source_title": "Septuagint", "year": -250},
-        {"node_type": "letter", "source_title": "Paul", "year": 50},
-    ]
-    dropped = orch._dropped_precursors(mentions, chain_start_year=30)
-    assert [m["source_title"] for m in dropped] == ["Septuagint", "Hebrew scriptures"] or \
-           [m["source_title"] for m in dropped] == ["Hebrew scriptures", "Septuagint"]
-    assert len(dropped) == 2
-
-
-def test_the_detector_reports_oldest_first():
-    mentions = [
-        {"node_type": "text", "source_title": "Later", "year": -100},
-        {"node_type": "text", "source_title": "Older", "year": -900},
-    ]
-    assert [m["source_title"] for m in orch._dropped_precursors(mentions, 30)] == ["Older", "Later"]
-
-
-def test_a_chain_that_starts_where_the_evidence_starts_reports_nothing():
-    mentions = [
-        {"node_type": "text", "source_title": "Hebrew scriptures", "year": -400},
-        {"node_type": "letter", "source_title": "Paul", "year": 50},
-    ]
-    assert orch._dropped_precursors(mentions, chain_start_year=-400) == []
-
-
-def test_only_evidence_can_be_reported_as_wrongly_dropped():
-    """A mention that could never have been a step was not dropped from the chain."""
-    mentions = [
-        {"node_type": "context", "source_title": "Messianic expectation", "year": -200},
-        {"node_type": "event", "source_title": "An inferred happening", "year": -300},
-    ]
-    assert orch._dropped_precursors(mentions, chain_start_year=30) == []
-
-
-def test_the_extractors_flag_also_counts_for_the_detector():
-    mentions = [{"is_evidence": True, "node_type": "unrecognised",
-                 "source_title": "An excavation report", "year": -500}]
-    assert len(orch._dropped_precursors(mentions, 30)) == 1
-
-
-def test_an_undated_chain_start_cannot_be_judged():
-    """No first-step year means no comparison — reporting everything would be noise."""
-    mentions = [{"node_type": "text", "source_title": "Anything", "year": -400}]
-    assert orch._dropped_precursors(mentions, chain_start_year=None) == []
-
-
-def test_the_report_is_capped():
-    mentions = [
-        {"node_type": "text", "source_title": f"T{i}", "year": -1000 + i} for i in range(40)
-    ]
-    assert len(orch._dropped_precursors(mentions, chain_start_year=30)) == 5
-
-
 # ------------------------------------------------- the prompt states the rule
 def test_the_prompt_says_where_a_chain_starts():
     from phansora.products.chrono_origin.pipeline import prompts as P

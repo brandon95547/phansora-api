@@ -463,41 +463,6 @@ def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return min(dated, key=lambda m: m["year"])
 
 
-def _dropped_precursors(
-    mentions: List[Dict[str, Any]],
-    chain_start_year: Optional[int],
-    *,
-    limit: int = 5,
-) -> List[Dict[str, Any]]:
-    """Evidence the research found that predates the chain, and did not become a step.
-
-    This is the failure the chain-start rule exists to prevent, and it is silent by
-    nature: the rounds go and find the older corpus a subject's sources descend from,
-    synthesis judges it "not about the subject" and leaves it out, and what comes back
-    is a chain that opens centuries late looking perfectly well-formed. Nothing errors,
-    nothing is missing from the JSON, and only someone who already knows the subject can
-    tell.
-
-    So it is detected rather than trusted. A surviving object dated before the first step
-    is either a step that was dropped or a step that needs a reason for being excluded —
-    both worth telling the reader about, neither worth hiding.
-
-    Only EVIDENCE counts here: a mention that was never eligible to be a step cannot
-    have been wrongly dropped from the chain.
-    """
-    if chain_start_year is None:
-        return []
-    older = [
-        m
-        for m in mentions
-        if isinstance(m.get("year"), int)
-        and m["year"] < chain_start_year
-        and (m.get("is_evidence") is True or is_evidence_kind(m.get("node_type")))
-    ]
-    older.sort(key=lambda m: m["year"])
-    return older[:limit]
-
-
 def _describe_earliest(earliest: Optional[Dict[str, Any]]) -> str:
     if not earliest:
         return "(nothing established yet)"
@@ -1403,26 +1368,6 @@ class TraceOrchestrator:
 
         conclusions = _build_conclusions(final.get("conclusions"), demoted, valid_ids=used_ids)
 
-        # Did the chain start where the evidence starts? Surfaced as an open question
-        # rather than repaired: reordering the chain here would mean this code deciding
-        # a document belongs in a trace, which is a judgement it has no evidence for.
-        # Naming what was found and left out gives the reader the same doubt we have.
-        chain_start = timeline[0].year if timeline and timeline[0].year is not None else origin.year
-        dropped = _dropped_precursors(mentions, chain_start)
-        if dropped:
-            named = "; ".join(
-                f"{m.get('source_title', '?')} ({m['year']})" for m in dropped
-            )
-            logger.warning(
-                "Chain starts at %s but older surviving evidence was found and not used: %s",
-                chain_start,
-                named,
-            )
-            open_questions = list(open_questions) + [
-                "Surviving evidence older than this chain's first step was found during "
-                f"research and does not appear in it: {named}. Either it is not part of "
-                "this subject's documentary descent, or the chain starts too late."
-            ]
 
         connections = self._build_connections(
             raw=final.get("connections"),
