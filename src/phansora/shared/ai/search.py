@@ -74,7 +74,7 @@ class SearchConfig:
     provider: str = "duckduckgo"
     brave_api_key: str = ""
     searxng_url: str = ""
-    max_results: int = 5
+    max_results: int = 10
     timeout_s: int = 20
     # Cap results from any one site. Search engines happily return five pages of
     # one domain for a niche historical query; five pages of one publisher is one
@@ -93,7 +93,7 @@ class SearchConfig:
             provider=provider,
             brave_api_key=brave,
             searxng_url=searxng,
-            max_results=int(os.getenv("CHRONO_SEARCH_RESULTS", "5")),
+            max_results=int(os.getenv("CHRONO_SEARCH_RESULTS", "10")),
             max_per_domain=int(os.getenv("CHRONO_SEARCH_MAX_PER_DOMAIN", "2")),
             attempts=int(os.getenv("CHRONO_SEARCH_ATTEMPTS", "3")),
         )

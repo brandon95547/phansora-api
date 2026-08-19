@@ -269,7 +269,10 @@ class DeepSeekResearchClient:
             logger.warning("DeepSeek synthesis failed: %s", exc)
             text = ""
 
-        citations = [{"url": r.url, "title": r.title or r.url} for r in results]
+        citations = [
+            {"url": r.url, "title": r.title or r.url, "snippet": (r.snippet or "")[:400]}
+            for r in results
+        ]
         return GroundedAnswer(text=text, citations=citations, queries=queries)
 
     def _derive_queries(self, prompt: str) -> List[str]:

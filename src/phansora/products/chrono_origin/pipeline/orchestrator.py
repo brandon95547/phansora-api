@@ -692,10 +692,25 @@ class TraceOrchestrator:
 
         # What the searches actually said, kept as prose with the query that found it.
         # This is the "compiled context" the single extraction reads.
+        def _block(query: str, answer: Any) -> str:
+            # The summary AND the raw result snippets. The snippets are already
+            # fetched and already paid for, and a summariser writing 300 words about
+            # six results necessarily drops most of what they said — which is exactly
+            # the detail the extraction downstream is looking for.
+            parts = [f"[{query}]"]
+            text = (answer.text or "").strip()
+            if text:
+                parts.append(text)
+            for c in (answer.citations or []):
+                if not isinstance(c, dict):
+                    continue
+                snippet = (c.get("snippet") or "").strip()
+                if snippet:
+                    parts.append(f"- {c.get('title') or c.get('url')}: {snippet}")
+            return "\n".join(parts)
+
         corpus = "\n\n".join(
-            f"[{q}]\n{(a.text or '').strip()}"
-            for q, a in zip(current_queries, answers)
-            if (a.text or "").strip()
+            _block(q, a) for q, a in zip(current_queries, answers)
         ) or "(no search results)"
 
         covered_strands = set(planned_strands)
