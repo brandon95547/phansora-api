@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import threading
 import time
 from dataclasses import dataclass
 from typing import List
@@ -24,6 +25,41 @@ from urllib.parse import urlsplit
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+# How many searches may be in flight at once, per backend.
+#
+# This exists because the callers multiply. The orchestrator runs one worker per query
+# (six by default) and each grounded_search now runs its two derived queries
+# concurrently — twelve simultaneous requests, where the arithmetic used to come to
+# five. Against Brave or a SearXNG instance you host, that is fine. Against the keyless
+# DuckDuckGo backend it is not: it throttles, and it signals throttling by returning an
+# EMPTY RESULT SET, which web_search below cannot distinguish from a genuinely empty
+# search and therefore retries with backoff. So the failure mode of too much concurrency
+# here is not an error — it is a slower trace built on fewer sources, which is the exact
+# outcome the retry loop was written to prevent.
+#
+# The gate belongs at this layer rather than in the callers. Two independent pools cannot
+# see each other's depth, and a limit either of them enforces is a limit the other can
+# multiply.
+_DEFAULT_CONCURRENCY = {"duckduckgo": 4, "brave": 8, "searxng": 8}
+
+_sem_lock = threading.Lock()
+_semaphores: dict = {}
+
+
+def _gate(provider: str) -> threading.Semaphore:
+    """One semaphore per backend, created on first use."""
+    with _sem_lock:
+        sem = _semaphores.get(provider)
+        if sem is None:
+            raw = (os.getenv("CHRONO_SEARCH_CONCURRENCY") or "").strip()
+            limit = _DEFAULT_CONCURRENCY.get(provider, 4)
+            if raw.isdigit() and int(raw) > 0:
+                limit = int(raw)
+            sem = threading.Semaphore(limit)
+            _semaphores[provider] = sem
+        return sem
 
 
 @dataclass
@@ -103,12 +139,13 @@ def web_search(query: str, *, cfg: SearchConfig | None = None) -> List[SearchRes
     attempts = max(1, cfg.attempts)
     for attempt in range(attempts):
         try:
-            if cfg.provider == "brave":
-                results = _brave(query, cfg)
-            elif cfg.provider == "searxng":
-                results = _searxng(query, cfg)
-            else:
-                results = _duckduckgo(query, cfg)
+            with _gate(cfg.provider):
+                if cfg.provider == "brave":
+                    results = _brave(query, cfg)
+                elif cfg.provider == "searxng":
+                    results = _searxng(query, cfg)
+                else:
+                    results = _duckduckgo(query, cfg)
             if results:
                 return _diversify(results, cfg)
             # An empty result set from a rate-limited backend is indistinguishable

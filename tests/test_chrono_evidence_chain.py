@@ -251,3 +251,67 @@ def test_mentions_keep_their_research_order_within_a_group():
     ]
     block = orch._format_mentions_block(mentions)
     assert block.index("First") < block.index("Second") < block.index("Third")
+
+
+# ------------------------------------------------ search concurrency gate
+# The keyless DuckDuckGo backend signals throttling by returning an EMPTY result set,
+# which web_search cannot tell from a genuinely empty search and therefore retries with
+# backoff. So too much concurrency does not surface as an error — it surfaces as a
+# slower trace built on fewer sources.
+def test_the_keyless_backend_is_gated_harder_than_the_paid_ones():
+    from phansora.shared.ai import search as S
+
+    assert S._DEFAULT_CONCURRENCY["duckduckgo"] < S._DEFAULT_CONCURRENCY["brave"]
+    assert S._DEFAULT_CONCURRENCY["duckduckgo"] < S._DEFAULT_CONCURRENCY["searxng"]
+
+
+def test_the_gate_is_shared_per_backend():
+    """Two callers must meet the same semaphore, or the limit is per-caller and useless."""
+    from phansora.shared.ai import search as S
+
+    S._semaphores.clear()
+    assert S._gate("duckduckgo") is S._gate("duckduckgo")
+    assert S._gate("duckduckgo") is not S._gate("brave")
+
+
+def test_the_gate_actually_bounds_parallelism():
+    """The limit has to hold across threads — that is the entire point of it."""
+    import threading
+    import time as _t
+    from phansora.shared.ai import search as S
+
+    S._semaphores.clear()
+    limit = S._DEFAULT_CONCURRENCY["duckduckgo"]
+    live = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def worker():
+        nonlocal live, peak
+        with S._gate("duckduckgo"):
+            with lock:
+                live += 1
+                peak = max(peak, live)
+            _t.sleep(0.02)
+            with lock:
+                live -= 1
+
+    threads = [threading.Thread(target=worker) for _ in range(limit * 3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert peak <= limit, f"{peak} searches ran at once against a limit of {limit}"
+
+
+def test_the_limit_is_overridable_for_a_backend_that_can_take_it(monkeypatch):
+    from phansora.shared.ai import search as S
+
+    S._semaphores.clear()
+    monkeypatch.setenv("CHRONO_SEARCH_CONCURRENCY", "1")
+    gate = S._gate("duckduckgo")
+    assert gate.acquire(blocking=False) is True
+    assert gate.acquire(blocking=False) is False, "override was not applied"
+    gate.release()
+    S._semaphores.clear()
