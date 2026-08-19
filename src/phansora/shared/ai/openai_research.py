@@ -62,6 +62,39 @@ def _env(name: str, default: str = "") -> str:
     return raw.split("#", 1)[0].strip() or default
 
 
+# The smallest reasoning budget that still leaves room for an answer.
+#
+# This is a real failure that shipped: OPENAI_REASON_MAX_TOKENS was set to 8000 in an
+# environment file, reasoning consumed the whole allowance on a non-trivial prompt, and
+# the synthesis came back as empty JSON — a trace with no origin and no timeline that
+# the user had already paid for. The docstring below has warned about that exact value
+# for as long as the setting has existed, which was not enough: a comment cannot stop a
+# deploy. So the floor is enforced here, and a too-small value is raised with a loud
+# line in the log rather than silently honoured.
+#
+# It is a CAP, not a fixed cost — raising it bills nothing extra unless the tokens are
+# actually generated, so there is no reason to run near the cliff.
+MIN_REASON_OUTPUT_TOKENS = 16000
+
+
+def _reason_budget() -> int:
+    raw = _env("OPENAI_REASON_MAX_TOKENS", "24000")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("OPENAI_REASON_MAX_TOKENS=%r is not a number; using 24000", raw)
+        return 24000
+    if value < MIN_REASON_OUTPUT_TOKENS:
+        logger.warning(
+            "OPENAI_REASON_MAX_TOKENS=%d is below the %d floor: reasoning can consume the "
+            "whole budget and return empty JSON. Raising it to the floor for this run.",
+            value,
+            MIN_REASON_OUTPUT_TOKENS,
+        )
+        return MIN_REASON_OUTPUT_TOKENS
+    return value
+
+
 @dataclass
 class OpenAIResearchConfig:
     api_key: str = ""
@@ -97,7 +130,7 @@ class OpenAIResearchConfig:
             reason_effort=_env("OPENAI_REASON_EFFORT", "medium"),
             light_effort=_env("OPENAI_LIGHT_EFFORT", "low"),
             search_effort=_env("OPENAI_SEARCH_EFFORT", "low"),
-            reason_max_output_tokens=int(_env("OPENAI_REASON_MAX_TOKENS", "24000")),
+            reason_max_output_tokens=_reason_budget(),
             search_max_output_tokens=int(_env("OPENAI_SEARCH_MAX_TOKENS", "4000")),
             web_search_tool=_env("OPENAI_WEB_SEARCH_TOOL", "web_search"),
             timeout_s=int(_env("CHRONO_REQUEST_TIMEOUT_S", "120")),

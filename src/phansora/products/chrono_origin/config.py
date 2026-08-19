@@ -16,13 +16,14 @@ class Settings(BaseSettings):
 
     # Pipeline limits. max_depth is a ceiling, not a target: the loop stops as soon
     # as a round stops finding new evidence, so most traces never reach it.
-    # Raised from 4/5 when the loop's objective changed from "find something
-    # older" to "cover the strands this subject has". A trace that has to reach
-    # manuscripts, outside attestation, language and later institutional
-    # development needs more rounds than one that stops at the earliest text —
-    # and the loop still exits as soon as a subject is exhausted, so a shallow
-    # subject does not pay for the ceiling.
-    chrono_max_depth: int = 6
+    #
+    # It went 4 -> 6 when the objective was "cover every strand this subject has",
+    # which meant researching language history, institutional development and the
+    # calendar alongside the texts. Under the chain rule the question is narrower —
+    # what survives, in order — and a narrower question converges in fewer rounds.
+    # Each round costs seven LLM calls, so a ceiling nobody reaches is still a
+    # ceiling that occasionally gets reached at seven calls a time.
+    chrono_max_depth: int = 3
     chrono_min_depth: int = 2
     chrono_max_sources_per_stage: int = 8
     chrono_max_queries_per_stage: int = 6

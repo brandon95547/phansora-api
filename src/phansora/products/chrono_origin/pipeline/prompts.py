@@ -138,11 +138,13 @@ Produce a JSON object with:
 - "entities": 3-8 key proper nouns / concepts to anchor searches.
 - "strands": the applicable strand names from the list above, each as
   {{"strand": <name>, "why": <one line on what this subject specifically needs here>}}.
-  Prefer 4-7 strands. A subject with only two strands is usually a subject researched lazily.
-  Two are near-universal and are usually omitted by mistake rather than by judgement:
-  precursor_evidence (almost nothing appears with no surviving ancestry) and manuscripts (a text
-  known only through copies has a copy history, and it is rarely the same age as the text).
-  Include them unless this subject genuinely has no such evidence.
+  Prefer 3-5 strands, and pick the ones where this subject's evidence ACTUALLY IS. Every
+  strand you name reserves a search in every later round, so a strand chosen out of
+  completeness rather than judgement costs the whole trace and returns nothing.
+  precursor_evidence and manuscripts are near-universal — almost nothing appears with no
+  surviving ancestry, and a text known only through copies has a copy history rarely the
+  same age as the text. The other five are subject-specific: name documents_records,
+  inscriptions_artifacts or archaeology only when this subject plainly has them.
 - "queries": {max_queries} diverse web search queries covering the strands you chose, weighted
   toward the ones most likely to yield tier 1-2 sources. Include at least one hunting for
   INDEPENDENT corroboration from a different information chain, and at least one hunting for

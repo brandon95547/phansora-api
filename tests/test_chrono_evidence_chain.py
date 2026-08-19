@@ -184,3 +184,70 @@ def test_every_strand_has_a_query():
     for strand in orch._STRANDS:
         assert strand in orch._STRAND_QUERIES
         assert "{title}" in orch._STRAND_QUERIES[strand]
+
+
+# ------------------------------------------------- prompt size is bounded
+# The synthesis call is the only reasoning-model call in the pipeline and carries
+# 16-22k input tokens. Both blocks feeding it used to be unbounded, so a long trace
+# paid for its own thoroughness twice: once to gather, once to re-read.
+def test_the_citation_list_handed_to_synthesis_is_capped():
+    cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
+    block = orch._format_citations_block(cites)
+    listed = [ln for ln in block.split("\n") if ln.startswith("[")]
+    assert len(listed) == orch.MAX_CITATIONS_IN_PROMPT
+
+
+def test_a_trimmed_citation_list_says_it_was_trimmed():
+    """Synthesis is told to cite from this list; it should know the list is partial."""
+    cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
+    assert "further sources gathered" in orch._format_citations_block(cites)
+
+
+def test_a_short_citation_list_is_untouched():
+    cites = [{"title": "One", "url": "https://e.org/1"}]
+    block = orch._format_citations_block(cites)
+    assert "further sources" not in block
+    assert "https://e.org/1" in block
+
+
+def test_mentions_are_capped_too():
+    mentions = [{"node_type": "text", "source_title": f"T{i}", "claim": "c"} for i in range(400)]
+    lines = [ln for ln in orch._format_mentions_block(mentions).split("\n") if ln.startswith("- ")]
+    assert len(lines) == orch.MAX_MENTIONS_IN_PROMPT
+
+
+def test_evidence_survives_the_cut_before_interpretation_does():
+    """The cut must not drop a manuscript to make room for an inferred development.
+
+    Only surviving objects can become chain steps, so when the block is trimmed the
+    mentions still eligible to be steps are the ones that have to survive.
+    """
+    filler = [
+        {"node_type": "context", "source_title": f"Interpretation {i}", "claim": "c"}
+        for i in range(orch.MAX_MENTIONS_IN_PROMPT + 50)
+    ]
+    real = {"node_type": "manuscript", "source_title": "Codex Sinaiticus", "claim": "c"}
+    # Arrives last, and would fall off the end of an arrival-ordered trim.
+    block = orch._format_mentions_block(filler + [real])
+    assert "Codex Sinaiticus" in block
+
+
+def test_the_extractors_is_evidence_flag_also_counts_as_evidence():
+    filler = [
+        {"node_type": "context", "source_title": f"X{i}", "claim": "c"}
+        for i in range(orch.MAX_MENTIONS_IN_PROMPT + 10)
+    ]
+    flagged = {"node_type": "unrecognised", "is_evidence": True,
+               "source_title": "An excavation report", "claim": "c"}
+    assert "An excavation report" in orch._format_mentions_block(filler + [flagged])
+
+
+def test_mentions_keep_their_research_order_within_a_group():
+    """Stable sort: prioritising evidence must not shuffle the rounds' own ordering."""
+    mentions = [
+        {"node_type": "text", "source_title": "First", "claim": "c"},
+        {"node_type": "text", "source_title": "Second", "claim": "c"},
+        {"node_type": "text", "source_title": "Third", "claim": "c"},
+    ]
+    block = orch._format_mentions_block(mentions)
+    assert block.index("First") < block.index("Second") < block.index("Third")

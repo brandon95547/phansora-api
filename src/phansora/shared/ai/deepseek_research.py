@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -215,10 +216,26 @@ class DeepSeekResearchClient:
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:
         queries = self._derive_queries(prompt)
 
+        # Concurrently, not one after the other. Each web_search is up to three
+        # attempts against a 20s timeout with backoff sleeps between them, so two
+        # queries in sequence is a worst case north of two minutes — inside a single
+        # worker that the orchestrator is already running five of in parallel. That
+        # made this the largest latency amplifier on the DeepSeek path.
+        #
+        # Results are merged in QUERY ORDER rather than completion order: the first
+        # query is the one derived from the prompt's own "Search query:" line, and
+        # letting a slower second query jump ahead of it would quietly reorder what
+        # the summariser sees as the most relevant sources.
+        if len(queries) == 1:
+            per_query = [web_search(queries[0], cfg=self._search_cfg)]
+        else:
+            with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+                per_query = list(pool.map(lambda q: web_search(q, cfg=self._search_cfg), queries))
+
         results: List[SearchResult] = []
         seen: set[str] = set()
-        for q in queries:
-            for r in web_search(q, cfg=self._search_cfg):
+        for batch in per_query:
+            for r in batch:
                 if r.url and r.url not in seen:
                     seen.add(r.url)
                     results.append(r)

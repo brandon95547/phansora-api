@@ -471,12 +471,33 @@ def _describe_earliest(earliest: Optional[Dict[str, Any]]) -> str:
     return f"{when} — {earliest.get('source_title', '?')}: {earliest.get('claim', '')}"[:300]
 
 
+# A ceiling on the URL list handed to synthesis.
+#
+# Every round keeps up to chrono_max_sources_per_stage citations from each of its
+# searches, so three rounds of six queries can arrive here with ~144 URLs and six
+# rounds with ~288 — tens of thousands of characters of prompt on the one reasoning
+# call in the pipeline. The model can only cite a handful, and a list that long makes
+# the ones worth citing harder to find, not easier.
+MAX_CITATIONS_IN_PROMPT = 60
+
+# A ceiling on the item list handed to synthesis. This block was unbounded: nothing in
+# the extract prompt limits how many mentions a round may return, and every round's
+# survive into the single reasoning call that carries 16-22k input tokens before any of
+# them are counted. 120 is well above what any real chain uses as steps.
+MAX_MENTIONS_IN_PROMPT = 120
+
+
 def _format_citations_block(citations: List[Dict[str, str]]) -> str:
     if not citations:
         return "(none)"
     lines = []
-    for i, c in enumerate(citations, 1):
+    for i, c in enumerate(citations[:MAX_CITATIONS_IN_PROMPT], 1):
         lines.append(f"[{i}] {c.get('title') or c.get('url')} -> {c.get('url')}")
+    dropped = len(citations) - MAX_CITATIONS_IN_PROMPT
+    if dropped > 0:
+        # Said out loud rather than trimmed silently: synthesis is instructed to cite
+        # from this list, and it should know the list is not the whole harvest.
+        lines.append(f"(+{dropped} further sources gathered, not listed here)")
     return "\n".join(lines)
 
 
@@ -499,8 +520,25 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
     """
     if not mentions:
         return "(none)"
+
+    # Evidence first, then everything else, then cut.
+    #
+    # Under the chain rule only surviving objects can become steps; anything else is
+    # demoted to a conclusion at build time. So when this block has to be trimmed, the
+    # mentions that can still become chain steps must be the ones that survive the cut —
+    # trimming in arrival order would drop a manuscript to make room for an inferred
+    # development that was never eligible to be a step.
+    #
+    # Sorting is stable, so within each group the research order is preserved.
+    ordered = sorted(
+        mentions,
+        key=lambda m: not (m.get("is_evidence") is True or is_evidence_kind(m.get("node_type"))),
+    )
+    shown = ordered[:MAX_MENTIONS_IN_PROMPT]
+    dropped = len(ordered) - len(shown)
+
     lines = []
-    for m in mentions:
+    for m in shown:
         year = m.get("year")
         era = m.get("era_label")
         when = f"{year}" if isinstance(year, int) else (era or "unknown")
@@ -526,6 +564,8 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
         if m.get("chain"):
             line += f" | REPEATS={m['chain']}"
         lines.append(line)
+    if dropped > 0:
+        lines.append(f"(+{dropped} further items gathered, the least evidence-like, not listed)")
     return "\n".join(lines)
 
 
@@ -929,7 +969,13 @@ class TraceOrchestrator:
             usage.stage("search")
             return [self._search_one(req, queries[0])]
 
-        with ThreadPoolExecutor(max_workers=min(5, len(queries))) as pool:
+        # One worker per query, not five. The query budget is
+        # chrono_max_queries_per_stage (6 by default), so a hard cap of 5 left every
+        # round running five searches concurrently and then one straggler alone —
+        # a whole extra search latency per round, bought for nothing. These are
+        # network-bound and each is already a separate LLM call, so the pool costs
+        # threads, not tokens.
+        with ThreadPoolExecutor(max_workers=len(queries)) as pool:
             results = list(pool.map(one, queries))
         for _, snap in results:
             usage.absorb(snap)

@@ -222,9 +222,10 @@ def read_pages(
 ) -> List[PageRead]:
     """Read several pages concurrently, preserving the order they were requested in.
 
-    Concurrency here is free in token terms and saves most of the wall clock:
-    four 15-second worst cases in sequence is a minute of a user's trace spent
-    waiting on other people's servers.
+    Concurrency here is free in token terms and saves most of the wall clock: a
+    15-second worst case repeated in sequence is a minute of a user's trace spent
+    waiting on other people's servers. Callers that fetch a batch should pass
+    `max_workers=len(urls)` — the default is a floor, not a recommendation.
     """
     targets = [u for u in dict.fromkeys(urls or []) if u]
     if not targets:
@@ -257,7 +258,11 @@ def read_best(
     """
     if want <= 0 or not candidates:
         return []
-    reads = read_pages(candidates, max_chars=max_chars)
+    # One worker per candidate. The caller over-fetches (2x `want`), so this is
+    # typically twelve URLs against a pool that defaulted to four — three waves of a
+    # 15-second timeout, up to 45s of a user's trace spent waiting on other people's
+    # servers in sequence. Fetching costs no tokens, so width here is free.
+    reads = read_pages(candidates, max_chars=max_chars, max_workers=len(candidates))
     good = [r for r in reads if r.ok][:want]
     bad = [r for r in reads if not r.ok][:max_failures_reported]
     return good + bad
