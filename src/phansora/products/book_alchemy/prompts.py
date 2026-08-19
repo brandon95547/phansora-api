@@ -79,6 +79,25 @@ falls out of this is not summarizing — every indexed idea still gets taught in
 full — it is the removal of repetition and enumeration that only exists because
 the source is a written document being read end to end.
 
+WHAT A COURSE MUST NEVER TEACH. A source is a document, and a document talks
+about itself before it talks about its subject: the filename it ships under, the
+address it can be downloaded from, what may be done with copies of it, who wrote
+it and how to reach them. A course narrated all of that — two email addresses,
+a GeoCities link, the redistribution terms — and then framed itself around the
+author's degrees and employer. That is not a fidelity failure; every word of it
+was in the source. It is a failure to distinguish the WORK from its PACKAGING,
+and ``PACKAGING`` below is the single definition all three prompts share.
+
+It was invisible to both filters that existed. The parser's filter only catches
+lines SHAPED like references, and an "about the author" note is ordinary prose.
+The analyze phase's ``teachable`` verdict can read a sentence, but it is
+per-chunk and binary: at 4000 chars the front matter shared its chunk with the
+opening of chapter one, so no verdict on that chunk could be right. Worse, the
+prompt named prefaces as content and told the model to set true when unsure.
+Front matter is a positional question — one contiguous run from the start — so
+it is now answered once, at parse time, by ``FRONT_MATTER_SYSTEM``, which sees
+the opening excerpts together and says where the material begins.
+
 NOTE: prompt wording alone cannot enforce this. The validator is a language model
 asked to compare two texts, and a lifted passage reads to it as perfectly
 grounded — which is how 46% passed. A deterministic n-gram check belongs in the
@@ -98,6 +117,38 @@ import json
 # lesson was then never obliged to teach — invisible content loss. Paired with
 # the `truncated` flag so the remaining ceiling is at least observable.
 MAX_INDEX_ITEMS_PER_ARRAY = 14
+
+# ---------------------------------------------------------------- packaging
+# The document as an OBJECT, as opposed to the subject it exists to teach. A
+# course narrated a source's own front matter — the filename it shipped under,
+# the address it could be downloaded from, its redistribution terms, the
+# author's two email addresses and his CV — and then framed the whole course
+# around the man's credentials. None of that is material. A listener is not
+# supposed to learn that the material came from a document at all.
+#
+# ONE string, spliced into the indexer, the writer and the checker alike,
+# because those three must agree. A writer told to skip something the checker
+# still expects back is the exact failure ``already_taught_block`` documents:
+# the lesson is marked down for an omission nobody asked for, and the
+# regeneration loop puts the packaging straight back in.
+PACKAGING = (
+    "PACKAGING is anything about the document as an object rather than about its "
+    "subject:\n"
+    "- its filename, file format, edition, version, or revision history\n"
+    "- where to download, buy, or order it; URLs, web addresses, forum locations\n"
+    "- distribution, copying, licensing or redistribution permissions; copyright notices\n"
+    "- contact details for anyone — email addresses, postal addresses, phone numbers\n"
+    "- the biography, credentials, degrees, employer, publications, or interests of "
+    "whoever wrote, edited, or published it\n"
+    "- where, when, why or for whom it was originally written or published — the class, "
+    "forum, mailing list, or earlier edition it came from\n"
+    "- dedications, acknowledgements, and thanks\n"
+    "\n"
+    "This is about the work being converted, NOT about its subject matter. A biography "
+    "teaches a life; a memoir teaches its writer's own life; a book about publishing "
+    "teaches licensing. Where such things are the subject, they are material and are "
+    "taught in full."
+)
 
 GROUNDING = (
     "You are part of Book Alchemy, which turns a written work into a spoken audio "
@@ -142,6 +193,46 @@ def title_user(raw_title: str, sample: str) -> str:
     )
 
 
+# ----------------------------------------------------------------- front matter
+# Asked ONCE, at parse time, before any excerpt is indexed. The question is
+# positional — front matter is a single contiguous run from the start — and a
+# model shown one 4000-char excerpt in isolation cannot see where that run ends,
+# which is why the per-chunk `teachable` verdict below could never answer it.
+FRONT_MATTER_SYSTEM = (
+    "You are part of Book Alchemy, which turns a written work into a spoken audio "
+    "course. Before anything is read, one question has to be answered: where does the "
+    "actual material begin?\n"
+    "\n"
+    "A document usually opens with FRONT MATTER — a title page, a copyright or "
+    "distribution notice, contact details, a table of contents, a dedication, "
+    "acknowledgements, an 'about the author' or 'about this document' note, a foreword "
+    "or preface about how the work came to be. None of that is the subject. A course "
+    "that narrates it opens by reading a filename and an email address aloud.\n"
+    "\n"
+    "Front matter is CONTIGUOUS and sits at the very start. Find the first point where "
+    "the document stops describing itself and starts teaching its subject.\n"
+    "\n"
+    'Return JSON: {"first_material_ordinal": int, "first_material_sentence": str|null}.\n'
+    "- `first_material_ordinal`: the number of the first excerpt containing real "
+    "material. Return 0 when the document opens straight onto material and has no front "
+    "matter — that is the common case, and the right answer whenever you are unsure.\n"
+    "- `first_material_sentence`: if that excerpt BEGINS with the tail of the front "
+    "matter and the material starts partway through it, copy the first sentence of the "
+    "material EXACTLY as it appears, character for character, so it can be located. "
+    "Otherwise null.\n"
+    "\n"
+    "Be conservative. Material cut by mistake is gone from the course; front matter kept "
+    "by mistake is one dull paragraph. Where a section could be either, it is material."
+)
+
+
+def front_matter_user(chunks: list[dict]) -> str:
+    excerpts = "\n\n".join(
+        f"[excerpt {i}]\n{c['text']}" for i, c in enumerate(chunks)
+    )
+    return f"The opening excerpts of the document, in order:\n\n{excerpts}"
+
+
 # ----------------------------------------------------------------- analyze
 ANALYZE_SYSTEM = (
     GROUNDING
@@ -164,11 +255,11 @@ ANALYZE_SYSTEM = (
     "exact only proper nouns, numbers, dates, direct quotations that must remain exact, "
     "and established terms of art. Do not impose an artificial word limit on a body; "
     "use as much space as needed to preserve the information, while remaining concise.\n"
-    "- `teachable`: false if this excerpt is apparatus rather than material — for "
-    "example a table of contents, index, page-number run, copyright/permissions page, "
-    "cross-reference table, or publisher note about the edition. Set true for actual "
-    "content, including substantive prefaces and introductions. When genuinely unsure, "
-    "set true.\n"
+    "- `teachable`: false if this excerpt is apparatus or packaging rather than "
+    "material — for example a table of contents, index, page-number run, "
+    "copyright/permissions page, cross-reference table, publisher note, an 'about the "
+    "author' page, or a distribution or contact notice. Set true for actual content. "
+    "When genuinely unsure, set true.\n"
     "- `truncated`: true ONLY if any teachable information had to be left out because "
     "of output or item limits. Never silently omit information to keep notes short.\n"
     "\n"
@@ -179,7 +270,15 @@ ANALYZE_SYSTEM = (
     "\n"
     f"At most {MAX_INDEX_ITEMS_PER_ARRAY} items per array. This is an item-count limit, "
     "not an information limit: when related material belongs together, preserve its "
-    "full meaning in the body rather than dropping details."
+    "full meaning in the body rather than dropping details.\n"
+    "\n"
+    + PACKAGING
+    + "\n"
+    "\n"
+    "NEVER index packaging — not in any array, not even when it sits inside an excerpt "
+    "that is otherwise teachable, and not even when it is written as flowing prose "
+    "rather than as a notice. Leaving it out is not a loss of information and must not "
+    "set `truncated`."
 )
 
 
@@ -276,6 +375,13 @@ SCRIPT_SYSTEM = (
     "- Do not close with a recap, summary, or takeaways.\n"
     "- Write as a single instructor speaking naturally to a class.\n"
     "- No markdown, headings, bullets, speaker labels, or stage directions.\n"
+    "\n"
+    + PACKAGING
+    + "\n"
+    "\n"
+    "If a note carries packaging, SKIP IT. It is not part of the coverage contract and "
+    "leaving it out is not an omission. Teach the subject and nothing else — never who "
+    "made this, how to reach them, where to obtain it, or what may be done with it.\n"
     "\n"
     "Return plain text only."
 )
@@ -388,8 +494,11 @@ VALIDATION_SYSTEM = (
     "unsupported explanations, implications, motives, interpretations, or examples.\n"
     "\n"
     "Also flag attribution if the lesson talks about the author, book, text, chapter, "
-    "or source instead of teaching the subject directly. Flag filler if it adds empty "
-    "introductions, recaps, or unnecessary repetition.\n"
+    "or source instead of teaching the subject directly, or if it narrates any PACKAGING "
+    "(defined below) — a filename, format, URL, download or ordering detail, "
+    "distribution or copyright term, contact address, or the biography and credentials "
+    "of whoever made the document. Flag filler if it adds empty introductions, recaps, "
+    "or unnecessary repetition.\n"
     "\n"
     "Use these flag types:\n"
     '- "added": unsupported factual material or example.\n'
@@ -397,10 +506,18 @@ VALIDATION_SYSTEM = (
     '- "omitted": a concept on the supplied list is not actually taught.\n'
     '- "copied": 8+ consecutive matching words or close structural paraphrase.\n'
     '- "filler": unnecessary intro, recap, padding, or repeated teaching.\n'
-    '- "attributed": mentions the source or writer instead of teaching directly.\n'
+    '- "attributed": mentions the source or writer, or narrates packaging, instead of '
+    "teaching the subject directly.\n"
     "\n"
     "If material was already taught in earlier lessons, do not mark it omitted when "
     "the current lesson correctly skips it.\n"
+    "\n"
+    + PACKAGING
+    + "\n"
+    "\n"
+    "A concept on the supplied list that is packaging was never the lesson's to teach. "
+    "NEVER mark it omitted when the lesson leaves it out — there the lesson is right and "
+    "the list is wrong.\n"
     "\n"
     'Return JSON: {"supported": bool, "flagged": [{"type": '
     '"added"|"inferred"|"omitted"|"copied"|"filler"|"attributed", "claim": str, '

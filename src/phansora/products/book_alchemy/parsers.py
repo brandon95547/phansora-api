@@ -74,9 +74,20 @@ _INDEX_ENTRY = re.compile(
 _COPYRIGHT = re.compile(
     r"all rights reserved|isbn\b|library of congress|printed in the "
     r"united states|no part of this (?:book|publication)|"
-    r"cataloging-in-publication",
+    r"cataloging-in-publication|"
+    # Redistribution terms: the shape front matter takes when a self-published
+    # document has no publisher to print a copyright page for it. One course
+    # narrated a whole notice of this kind as if it were the subject.
+    r"may be freely (?:uploaded|distributed|copied|reproduced|shared)|"
+    r"do not (?:alter|modify) (?:it|this)|complete and unmodified",
     re.I,
 )
+# A line built around an ADDRESS rather than around a verb — the contact block
+# and the download link of a front-matter page. Kept short-line-only so a
+# sentence that happens to mention an address stays prose; the packaging rule in
+# prompts.PACKAGING is what catches those.
+_EMAIL_ADDR = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]*[a-z]{2,}", re.I)
+_WEB_ADDR = re.compile(r"https?://\S+|\bwww\.[\w-]+\.\w{2,}", re.I)
 _SENTENCE_END = re.compile(r"[.!?][\"')\]]?$")
 
 _REFERENCE_LINE_MAX_CHARS = 90    # longer than this and it is a sentence
@@ -98,6 +109,8 @@ def _is_reference_line(line: str) -> bool:
         return True
     if len(s) > _REFERENCE_LINE_MAX_CHARS:
         return False
+    if _EMAIL_ADDR.search(s) or _WEB_ADDR.search(s):
+        return len(s.split()) <= _REFERENCE_LINE_MAX_WORDS
     if _DOT_LEADER.search(s) and re.search(r"\d\s*$", s):
         return True
     if _INDEX_ENTRY.search(s):

@@ -41,7 +41,7 @@ from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
 from .parsers import ScannedPdfError, UnsupportedSourceError, parse_source
 from .storage import session_audio_path
-from .validation import validate_script
+from .validation import scrub_apparatus, validate_script
 
 log = logging.getLogger("book_alchemy.pipeline")
 
@@ -221,6 +221,10 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     if not chunks:
         raise TerminalError("No readable text could be extracted from the source.")
 
+    # Where the material actually begins. Settled here, before anything is
+    # stored, so no later phase ever sees the front matter as teachable.
+    chunks = await _mark_front_matter(client, chunks)
+
     await db.set_project(pid, stage="Chunking content", progress=CLEAN_PROGRESS_CEILING)
     await db.insert_chunks(pid, chunks)
 
@@ -234,6 +238,125 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
         pid, name=clean, phase="analyze", analyze_cursor=0,
         stage="Analyzing with DeepSeek", progress=10,
     )
+
+
+# ---------------------------------------------------------- front matter
+# A document describes itself before it describes its subject: the filename it
+# ships under, where to download it, what may be done with copies, who wrote it
+# and how to reach them. A course narrated all of that and then framed itself
+# around the author's degrees, because neither existing filter could see it —
+# parsers.py only catches lines SHAPED like references, and an "about the
+# author" note is ordinary prose, while the analyze phase's `teachable` verdict
+# is per-chunk and the front matter shared a 4000-char chunk with the opening of
+# the real material.
+#
+# So it is answered ONCE, here, with the opening excerpts side by side. Front
+# matter is a positional fact — one contiguous run from position zero — and that
+# is exactly the shape a per-excerpt verdict cannot express.
+FRONT_MATTER_MAX_CHUNKS = 12      # front matter never runs deeper than this
+# Mirrors chunking.APPARATUS_MAX_SHARE and TEACHABLE_MIN_SHARE: a classifier that
+# claims implausibly much of a source has its verdict refused wholesale rather
+# than silently eating the book. Set higher than their 25% because this claim is
+# far more constrained — one run from the start, not a scattered regex verdict.
+FRONT_MATTER_MAX_SHARE = 0.30
+
+
+async def _mark_front_matter(client: DeepSeekClient, chunks: list[dict]) -> list[dict]:
+    """Mark the leading front-matter run not teachable, splitting the boundary chunk.
+
+    Nothing is deleted — same contract as the parser's apparatus mark: the reader
+    paid to convert this file, so every word of it stays in the database and only
+    the verdict changes.
+    """
+    if len(chunks) < 2:
+        # A single chunk IS the whole source; there is nothing to cut it against,
+        # and a verdict here could leave the course with no material at all.
+        return chunks
+
+    head = chunks[:FRONT_MATTER_MAX_CHUNKS]
+    try:
+        verdict = await client.chat_json(
+            system=prompts.FRONT_MATTER_SYSTEM,
+            user=prompts.front_matter_user(head),
+            max_output_tokens=500,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Never fail a job over this: the course is merely duller without it.
+        log.warning("Front-matter boundary check failed, keeping everything: %s", exc)
+        return chunks
+
+    if not isinstance(verdict, dict):
+        return chunks
+    try:
+        boundary = int(verdict.get("first_material_ordinal") or 0)
+    except (TypeError, ValueError):
+        return chunks
+    boundary = max(0, min(boundary, len(head) - 1))
+
+    sentence = verdict.get("first_material_sentence")
+    sentence = str(sentence).strip() if sentence else ""
+
+    # The straddling chunk is the case that broke this: front matter and the
+    # opening of chapter one in one chunk, where no whole-chunk verdict is right.
+    # Split rather than trim, so the invariant build_chunks maintains holds — a
+    # chunk is entirely teachable or entirely not, never a blend.
+    split_at = -1
+    if sentence:
+        found = chunks[boundary]["text"].find(sentence)
+        if found > 0:
+            split_at = found
+
+    if boundary == 0 and split_at < 0:
+        return chunks   # opens straight onto material
+
+    dropped = sum(_word_count(c["text"]) for c in chunks[:boundary])
+    if split_at > 0:
+        dropped += _word_count(chunks[boundary]["text"][:split_at])
+    if not dropped:
+        return chunks
+
+    total = sum(_word_count(c["text"]) for c in chunks) or 1
+    share = dropped / total
+    if share > FRONT_MATTER_MAX_SHARE:
+        log.warning(
+            "Front-matter boundary would drop %.1f%% of this source (%s of %s words) — "
+            "above the %.0f%% ceiling, so keeping everything. Narrating a preface beats "
+            "silently eating the opening of the work.",
+            share * 100, dropped, total, FRONT_MATTER_MAX_SHARE * 100,
+        )
+        return chunks
+
+    out: list[dict] = []
+    for i, chunk in enumerate(chunks):
+        if i < boundary:
+            out.append({**chunk, "teachable": False})
+        elif i == boundary and split_at > 0:
+            front = chunk["text"][:split_at].strip()
+            rest = chunk["text"][split_at:].strip()
+            if front and rest:
+                out.append({
+                    **chunk, "text": front, "teachable": False,
+                    "char_end": chunk["char_start"] + len(front),
+                })
+                out.append({
+                    **chunk, "text": rest, "teachable": True,
+                    "char_start": chunk["char_start"] + split_at,
+                })
+            else:
+                out.append(dict(chunk))
+        else:
+            out.append(dict(chunk))
+
+    # The split added a chunk, and every later phase indexes by ordinal.
+    for i, chunk in enumerate(out):
+        chunk["ordinal"] = i
+
+    log.info(
+        "Front matter: material begins at excerpt %s%s — %s of %s words (%.1f%%) marked "
+        "not teachable",
+        boundary, " (mid-excerpt)" if split_at > 0 else "", dropped, total, share * 100,
+    )
+    return out
 
 
 # How the scanned-PDF detour spends the progress bar. Parse owns 4-10%: the OCR
@@ -947,6 +1070,16 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
             # unchanged prompt, the old loop regenerated the identical script.)
             temperature=0.0 if attempt == 0 else 0.3,
         )
+        # The deterministic floor, applied BEFORE the check so the validator
+        # judges the text that will actually ship and the word count below stays
+        # honest. Everything above this point is a model asked to behave.
+        script, scrubbed = scrub_apparatus(script)
+        if scrubbed:
+            log.warning(
+                "Project %s session %s: scrubbed %s sentence(s) naming a contact "
+                "address, web address or filename — a packaging guard leaked: %s",
+                pid, sess["ordinal"], len(scrubbed), scrubbed[:3],
+            )
         validation = await validate_script(
             client, script=script, chunks=chunk_dicts,
             concepts=concepts, previously_taught=prior,
