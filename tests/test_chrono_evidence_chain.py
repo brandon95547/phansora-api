@@ -399,3 +399,42 @@ def test_the_planner_no_longer_calls_precursor_evidence_background_only():
     from phansora.products.chrono_origin.pipeline import prompts as P
 
     assert "BACKGROUND ONLY" not in P.DECOMPOSE_PROMPT
+
+
+# --------------------------------------------- provenance is not admissibility
+# A real trace opened at the Testimonium Flavianum (c. 93 CE), skipping Paul
+# (~50-60) and Mark (~70) — both surviving texts, both earlier. One instinct
+# explains all of it: the model silently answered "earliest attestation from
+# OUTSIDE the movement". That is a legitimate question and not the one asked, and
+# nothing in the prompt had ruled it out.
+def test_the_prompt_says_an_insider_source_is_still_a_step():
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    s = P.SYNTHESIZE_PROMPT
+    assert "WHO WROTE IT DOES NOT DECIDE WHETHER IT IS A STEP" in s
+    # Independence is recorded, never used to exclude.
+    assert "never used to keep a document out of the" in s
+    # The failure named explicitly, so it cannot be re-derived as a good idea.
+    assert "outside the movement" in s.lower()
+
+
+def test_the_prompt_refuses_to_let_a_disputed_passage_outrank_an_earlier_sound_one():
+    """The trace picked the interpolated Josephus passage over earlier, sounder texts."""
+    import re
+
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    # Whitespace-normalised: the prompt is hard-wrapped, so any sentence long enough
+    # to be worth pinning is guaranteed to straddle a line break.
+    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+    assert "never a reason to promote a compromised source above an earlier sound one" in flat
+
+
+def test_independence_stays_a_dossier_field_not_a_gate():
+    """It must remain something a step CARRIES, not something a step must PASS."""
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    assert '"independent_corroboration"' in P.SYNTHESIZE_PROMPT
+    assert "independent_corroboration" not in "".join(
+        ln for ln in P.SYNTHESIZE_PROMPT.split("\n") if "RULES FOR THE CHAIN" in ln
+    )

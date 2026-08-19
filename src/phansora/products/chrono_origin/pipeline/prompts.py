@@ -321,7 +321,8 @@ nothing between the links:
   the Dead Sea Scrolls, 250 BC - 70 AD                                                [scroll]
       surviving physical witnesses to that corpus, centuries older than any other copy
   the authentic letters of Paul, 50-65 AD                                             [letter]
-      the earliest surviving writing about the subject
+      the earliest surviving writing about the subject — a step despite being written
+      from inside the movement, which is a fact for its dossier, not a disqualification
   the four Gospels, 65-100 AD                                                         [text]
   Josephus, Antiquities, 93-94 AD                                                     [text]
       a writer outside the movement
@@ -364,6 +365,24 @@ and background is not a step and not a conclusion either; it is simply out of sc
 
 That test is also what stops the chain regressing forever. It reaches back while documents point
 at documents, and halts where they stop pointing.
+
+WHO WROTE IT DOES NOT DECIDE WHETHER IT IS A STEP.
+
+A text written from inside the tradition, by a believer, a partisan, a follower or an
+interested party, is still a surviving object and still a step. Its provenance changes what it
+can be used to CONCLUDE, not whether it exists. Independence belongs in the dossier's
+"independent_corroboration" — it is recorded there, never used to keep a document out of the
+chain.
+
+Getting this wrong produces a specific and confident-looking failure: the chain silently becomes
+"earliest attestation from OUTSIDE the movement", skipping the earlier writings by people within
+it, and opening decades late on a source that happens to be disinterested. That is a legitimate
+question, and it is not this one. The earliest surviving text is the earliest surviving text
+whoever wrote it.
+
+The same applies to a work containing a disputed or interpolated passage. Suspected editing is a
+matter for "contradictory_evidence" and "scholarly_dispute" and a lower confidence — never a
+reason to promote a compromised source above an earlier sound one, and never a reason to drop it.
 
 A TEXT IS NOT EVIDENCE FOR WHAT IT NARRATES. It is evidence that the text existed by a date and
 that someone wrote what it says. Any claim about a narrated event is a conclusion, not a step,
