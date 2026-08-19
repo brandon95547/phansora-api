@@ -664,195 +664,47 @@ class TraceOrchestrator:
         gaps: List[str] = []
         iterations = 0
 
-        # Stage 1 - Decompose
-        progress(8, "Planning the research")
-        usage.stage("decompose")
-        plan = self._decompose(req, max_queries=max_queries)
-        current_queries: List[str] = _as_queries(plan.get("queries"))[:max_queries]
+        # Stage 1 - Gather. One fixed search per strand, all fired at once.
+        #
+        # There is no planner call and no round loop here any more. Both existed to
+        # make the searching adaptive, and adaptivity cost far more than it bought:
+        # measured on a live trace, a round's six searches finished in 14 seconds and
+        # the call that turned them into structured JSON took 104 — every round, every
+        # time overrunning its output budget and regenerating from scratch. Synthesis
+        # then overran the doubled budget and the trace failed outright at 20 minutes.
+        #
+        # Generating JSON is the expensive act, so it now happens exactly once. The
+        # queries are the strand templates, which are fixed text and cost nothing.
+        progress(15, "Searching")
+        planned_strands = sorted(_STRANDS)
+        current_queries = _strand_queries(
+            req.title, planned_strands, [], limit=len(planned_strands)
+        )
+        answers = self._search_many(req, current_queries)
+        queries_run.extend(current_queries)
+        iterations = 1
 
-        # The strands this subject needs covered. The loop used to run until it
-        # stopped finding anything OLDER, which is why traces came back as a thin
-        # chain of dates: once the earliest text was found there was nothing left
-        # to look for, and manuscripts, outside attestation, language and later
-        # institutional development were never researched at all. A trace is
-        # finished when its strands are covered, not when the origin stops moving.
-        planned_strands = _as_strands(plan.get("strands"))
-        covered_strands: set[str] = set()
+        for answer in answers:
+            for c in (answer.citations or [])[:max_sources]:
+                url = c.get("url") if isinstance(c, dict) else None
+                if url and url not in all_citations:
+                    all_citations[url] = c
 
-        prev_earliest_year: Optional[int] = None
-        stagnant_rounds = 0
+        # What the searches actually said, kept as prose with the query that found it.
+        # This is the "compiled context" the single extraction reads.
+        corpus = "\n\n".join(
+            f"[{q}]\n{(a.text or '').strip()}"
+            for q, a in zip(current_queries, answers)
+            if (a.text or "").strip()
+        ) or "(no search results)"
 
-        # Reserve 10% for cache/decompose, 70% for the loop, 20% for reading+synthesis.
-        loop_start_pct, loop_end_pct = 10, 80
-        loop_span = max(1, loop_end_pct - loop_start_pct)
+        covered_strands = set(planned_strands)
 
-        for depth in range(max_depth):
-            iterations += 1
-            depth_pct = loop_start_pct + int(loop_span * (depth / max(1, max_depth)))
-            logger.info("Trace depth %d with %d queries", depth, len(current_queries))
-            if not current_queries:
-                break
-
-            # Stage 2 - Search. Concurrent: these calls do not depend on each
-            # other, and running five of them in series is the single largest
-            # chunk of a trace's wall clock. Costs nothing in tokens.
-            queries_to_run = [q for q in current_queries[:max_queries] if q not in queries_run]
-            if not queries_to_run:
-                break
-            queries_run.extend(queries_to_run)
-            progress(
-                min(depth_pct + 2, loop_end_pct - 1),
-                f"Round {depth + 1}: searching {len(queries_to_run)} angles",
-            )
-            answers = self._search_many(req, queries_to_run)
-
-            notes_chunks: List[str] = []
-            round_urls: List[str] = []
-            for q, answer in zip(queries_to_run, answers):
-                if answer.text:
-                    notes_chunks.append(f"### Query: {q}\n{answer.text}")
-                for c in answer.citations[:max_sources]:
-                    url = c.get("url") or ""
-                    if not url:
-                        continue
-                    if url not in all_citations:
-                        all_citations[url] = c
-                    round_urls.append(url)
-
-            if not notes_chunks:
-                break
-
-            # Stage 3 - Extract dated mentions AND plan the next round in one call.
-            progress(
-                min(depth_pct + int(loop_span / max_depth * 0.8), loop_end_pct - 1),
-                f"Round {depth + 1}: extracting dated mentions",
-            )
-            usage.stage("extract")
-            extracted = self._extract(
-                title=req.title,
-                notes="\n\n".join(notes_chunks),
-                # Only this round's citations. Passing every URL gathered so far
-                # grew the prompt on every round AND invited the model to cite
-                # sources that appear nowhere in the notes it was handed.
-                citations=[all_citations[u] for u in dict.fromkeys(round_urls)],
-                earliest_known=_describe_earliest(_earliest_year(all_mentions)),
-                prior_queries=queries_run,
-                max_queries=max_queries,
-                open_strands=_open_strands(planned_strands, covered_strands),
-            )
-            new_mentions = extracted.get("mentions", [])
-            for g in extracted.get("gaps", []) or []:
-                if isinstance(g, str) and g.strip() and g not in gaps:
-                    gaps.append(g.strip())
-
-            fresh = ev.new_mention_count(all_mentions, new_mentions)
-            all_mentions = ev.dedupe_mentions(all_mentions + new_mentions)
-            newly_covered = _strands_covered(new_mentions) - covered_strands
-            covered_strands |= newly_covered
-
-            # ---- Stopping rules. Every extra round is a full set of searches, so
-            # the loop must justify continuing rather than run to the ceiling.
-            if depth + 1 >= min_depth and fresh == 0:
-                logger.info("Round %d added no new mentions; stopping.", depth + 1)
-                break
-
-            # A round is productive if it pushed the origin back OR covered a
-            # strand that was still open. Judging only on recency is what made
-            # the loop quit with half the subject unresearched.
-            earliest = _earliest_year(all_mentions)
-            earliest_year = earliest.get("year") if earliest else None
-            went_older = not (
-                isinstance(earliest_year, int)
-                and isinstance(prev_earliest_year, int)
-                and earliest_year >= prev_earliest_year
-            )
-            open_now = _open_strands(planned_strands, covered_strands)
-            if went_older or newly_covered:
-                stagnant_rounds = 0
-            else:
-                stagnant_rounds += 1
-            prev_earliest_year = earliest_year if isinstance(earliest_year, int) else prev_earliest_year
-
-            # Stagnation ends a trace only once there is nothing left to look
-            # for. A round can fail to move the origin and fail to close a
-            # strand and still be one round short of the strand it was working
-            # on, and quitting there is how a report comes back with no texts,
-            # no calendar and no language chain while its own plan still listed
-            # all three as open. Open strands buy the loop two more rounds; they
-            # cannot buy it an unbounded number, because a strand this subject
-            # has no evidence for will stay open forever.
-            if stagnant_rounds >= 2 and not open_now:
-                logger.info("Two rounds with no older evidence and no strand left open; stopping.")
-                break
-            if stagnant_rounds >= 4:
-                logger.info(
-                    "Four stagnant rounds; stopping with strands still open: %s", open_now
-                )
-                break
-            if not open_now and not went_older and depth + 1 >= min_depth:
-                logger.info("All planned strands covered and the origin has settled; stopping.")
-                break
-            if depth == max_depth - 1 or earliest is None:
-                break
-
-            # The open strands take their slots off the top; the model plans the
-            # rest. Reserving at most half the round leaves it room to chase the
-            # leads and contradictions it just found, which is work no template
-            # can write in advance.
-            planned = [
-                q for q in _as_queries(extracted.get("next_queries")) if q.strip()
-            ]
-            reserved = _strand_queries(
-                req.title, open_now, queries_run, limit=max(1, max_queries // 2)
-            )
-            current_queries = list(dict.fromkeys(reserved + planned))[:max_queries]
-
-        # Guard: a trace with no grounded evidence can only synthesize an "unknown"
-        # origin — a useless, misleading dossier. Fail loudly instead so the job is
-        # marked failed (job_manager) and the caller refunds the credit (Node sync),
-        # rather than silently returning an empty result. The usual cause is a broken
-        # or unconfigured web-search provider returning zero results.
-        if not all_mentions:
-            if not all_citations:
-                raise RuntimeError(
-                    "Web search returned no results for this subject. The search "
-                    "provider is likely unconfigured or unavailable — no origin could "
-                    "be traced."
-                )
-            raise RuntimeError(
-                "No datable events could be extracted from the sources found for this "
-                "subject, so no origin could be traced."
-            )
-
-        # Stage 3.5 - Chase. Every claim still resting on a lead gets one attempt
-        # to find what it actually rests on, which is the half of the doctrine
-        # that was never implemented: the prompts have always said to follow a
-        # wiki's references backward, and nothing in the pipeline could.
-        mention_tiers = self._mention_tiers(all_mentions)
-
+        # No extract stage means no per-URL tier claims; the resolver falls back to
+        # its host heuristic, which is what it did for un-mentioned URLs anyway.
         def pre_tier(url: str) -> str:
-            return sp.resolve_tier(mention_tiers.get(url), url)
+            return sp.resolve_tier(None, url)
 
-        if self.settings.chrono_chase_enabled:
-            progress(78, "Chasing citations backward")
-            usage.stage("chase")
-            try:
-                chased = self._chase(
-                    req,
-                    mentions=all_mentions,
-                    citations=list(all_citations.values()),
-                    tier_for=pre_tier,
-                    queries_run=queries_run,
-                    max_sources=max_sources,
-                )
-                for url, meta in chased.get("citations", {}).items():
-                    all_citations.setdefault(url, meta)
-                new_mentions = chased.get("mentions", [])
-                if new_mentions:
-                    all_mentions = ev.dedupe_mentions(all_mentions + new_mentions)
-                    mention_tiers = self._mention_tiers(all_mentions)
-            except Exception as exc:  # noqa: BLE001 - a failed chase must not cost a trace
-                logger.warning("Citation chase failed: %s", exc)
 
         # Stage 4 - Read the strongest sources properly, before judging them.
         citation_list = list(all_citations.values())
@@ -874,7 +726,7 @@ class TraceOrchestrator:
         usage.stage("synthesize")
         final = self._synthesize(
             title=req.title,
-            mentions=all_mentions,
+            corpus=corpus,
             citations=citation_list,
             reads=reads,
             # What the research set out to cover, and what it actually found.
@@ -884,7 +736,7 @@ class TraceOrchestrator:
             # nothing downstream could tell the difference between "the evidence
             # was not there" and "the report did not mention it".
             planned_strands=planned_strands,
-            covered_strands=_strands_covered(all_mentions),
+            covered_strands=covered_strands,
         )
 
         progress(97, "Building response")
@@ -1166,7 +1018,7 @@ class TraceOrchestrator:
         self,
         *,
         title: str,
-        mentions: List[Dict[str, Any]],
+        corpus: str,
         citations: List[Dict[str, str]],
         reads: List[PageRead],
         planned_strands: Optional[List[str]] = None,
@@ -1180,7 +1032,7 @@ class TraceOrchestrator:
             )
         prompt = SYNTHESIZE_PROMPT.format(
             title=title,
-            mentions_block=_format_mentions_block(mentions),
+            mentions_block=corpus,
             citations_block=_format_citations_block(citations),
             pages_block=pages_block,
             strands_block=_format_strands_block(planned_strands or [], covered_strands or set()),
