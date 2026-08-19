@@ -112,10 +112,12 @@ The strands are kinds of surviving evidence. Pick the ones this subject genuinel
 force the rest. A medieval poem has manuscripts, a 1960s assassination has government records, a
 disputed site has excavation reports.
 
-- precursor_evidence — what survives from BEFORE the subject, in the same culture and language:
-  the texts, copies and objects already in existence. Reach back centuries, not decades. This is
-  what the chain starts from. BACKGROUND ONLY: including it never asserts that it influenced the
-  subject, and it is evidence of what existed, never of a mood or an expectation.
+- precursor_evidence — what survives from BEFORE the subject that the subject's own evidence
+  DESCENDS FROM: the corpus its texts quote, the tradition they are written inside, the language
+  they translate. This is where the chain starts, and it is the strand most often researched and
+  then thrown away. Reach back centuries, not decades — for a first-century subject that means
+  asking what scriptures, translations and copies already existed and are still readable now.
+  It is evidence of what existed, never of a mood, a climate or an expectation.
 - earliest_texts — the earliest surviving texts about or by the subject, with estimated
   COMPOSITION dates and the basis for each. Earliest first, including ones earlier than the
   famous ones, and the dependence between them.
@@ -313,12 +315,24 @@ A worked example of the shape wanted, for a trace of Jesus. The chain is exactly
 nothing between the links:
 
   Hebrew scriptures, composed over centuries, reaching their form by roughly 400 BC   [text]
+      the corpus the later steps quote and are written inside
   the Septuagint, the Greek translation, 250-100 BC                                   [text]
+      the Greek text the New Testament writers actually quote from
   the Dead Sea Scrolls, 250 BC - 70 AD                                                [scroll]
+      surviving physical witnesses to that corpus, centuries older than any other copy
   the authentic letters of Paul, 50-65 AD                                             [letter]
+      the earliest surviving writing about the subject
   the four Gospels, 65-100 AD                                                         [text]
   Josephus, Antiquities, 93-94 AD                                                     [text]
+      a writer outside the movement
   Tacitus, Annals, around 116 AD                                                      [text]
+
+Note where that chain BEGINS. Not at the subject, and not at the earliest text about him — it
+begins roughly four centuries earlier, with the corpus his sources quote. The first three steps
+earn their place by documentary descent, not by being about him: each is something the later
+steps translate, quote or physically witness. A chain for this subject that opens in the first
+century has dropped its first four hundred years, and that is the single most common way this
+goes wrong.
 
 Note what is ABSENT from that chain and must stay absent from yours: no "messianic expectation",
 no "rise of the Jesus movement", no "oral tradition period", no birth, no ministry, no
@@ -333,9 +347,23 @@ apart, the composition dates the step and the surviving copy is named in the dos
 scholarly reconstruction stays a step — it is still a surviving object — but the dossier's "why"
 must carry the argument for the date, and the confidence must reflect that it is reconstructed.
 
-ORDER. Strictly chronological by the date of the evidence, earliest first. The origin is simply
-the earliest surviving piece of evidence relevant to the subject, not the most important one and
-not the one closest to the subject in meaning.
+ORDER. Strictly chronological by the date of the evidence, earliest first.
+
+WHERE THE CHAIN STARTS — and this is the rule most often got wrong.
+
+The chain does NOT start at the earliest evidence ABOUT the subject. It starts at the earliest
+surviving evidence the subject's own evidence DESCENDS FROM: the corpus its texts quote, the
+tradition they are composed inside, the text they translate. A trace of a first-century figure
+that opens in the first century has skipped the entire written tradition its sources are writing
+within, and has silently answered a much smaller question than the one asked.
+
+The test for reaching back one more step is DOCUMENTARY, not thematic: does a later item in the
+chain quote, translate, continue, or sit inside this earlier one? If yes, it is a step. If the
+only link is shared theme, shared culture, or a mood of the period, STOP — that is background,
+and background is not a step and not a conclusion either; it is simply out of scope.
+
+That test is also what stops the chain regressing forever. It reaches back while documents point
+at documents, and halts where they stop pointing.
 
 A TEXT IS NOT EVIDENCE FOR WHAT IT NARRATES. It is evidence that the text existed by a date and
 that someone wrote what it says. Any claim about a narrated event is a conclusion, not a step,
