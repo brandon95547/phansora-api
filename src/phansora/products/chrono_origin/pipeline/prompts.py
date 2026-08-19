@@ -201,7 +201,10 @@ Available citations (use these URLs verbatim):
 Earliest mention established so far: {earliest_known}
 Strands still uncovered: {open_strands}
 
-Return JSON:
+Return JSON. AT MOST 12 MENTIONS — the best ones, not everything you can find. This is one
+round of several, and an unbounded list here overruns the output budget, gets cut off mid-JSON
+and is regenerated from scratch, which costs more time than the searches that produced it.
+
 {{
   "mentions": [
     {{
