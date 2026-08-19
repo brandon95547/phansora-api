@@ -32,6 +32,7 @@ def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
 from ..models import (
     Citation,
+    Conclusion,
     Connection,
     ConnectionEvidence,
     EvidenceChain,
@@ -85,21 +86,94 @@ _is_absent = sp.is_absent
 _default_tier = sp.default_tier
 
 
-_VALID_NODE_TYPES = {
-    "event", "reconstructed_date", "text_composition", "manuscript_witness",
-    "external_attestation", "term_history", "linguistic_transmission",
-    "institutional_development", "dating_framework", "context",
+_VALID_CONFIDENCE = {"high", "moderate", "low", "speculative"}
+
+_EVIDENCE_KINDS = {
+    "text", "manuscript", "scroll", "letter", "inscription",
+    "document", "record", "artifact", "archaeological_find",
 }
 _VALID_ATTRIBUTION = {"established", "attributed", "disputed", "anonymous", "not_applicable"}
 
 
-def _node_type(value: Any) -> str:
-    """An unrecognised node type falls back to a plain event, never to a guess."""
-    return value if value in _VALID_NODE_TYPES else "event"
+def is_evidence_kind(value: Any) -> bool:
+    """Is this step a surviving object, i.e. allowed in the chain at all?
+
+    The chain rule is structural, not advisory. The prompt asks for evidence only, but
+    a model under pressure to tell a coherent story will still reach for the connective
+    tissue between documents — an expectation, a movement, a development. Anything whose
+    kind is not one of the nine surviving-object kinds is not evidence, and the caller
+    routes it into "conclusions" rather than letting it stand as a link in the chain.
+
+    Deliberately NOT a coercion. The previous version mapped anything unrecognised onto
+    a valid type, which meant an interpretation arrived with a respectable label and
+    became indistinguishable from an artefact.
+    """
+    return value in _EVIDENCE_KINDS
 
 
 def _attribution(value: Any) -> str:
     return value if value in _VALID_ATTRIBUTION else "not_applicable"
+
+
+def _build_conclusions(
+    raw: Any,
+    demoted: List[Dict[str, Any]],
+    *,
+    valid_ids: set,
+) -> List[Conclusion]:
+    """The readings of the evidence, stated after it.
+
+    Two sources feed this. The model's own "conclusions", and any step it offered that
+    was not a surviving object — those are demoted here rather than deleted, because a
+    silent drop would hide a claim the model actually made, and the whole point of this
+    product is that a reader can see what rests on what.
+
+    A demoted step keeps its own words as the statement and declares that nothing in the
+    chain supports it, which is the honest reading: it was offered as evidence, and it
+    was not evidence.
+    """
+    out: List[Conclusion] = []
+
+    for item in (raw or []):
+        if not isinstance(item, dict):
+            continue
+        statement = str(item.get("statement") or "").strip()
+        if not statement:
+            continue
+        # Only ids that actually exist in the chain — a conclusion citing a step that was
+        # never emitted reads as supported when it is not.
+        rests = [str(r) for r in (item.get("rests_on") or []) if str(r) in valid_ids]
+        label = item.get("confidence_label")
+        out.append(
+            Conclusion(
+                statement=statement,
+                rests_on=rests,
+                confidence_label=label if label in _VALID_CONFIDENCE else "moderate",
+                reasoning=str(item.get("reasoning") or "").strip(),
+                dissent=str(item.get("dissent") or "").strip() or "None identified",
+            )
+        )
+
+    for entry in demoted:
+        statement = str(entry.get("claim") or entry.get("source_title") or "").strip()
+        if not statement:
+            continue
+        kind = str(entry.get("node_type") or "unspecified")
+        out.append(
+            Conclusion(
+                statement=statement,
+                rests_on=[],
+                confidence_label="speculative",
+                reasoning=(
+                    f"Offered as a step in the chain (as \"{kind}\"), but it is not a surviving "
+                    "object that can be examined, so it is recorded here as a reading of the "
+                    "evidence rather than as evidence."
+                ),
+                dissent="None identified",
+            )
+        )
+
+    return out
 
 
 def _coerce_dossier(
@@ -271,13 +345,23 @@ def _coerce_connection_evidence(
 # The strands a trace can be built from. Kept here rather than in the prompt
 # alone so the loop can measure coverage instead of taking the model's word for it.
 _STRANDS = {
-    "precursor_context", "term_history", "reconstructed_date", "text_composition",
-    "manuscript_witness", "external_attestation", "linguistic_transmission",
-    "institutional_development", "dating_framework",
+    "precursor_evidence", "earliest_texts", "manuscripts", "external_sources",
+    "documents_records", "inscriptions_artifacts", "archaeology",
 }
-# A mention's node_type is how a strand reports itself as covered. Two of them
-# differ in name from the strand they satisfy.
-_NODE_TYPE_STRAND = {"context": "precursor_context"}
+# A mention reports its strand covered by the KIND of surviving thing it is. The
+# strands are categories of evidence to go looking for, so the mapping is just
+# "which hunt would have turned this up".
+_NODE_TYPE_STRAND = {
+    "text": "earliest_texts",
+    "letter": "earliest_texts",
+    "manuscript": "manuscripts",
+    "scroll": "manuscripts",
+    "inscription": "inscriptions_artifacts",
+    "artifact": "inscriptions_artifacts",
+    "document": "documents_records",
+    "record": "documents_records",
+    "archaeological_find": "archaeology",
+}
 
 
 # A search for each strand, written here rather than asked for. The extract
@@ -293,43 +377,33 @@ _NODE_TYPE_STRAND = {"context": "precursor_context"}
 # and the grounded-search step is what turns "what texts exist and when were
 # they written" into a subject's actual bibliography.
 _STRAND_QUERIES = {
-    "precursor_context": (
-        "what traditions, scriptures, institutions and ideas already existed in the "
-        "culture and period {title} emerged from, and how they were transmitted"
+    "precursor_evidence": (
+        "what texts, manuscripts, inscriptions and excavated objects survive from BEFORE "
+        "{title}, in the same culture and language, with their dates and where they are held"
     ),
-    "term_history": (
-        "earliest attested meaning and use of the term or title now used for {title}, "
-        "before it named {title}, with dates and the texts attesting each sense"
+    "earliest_texts": (
+        "the earliest surviving texts about or by {title}, ordered earliest first, with "
+        "estimated composition dates and the scholarly basis for each date"
     ),
-    "reconstructed_date": (
-        "how historians reconstruct the dates for {title} and for the movement or "
-        "community around it, which records if any state them, and why the "
-        "reconstruction is placed earlier than the surviving texts"
-    ),
-    "text_composition": (
-        "estimated composition dates of the earliest texts about or by {title}, "
-        "ordered earliest first, and the scholarly basis for each date"
-    ),
-    "manuscript_witness": (
-        "earliest surviving manuscripts and fragments relating to {title}: shelfmark, "
+    "manuscripts": (
+        "earliest surviving manuscripts, scrolls and fragments relating to {title}: shelfmark, "
         "holding repository, palaeographic date, and how far they postdate composition"
     ),
-    "external_attestation": (
-        "sources outside the tradition of {title} that mention it, their own "
-        "composition dates, and how those texts themselves survive"
+    "external_sources": (
+        "surviving texts from outside the tradition of {title} that mention it, their own "
+        "composition dates, and how those texts themselves physically survive"
     ),
-    "linguistic_transmission": (
-        "how the name of {title} moved between languages and scripts form by form, "
-        "with the language, script and date of each attested form"
+    "documents_records": (
+        "surviving documents and administrative records — decrees, censuses, court, tax or "
+        "official registers — from the period and place of {title}, and which archive holds them"
     ),
-    "institutional_development": (
-        "when the institutions, canons, offices, titles and doctrines associated with "
-        "{title} are first attested, as distinct from when they are traditionally claimed"
+    "inscriptions_artifacts": (
+        "surviving inscriptions, coins, seals, ostraca and inscribed objects relating to "
+        "{title}, with their find context, date and holding institution"
     ),
-    "dating_framework": (
-        "what calendars and dating systems were actually in use during the period of "
-        "{title}, and when the era system now used to state those dates was devised "
-        "and adopted"
+    "archaeology": (
+        "excavated sites, structures and assemblages relevant to {title}, as reported in "
+        "excavation reports, with dates and the report that publishes each find"
     ),
 }
 
@@ -1173,7 +1247,11 @@ class TraceOrchestrator:
             era_label=origin_data.get("era_label"),
             precision=origin_data.get("precision", "unknown"),
             year_end=origin_data.get("year_end"),
-            node_type=_node_type(origin_data.get("node_type")),
+            # The origin is the earliest surviving piece of evidence. An origin the model
+            # typed as something non-surviving is defaulted to "text" rather than dropped,
+            # because a trace with no origin has nothing to hang the chain from; the gate
+            # below is what keeps the chain itself clean.
+            node_type=(origin_data.get("node_type") if is_evidence_kind(origin_data.get("node_type")) else "text"),
             attribution=_attribution(origin_data.get("attribution")),
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
@@ -1190,8 +1268,16 @@ class TraceOrchestrator:
         )
 
         timeline: List[TimelineEvent] = []
+        # Steps the model offered that are not surviving objects. They are not thrown
+        # away — they become conclusions, stated after the chain, which is where a
+        # reading of the evidence belongs. Dropping them would hide that the model
+        # believes something the evidence does not show.
+        demoted: List[Dict[str, Any]] = []
         used_ids = {"origin"}
         for i, entry in enumerate(final.get("timeline") or []):
+            if not is_evidence_kind(entry.get("node_type")):
+                demoted.append(entry)
+                continue
             conf = float(entry.get("confidence", 0.5) or 0.5)
             # Ids come from the model so connections can reference them, but must
             # be unique and present — a duplicate id would silently reroute edges.
@@ -1213,7 +1299,7 @@ class TraceOrchestrator:
                     era_label=entry.get("era_label"),
                     precision=entry.get("precision", "unknown"),
                     year_end=entry.get("year_end"),
-                    node_type=_node_type(entry.get("node_type")),
+                    node_type=entry.get("node_type"),
                     attribution=_attribution(entry.get("attribution")),
                     source_title=entry.get("source_title", "Unknown"),
                     claim=entry.get("claim", ""),
@@ -1233,6 +1319,8 @@ class TraceOrchestrator:
         # Chronological sort, oldest first; null years go last. Ids were assigned
         # before this so they survive the reordering and connections stay valid.
         timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+
+        conclusions = _build_conclusions(final.get("conclusions"), demoted, valid_ids=used_ids)
 
         connections = self._build_connections(
             raw=final.get("connections"),
@@ -1285,6 +1373,7 @@ class TraceOrchestrator:
             independent_chain_count=len(chain_groups),
             sources_read=sorted(read_urls),
             open_questions=open_questions,
+            conclusions=conclusions,
             usage=TokenUsage(
                 input_tokens=snap["input_tokens"],
                 output_tokens=snap["output_tokens"],

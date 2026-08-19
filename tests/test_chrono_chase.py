@@ -126,24 +126,35 @@ class TestPromptDiscipline:
     def test_every_relation_and_node_type_appears_in_the_prompt(self):
         # The classic drift: a member added to the enum, and the model never told
         # it exists. Both directions of the vocabulary must agree.
-        from phansora.products.chrono_origin.models import NodeType, RelationType
+        from phansora.products.chrono_origin.models import EvidenceKind, RelationType
         import typing
 
         synthesize = P.SYNTHESIZE_PROMPT
         for relation in typing.get_args(RelationType):
             assert relation in synthesize, relation
-        for node_type in typing.get_args(NodeType):
-            assert node_type in synthesize, node_type
+        for kind in typing.get_args(EvidenceKind):
+            assert kind in synthesize, kind
 
     def test_the_structural_rules_survive_editing(self):
         # Each of these is a rule the code cannot enforce on its own, and the
         # reason the trace read like a summary instead of a piece of research.
         s = P.SYNTHESIZE_PROMPT
-        assert "A TEXT AND ITS SURVIVING COPIES ARE TWO ENTRIES" in s
-        assert "A TEXT IS NOT EVIDENCE FOR THE EVENTS IT NARRATES" in s
-        assert "WHAT DEVELOPED LATER IS DATED LATER" in s
-        assert "BACKGROUND IS NOT INFLUENCE" in s
+        # The chain rule itself, stated as the question every step answers.
+        assert "WHAT IS THE NEXT SURVIVING PIECE OF EVIDENCE?" in s
+        assert "EVIDENCE ONLY, NO EXCEPTIONS" in s
+        assert "A STEP MUST BE LOCATABLE" in s
+        assert "COMPOSITION AND SURVIVING COPY ARE NOT THE SAME FACT" in s
+        assert "A TEXT IS NOT EVIDENCE FOR WHAT IT NARRATES" in s
         assert "SAY WHAT IS MISSING" in s
+        # The failure mode the whole structure exists to prevent.
+        assert "DO NOT LAUNDER A CONCLUSION INTO A STEP" in s
+
+    def test_the_prompt_shows_the_worked_chain_and_what_it_excludes(self):
+        # The brief's own example. Without it the model reliably reaches for the
+        # connective tissue between documents, which is the one thing banned.
+        s = P.SYNTHESIZE_PROMPT
+        assert "Dead Sea Scrolls" in s and "Septuagint" in s and "Tacitus" in s
+        assert "messianic expectation" in s.lower()
 
     def test_the_planner_offers_the_strands_the_loop_measures(self):
         # The planner names strands and the loop counts them covered; if the two

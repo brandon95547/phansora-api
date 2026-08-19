@@ -266,22 +266,23 @@ class TestChasingLeads:
 class TestStrandCoverage:
     def test_reads_both_planner_shapes(self):
         assert _as_strands(
-            [{"strand": "manuscript_witness", "why": "x"}, "term_history", "not_a_strand"]
-        ) == ["manuscript_witness", "term_history"]
+            [{"strand": "manuscripts", "why": "x"}, "archaeology", "not_a_strand"]
+        ) == ["manuscripts", "archaeology"]
 
     def test_node_types_report_their_strand_covered(self):
         covered = _strands_covered(
-            [{"node_type": "manuscript_witness"}, {"node_type": "context"}, {"node_type": "event"}]
+            [{"node_type": "scroll"}, {"node_type": "inscription"}, {"node_type": "context"}]
         )
-        # "context" satisfies the precursor_context strand under a different name;
-        # a plain event satisfies no strand at all.
-        assert covered == {"manuscript_witness", "precursor_context"}
+        # A scroll is found by the manuscripts hunt, an inscription by the artefacts
+        # one. "context" is not a surviving object at all, so it covers nothing —
+        # under the chain rule it is not even eligible to be a step.
+        assert covered == {"manuscripts", "inscriptions_artifacts"}
 
     def test_open_strands_drive_the_next_round(self):
-        planned = ["text_composition", "manuscript_witness", "external_attestation"]
-        assert _open_strands(planned, {"text_composition"}) == [
-            "manuscript_witness",
-            "external_attestation",
+        planned = ["earliest_texts", "manuscripts", "external_sources"]
+        assert _open_strands(planned, {"earliest_texts"}) == [
+            "manuscripts",
+            "external_sources",
         ]
 
 

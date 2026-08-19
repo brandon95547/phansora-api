@@ -99,50 +99,50 @@ Optional context: {context}
 
 {source_hierarchy}
 
-A trace is built from STRANDS. Pick the ones this subject genuinely has; do not force the rest.
-A medieval poem has manuscripts, a 1960s assassination has government records, a phrase has
-attestations. The strands:
+A trace is a CHAIN OF SURVIVING EVIDENCE. Every step in the finished trace is a thing that
+still exists and can be examined — a text, a manuscript, a scroll, a letter, an inscription, a
+document, a record, an object, an excavated find — placed in the order it was produced. Your job
+here is to plan the hunt for those objects. Not for the story, not for what happened, not for
+what the period was like: for what SURVIVES.
 
-- precursor_context — the intellectual and textual world this emerged INSIDE: the literature,
-  scriptures, languages, institutions and ideas already in circulation, and how they were
-  transmitted. Reach back centuries, not decades — a subject that appears with no ancestry has
-  been researched from its own point of view. BACKGROUND ONLY: including it never asserts that
-  it influenced the subject.
-- term_history — the history of the NAME or TITLE itself, which is usually older than the thing
-  it now names and often meant something else first. Trace it back to its EARLIEST attested
-  sense and to the people or things it applied to BEFORE the subject, sense by sense.
-- reconstructed_date — dates scholars reconstruct where no record states them, and the reasoning
-  that puts them there. This covers the existence and dating of MOVEMENTS, communities and
-  phenomena as well as of individuals: where historians place something decades before the
-  earliest text that describes it, that reconstruction is its own item, and the argument for it
-  is the substance of the item.
-- text_composition — when a text was WRITTEN. Distinct from when the events it describes
-  supposedly happened, and distinct from any surviving copy. Cover the EARLIEST texts first,
-  including ones earlier than the famous ones, and the relationships of dependence between them.
-- manuscript_witness — the physically surviving copies: which one, how old, which repository.
-- external_attestation — sources OUTSIDE the tradition that refer to the subject, and what
-  their own texts and transmission actually establish.
-- linguistic_transmission — how a name or term moved across languages and scripts, FORM BY FORM:
-  each attested spelling, in its own language and script, with the date and the text it is
-  attested in. The chain is the point; a single note that "the name is Greek" is not this strand.
-- institutional_development — canons, offices, doctrines, standards and organisations, dated to
-  when they are ATTESTED, never projected backward.
-- dating_framework — the calendars and eras ACTUALLY IN USE at the time (regnal years, consular
-  years, olympiads, a founding era, a local era), and separately when the era system now used to
-  state the subject's dates was devised and adopted. People do not live in a calendar invented
-  after them, and a report that prints their dates without saying who converted them, and when,
-  is presenting an editorial act as a fact.
+The test that decides everything downstream: CAN SOMEONE GO AND LOOK AT IT? Plan searches that
+end at a repository, a shelfmark, an excavation report or a critical edition.
+
+The strands are kinds of surviving evidence. Pick the ones this subject genuinely has; do not
+force the rest. A medieval poem has manuscripts, a 1960s assassination has government records, a
+disputed site has excavation reports.
+
+- precursor_evidence — what survives from BEFORE the subject, in the same culture and language:
+  the texts, copies and objects already in existence. Reach back centuries, not decades. This is
+  what the chain starts from. BACKGROUND ONLY: including it never asserts that it influenced the
+  subject, and it is evidence of what existed, never of a mood or an expectation.
+- earliest_texts — the earliest surviving texts about or by the subject, with estimated
+  COMPOSITION dates and the basis for each. Earliest first, including ones earlier than the
+  famous ones, and the dependence between them.
+- manuscripts — the physically surviving copies: which one, how old, which repository, what
+  shelfmark, and how far the copy postdates the composition.
+- external_sources — surviving texts from OUTSIDE the tradition that mention the subject, their
+  own composition dates, and how those texts themselves survive.
+- documents_records — surviving documents and administrative records: decrees, censuses, court,
+  tax, parish or official registers, and the archive that holds them.
+- inscriptions_artifacts — surviving inscriptions, coins, seals, ostraca and inscribed objects,
+  with find context, date and holding institution.
+- archaeology — excavated sites, structures and assemblages, as published in excavation reports.
+
+NOT STRANDS, because they are not surviving objects: expectations, movements, moods, climates of
+belief, developments, influences, reconstructed events, periods of oral transmission. Those are
+conclusions to be drawn AFTER the evidence is laid out, and the final report has a separate place
+for them. Do not spend searches establishing them.
 
 Produce a JSON object with:
 - "entities": 3-8 key proper nouns / concepts to anchor searches.
 - "strands": the applicable strand names from the list above, each as
   {{"strand": <name>, "why": <one line on what this subject specifically needs here>}}.
-  Prefer 5-9 strands. A subject with only two strands is usually a subject researched lazily.
-  Three are near-universal and are usually omitted by mistake rather than by judgement:
-  dating_framework (any subject older than the calendar its dates are stated in),
-  linguistic_transmission (any subject whose name has moved between languages), and
-  precursor_context (any subject that did not appear out of nothing). Include them unless this
-  subject genuinely has no such history.
+  Prefer 4-7 strands. A subject with only two strands is usually a subject researched lazily.
+  Two are near-universal and are usually omitted by mistake rather than by judgement:
+  precursor_evidence (almost nothing appears with no surviving ancestry) and manuscripts (a text
+  known only through copies has a copy history, and it is rarely the same age as the text).
+  Include them unless this subject genuinely has no such evidence.
 - "queries": {max_queries} diverse web search queries covering the strands you chose, weighted
   toward the ones most likely to yield tier 1-2 sources. Include at least one hunting for
   INDEPENDENT corroboration from a different information chain, and at least one hunting for
@@ -205,9 +205,10 @@ Return JSON:
       "year_end": <signed integer or null>,    // set only when this SPANS a period
       "era_label": <string or null>,           // use when year unknown
       "precision": "exact|year|decade|century|millennium|era|unknown",
-      "node_type": "event|reconstructed_date|text_composition|manuscript_witness|
-                    external_attestation|term_history|linguistic_transmission|
-                    institutional_development|dating_framework|context",
+      "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
+                    archaeological_find",   // what kind of SURVIVING thing this is
+      "is_evidence": <true only if this is a surviving object someone could go and examine;
+                      false for readings, developments, movements, expectations, inferred events>,
       "source_title": <string>,                // manuscript / book / event / process name
       "claim": <one sentence>,
       "citations": [<url>, ...],
@@ -230,18 +231,17 @@ Rules for "mentions":
 - "year" is when the source was COMPOSED, or when the item is attested — never when the events a
   text describes are said to have happened. If only a surviving copy's date is given, put that in
   "surviving_copy" and leave "year" null unless composition is separately stated.
-- A text and its surviving copies are TWO mentions: one "text_composition", one
-  "manuscript_witness". Do not merge them.
-- A NAME CROSSING LANGUAGES IS ONE MENTION PER FORM, not one mention about the name. Each
-  attested spelling gets its own "linguistic_transmission" item, whose "source_title" is the
-  form itself with its language and script ("Iesous (Greek, Ἰησοῦς)"), whose date is when that
-  form is attested, and whose claim names the text it is attested in. A single item saying a
-  name "was rendered into Greek and Latin" is the summary this rule exists to prevent.
-- The same applies to a TITLE ACQUIRING A NEW SENSE: one "term_history" item per attested sense,
-  each with the date and the text it is attested in, not one item about the word.
-- A CALENDAR IS NOT A FACT ABOUT THE PAST. Where the material says what dating system people
-  actually used, or when the era used to state these dates was devised, that is a
-  "dating_framework" mention of its own.
+- EXTRACT SURVIVING THINGS. A mention is worth recording when it names something that still
+  exists and can be examined: a text, a copy, an object, a find, a record. Set "is_evidence" true
+  for those. Where the material asserts something that is NOT a surviving object — a movement, an
+  expectation, a development, an event inferred rather than recorded — you may still record it,
+  but set "is_evidence" false. The report keeps those separate from the chain, so mislabelling
+  one as evidence is the most damaging error you can make here.
+- A text and its surviving copies are TWO mentions: the work as "text", the physical copy as
+  "manuscript" or "scroll" with its repository. Do not merge them, and never give the work the
+  copy's date.
+- NAME THE OBJECT SO IT CAN BE FOUND. Where the material gives a shelfmark, repository,
+  excavation report or critical edition, keep it — that is what makes the mention usable.
 - Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
 - Keep "surviving_copy", "cites" and "chain" under 15 words each.
 
@@ -265,7 +265,7 @@ Return ONLY JSON.
 
 
 SYNTHESIZE_PROMPT = """\
-You are writing the final trace report for "{title}".
+You are assembling the chain of evidence for "{title}".
 
 Items gathered across all research rounds (already deduplicated):
 {mentions_block}
@@ -277,45 +277,92 @@ RESEARCH PLAN AND WHAT IT COVERED:
 {strands_block}
 {source_hierarchy}
 
-WHAT THIS REPORT IS. Not a summary of what is believed about the subject, and not a list of
-events. It is a map of what can be EVIDENCED about it, with each kind of claim kept separate
-from the others, because they rest on different evidence and fail in different ways:
+THE ONE RULE. A trace is a chain of SURVIVING EVIDENCE, in the order it was produced. Every
+step is a thing that still exists and can be examined: a text, a manuscript, a scroll, a letter,
+an inscription, a document, a record, an object, an excavated find. At each step you are
+answering exactly one question:
 
-  A text was WRITTEN at some date              -> node_type "text_composition"
-  A COPY of it physically survives             -> node_type "manuscript_witness"
-  Someone OUTSIDE the tradition mentions it    -> node_type "external_attestation"
-  Scholars RECONSTRUCT a date no record gives  -> node_type "reconstructed_date"
-  A word or title has its own history          -> node_type "term_history"
-  A name moved between languages               -> node_type "linguistic_transmission"
-  Canons, offices and doctrines formed later   -> node_type "institutional_development"
-  The dates themselves were derived/converted  -> node_type "dating_framework"
-  Background it emerged among                  -> node_type "context"
-  Something attested to have happened          -> node_type "event"
+    WHAT IS THE NEXT SURVIVING PIECE OF EVIDENCE?
 
-Every entry carries an "evidence" dossier — a plain, arguable statement of what actually backs
-the claim. Fill each field honestly; "None identified" is a legitimate and valuable answer, and
-is always better than a plausible-sounding invention.
+Nothing else is a step. Not a movement, not a mood, not an expectation, not a development, not a
+period, not a reconstruction, not an event you infer from a text rather than read in one. Those
+are readings OF evidence, and a reading placed in the chain inherits the authority of an
+artefact it has not earned. A reader who meets "messianic expectation" between two manuscripts
+has been shown a conclusion dressed as a find. Put it in "conclusions" instead, where it belongs
+and where it is still fully visible.
 
-The evidence dossier shape (same for the origin and every timeline entry):
+The test for every step, applied without mercy: CAN SOMEONE GO AND LOOK AT IT? Name the holding
+institution, the shelfmark, the excavation report or the critical edition that publishes it. If
+you cannot name where the thing is or what publishes it, it is not a step in the chain.
+
+WHAT COUNTS AS A STEP — pick the "node_type" that says what kind of surviving thing it is:
+
+  "text"                — a work surviving through copies: a gospel, a history, a treatise
+  "manuscript"          — a specific physical copy: codex, papyrus, parchment leaf
+  "scroll"              — a rolled manuscript, where the find is dated and reported as such
+  "letter"              — correspondence, surviving as a text or as an object
+  "inscription"         — cut, carved, painted or stamped onto a durable surface
+  "document"            — a charter, deed, contract, decree or administrative instrument
+  "record"              — a register kept as a series: census, court, tax, parish
+  "artifact"            — an object carrying evidence: coin, seal, ostracon, tablet
+  "archaeological_find" — an excavated site, structure or assemblage, as reported
+
+A worked example of the shape wanted, for a trace of Jesus. The chain is exactly this, and
+nothing between the links:
+
+  Hebrew scriptures, composed over centuries, reaching their form by roughly 400 BC   [text]
+  the Septuagint, the Greek translation, 250-100 BC                                   [text]
+  the Dead Sea Scrolls, 250 BC - 70 AD                                                [scroll]
+  the authentic letters of Paul, 50-65 AD                                             [letter]
+  the four Gospels, 65-100 AD                                                         [text]
+  Josephus, Antiquities, 93-94 AD                                                     [text]
+  Tacitus, Annals, around 116 AD                                                      [text]
+
+Note what is ABSENT from that chain and must stay absent from yours: no "messianic expectation",
+no "rise of the Jesus movement", no "oral tradition period", no birth, no ministry, no
+crucifixion as steps. Some of those may well be true; none of them is a surviving object. What
+the chain shows is which documents exist and when. What they mean comes afterwards.
+
+DATING A STEP. "year" and "year_end" date the EVIDENCE ITSELF — when the text was composed, when
+the object was made, when the record was kept. Never the date of the events it describes. Where
+composition and the earliest surviving physical copy differ, and they are frequently centuries
+apart, the composition dates the step and the surviving copy is named in the dossier's
+"earliest_surviving_copy" and "provenance". A step whose composition date is genuinely a
+scholarly reconstruction stays a step — it is still a surviving object — but the dossier's "why"
+must carry the argument for the date, and the confidence must reflect that it is reconstructed.
+
+ORDER. Strictly chronological by the date of the evidence, earliest first. The origin is simply
+the earliest surviving piece of evidence relevant to the subject, not the most important one and
+not the one closest to the subject in meaning.
+
+A TEXT IS NOT EVIDENCE FOR WHAT IT NARRATES. It is evidence that the text existed by a date and
+that someone wrote what it says. Any claim about a narrated event is a conclusion, not a step,
+and if the only support for it is the narrative itself, say so plainly in the conclusion.
+
+Every step carries an "evidence" dossier — a plain, arguable statement of what actually backs it.
+"None identified" is a legitimate and valuable answer, always better than a plausible invention.
+
+The evidence dossier shape (same for the origin and every step):
 {{
-  "claim": <the claim restated as ONE testable proposition, e.g. "X was born in Y">,
+  "claim": <what this evidence establishes, as ONE testable proposition about the OBJECT,
+            e.g. "A Greek translation of the Hebrew scriptures existed by the 2nd century BC">,
   "earliest_supporting_source": <named source + what kind of thing it is, or "None identified">,
-  "estimated_source_date": <when that source was COMPOSED; a range is fine, or "Unknown">,
+  "estimated_source_date": <when it was COMPOSED or made; a range is fine, or "Unknown">,
   "earliest_surviving_copy": <oldest physically existing copy + its date + repository if known,
                               or "None identified">,
   "provenance": <who holds the object, under what shelfmark, and how it reached them, or
                  "None identified">,
-  "contemporary_evidence": <evidence created at the time of the event itself, or "None identified">,
-  "independent_corroboration": <support NOT descending from the same information chain, or
-                                "None identified"; if many sources trace to one report, say so>,
+  "contemporary_evidence": <evidence created at the time, or "None identified">,
+  "independent_corroboration": <support NOT descending from the same chain, or "None identified";
+                                if many sources trace to one report, say so>,
   "contradictory_evidence": <evidence that contradicts it, or "None identified">,
-  "scholarly_dispute": <live disagreement AMONG SCHOLARS about this claim — a different thing
-                        from evidence against it — or "None identified">,
+  "scholarly_dispute": <live disagreement AMONG SCHOLARS — a different thing from evidence
+                        against it — or "None identified">,
   "evidence_type": "primary_document|archaeological|contemporary_record|near_contemporary_account|
                     later_historical_account|scholarly_inference|tradition|disputed|absent",
   "confidence_label": "high|moderate|low|speculative",
   "why": <1-2 sentences of plain language explaining the assessment>,
-  "missing_piece": <the single absent piece of evidence that most limits this claim>
+  "missing_piece": <the single absent piece of evidence that most limits this>
 }}
 
 Produce a JSON object:
@@ -325,94 +372,89 @@ Produce a JSON object:
     "year_end": <signed int or null>,
     "era_label": <string or null>,
     "precision": "exact|year|decade|century|millennium|era|unknown",
-    "node_type": <from the list above>,
+    "node_type": <one of the nine kinds above>,
     "attribution": "established|attributed|disputed|anonymous|not_applicable",
-    "source_title": <string>,
-    "summary": <2-4 sentences explaining why this is the earliest defensible origin>,
+    "source_title": <the evidence, named as a reader would look for it>,
+    "summary": <2-4 sentences: what this object is, and why it is the earliest surviving
+                evidence relevant to the subject>,
     "citations": [<url>, ...],
     "confidence": <0..1>,
     "evidence": {{ ...dossier... }}
   }},
   "timeline": [
-    // chronological, oldest first
+    // chronological, oldest first, evidence only
     {{
-      "id": "t1",                              // unique, stable, referenced by connections
+      "id": "t1",
       "year": <signed int or null>,
-      "year_end": <signed int or null>,        // set when this SPANS a period, not a moment
+      "year_end": <signed int or null>,        // set when composition SPANS a period
       "era_label": <string or null>,
       "precision": "...",
-      "node_type": <from the list above>,
+      "node_type": <one of the nine kinds above>,
       "attribution": "established|attributed|disputed|anonymous|not_applicable",
-      "source_title": <string>,
-      "claim": <one sentence stating what this entry establishes>,
+      "source_title": <the evidence, named as a reader would look for it>,
+      "claim": <one sentence stating what this surviving object establishes>,
       "citations": [<url>, ...],
       "confidence": <0..1>,
       "evidence": {{ ...dossier... }}
+    }}
+  ],
+  "conclusions": [
+    // What the evidence above is taken to show. AFTER the chain, never inside it.
+    // This is where everything that is not a surviving object goes: developments,
+    // expectations, movements, influences, reconstructed events, what a text implies.
+    {{
+      "statement": <one plain proposition>,
+      "rests_on": [<ids of the steps this rests on: "origin", "t1", ...>],
+      "confidence_label": "high|moderate|low|speculative",
+      "reasoning": <how the named evidence gets you to the statement>,
+      "dissent": <serious scholarly disagreement with this reading, or "None identified">
     }}
   ],
   "connections": [ ...see CONNECTIONS below... ],
   "source_tiers": {{ "<url>": "primary|repository|academic|reference_index|institutional|press|
                      low_authority|unknown", ... }},
   "source_dates": {{ "<url>": "<publication year or range, or 'unknown'>", ... }},
-  "reasoning": <short paragraph explaining the chain of evidence and any uncertainty>,
+  "reasoning": <short paragraph on the shape of the chain and where it is thin>,
   "confidence": <0..1>
 }}
 
-STRUCTURAL RULES — these decide whether this report is worth anything:
+RULES FOR THE CHAIN:
 
-- EVERY RESEARCHED STRAND APPEARS. The block above says which strands the research rounds
-  actually found material for. Each of those must produce at least one entry, of the matching
-  node_type, built from the items above. Items in the list carry a "type=" — that is the
-  extractor's reading of what kind of thing each one is, and it is the strongest signal you
-  have; do not silently retype an item to something weaker or fold several strands into one
-  entry. Dropping a researched strand throws away the research and tells the reader the evidence
-  was not there.
-- A STRAND WITH SEVERAL ITEMS GETS SEVERAL ENTRIES. Four texts composed at four dates are four
-  "text_composition" entries; the earliest surviving texts get entries even when later ones are
-  more famous. A name crossing four languages is four "linguistic_transmission" entries — one
-  per attested FORM, each titled with the form in its own language and script, dated to when
-  that form is attested, and joined to the previous form by a "translates" connection whose
-  mechanism names the text or translator that carried it across. One entry summarising a chain
-  is not a chain.
-- THE CALENDAR IS PART OF THE ANSWER. Where the subject predates the era system its dates are
-  stated in, emit "dating_framework" entries for BOTH: what people at the time actually dated
-  by, and when and by whom the era now used was devised and adopted. Nobody alive in the period
-  was using the labels at the top of this report, and a reader is owed that.
-- THE ORIGIN IS THE EARLIEST DEFENSIBLE ORIGIN OF THE SUBJECT, NOT THE OLDEST ROW. Entries that
-  legitimately predate it are the ancestry it emerged among: type them "context", "term_history"
-  or "linguistic_transmission", and join them to the origin with "provides_context". They are
-  not competing origins and must not be described as the subject's beginning.
-- A TEXT AND ITS SURVIVING COPIES ARE TWO ENTRIES. The "text_composition" entry carries the
-  composition date. The "manuscript_witness" entry carries the physical copy's date, its
-  repository and its shelfmark in "provenance". Never merge them, and never present a surviving
-  copy's date as the date of the text.
-- A TEXT IS NOT EVIDENCE FOR THE EVENTS IT NARRATES. It is evidence that the text existed by a
-  certain date and that its community held what it says. For a "text_composition" entry the
-  claim must be a proposition about the TEXT. If you want to claim a narrated event happened,
-  that is a separate entry needing its own evidence — and if the only support is the narrative
-  itself, its evidence_type is "later_historical_account" or "tradition", never
-  "primary_document" or "contemporary_record".
-- WHAT DEVELOPED LATER IS DATED LATER. Canons, creeds, titles, offices, standards and
-  institutions are "institutional_development", dated to when they are ATTESTED. Never project
-  them backward onto the earliest evidence.
-- SAY WHAT IS MISSING. Where a subject has no contemporary documentation, that absence is one of
-  the most important findings in the report: name what does not exist, in "missing_piece" and in
-  "contemporary_evidence".
-- DATES ARE A CLAIM TOO. Where dates were reconstructed, use "reconstructed_date", and put the
-  ARGUMENT in the dossier's "why": what a reconstruction is worth is entirely the reasoning
-  behind it. Where a subject, or the movement around it, is placed decades or centuries before
-  the earliest surviving text describing it, say in that entry why historians place it there
-  anyway and what would move it. Where the dates were converted into a calendar nobody alive at
-  the time used, give that its own "dating_framework" entry rather than presenting the converted
-  date as a plain fact.
-- BACKGROUND IS NOT INFLUENCE. Older parallel traditions go in as "context" entries joined with
-  "provides_context". Including one never asserts that it shaped the subject.
+- EVIDENCE ONLY, NO EXCEPTIONS. If a candidate step is not a surviving object, it is a
+  conclusion. This holds however central it feels to the story, and however confident the
+  scholarship is. A trace of seven documents and eight conclusions is a good trace. A trace of
+  fifteen steps where six are inferred developments is a broken one.
+- A STEP MUST BE LOCATABLE. Name the repository, shelfmark, excavation report or critical
+  edition in "provenance". A step you cannot locate anywhere is a step you should not emit.
+- ONE OBJECT, ONE STEP; A CORPUS MAY BE ONE STEP. Where a group was produced together and is
+  dated and published as a group — the Dead Sea Scrolls, the four Gospels — one step for the
+  group is correct, with the range in "year"/"year_end". Where members carry genuinely different
+  dates and evidence and one can fail without the other, they are separate steps.
+- COMPOSITION AND SURVIVING COPY ARE NOT THE SAME FACT. The step is dated by composition; the
+  physical copy goes in "earliest_surviving_copy" and "provenance". Where a specific manuscript
+  is itself the point — because it is the earliest witness, or was found in an excavation — it
+  earns its own "manuscript" or "scroll" step, dated to the object.
+- SAY WHAT IS MISSING. Where there is no contemporary documentation, that absence is one of the
+  most valuable findings here: name what does not exist, in "missing_piece" and in
+  "contemporary_evidence", and put the significance of the silence in "conclusions".
+- EVERY RESEARCHED STRAND IS ACCOUNTED FOR. The block above says what the rounds found. Material
+  that is a surviving object becomes a step; material that is not becomes a conclusion. Nothing
+  researched is silently dropped — dropping it tells the reader the evidence was not there.
+
+RULES FOR CONCLUSIONS:
+
+- EVERY CONCLUSION NAMES ITS EVIDENCE in "rests_on". A conclusion resting on no step is allowed
+  and is sometimes the most important line in the report — but say so in "reasoning": that this
+  is widely held and the chain above does not contain anything that establishes it.
+- CONCLUSIONS ARE NOT DATED and are not ordered in time. They are readings, not moments.
+- DO NOT LAUNDER A CONCLUSION INTO A STEP by attaching a date to it. That is the exact failure
+  this structure exists to prevent.
 
 CONNECTIONS — the most important and most easily faked part of this report.
 
-A timeline implies that each item leads to the next. That implication is a CLAIM, and it is
-usually the weakest one on the page: "A, then B, therefore A caused B" is the error this report
-exists to expose. So every connection is judged on the same terms as any other claim.
+A chain implies that each item leads to the next. That implication is a CLAIM, and usually the
+weakest one on the page: "A, then B, therefore A caused B" is the error this report exists to
+expose. Two documents being consecutive in time says nothing about descent.
 
 Emit up to {max_connections} connections:
 {{
@@ -423,12 +465,12 @@ Emit up to {max_connections} connections:
   "citations": [<url>, ...],
   "evidence": {{
     "mechanism": <ONE sentence: HOW does the earlier item lead to the later one? Name the route —
-                  a translator, a manuscript family, a named borrowing, a documented transmission>,
+                  a translator, a manuscript family, a named borrowing, a documented quotation>,
     "supporting_evidence": <what actually evidences this link, or "None identified">,
     "contradictory_evidence": <evidence against the link, or "None identified">,
     "independent_corroboration": <support from a different information chain, or "None identified">,
     "scholarly_dispute": <disagreement among scholars about the link, or "None identified">,
-    "evidence_type": <same vocabulary as the dossier, applied to the LINK not the events>,
+    "evidence_type": <same vocabulary as the dossier, applied to the LINK not the objects>,
     "confidence": <0..1>,
     "confidence_label": "high|moderate|low|speculative",
     "why": <1-2 sentences on how strong this link really is>,
@@ -437,33 +479,23 @@ Emit up to {max_connections} connections:
 }}
 
 Connection rules — read these twice:
-- Two items being consecutive in time is NOT a connection. If you cannot state a concrete
-  mechanism and name evidence for it, use "no_established_link" and say in "why" that the
-  sequence is chronological only. That is a correct, valuable answer, not a failure.
-- Background that merely predates the subject is "provides_context", never "derives_from".
-  Shared themes are not descent, and similarity is not transmission.
+- Two items being consecutive is NOT a connection. If you cannot state a concrete mechanism and
+  name evidence for it, use "no_established_link" and say in "why" that the order is
+  chronological only. That is a correct and valuable answer, not a failure.
+- A later text quoting or translating an earlier one IS a mechanism, and one you can usually
+  evidence: name the passage. Shared themes are not descent, and similarity is not transmission.
 - Scholarly consensus that A influenced B is "scholarly_inference", NOT "primary_document",
   no matter how widely the influence is repeated.
-- Prefer few well-evidenced connections to many speculative ones.
-- Connect the origin to what it actually led to; do not chain every item to its neighbour by default.
-- Where sources disagree about whether a link exists, use "contradicts" or set
-  "contradictory_evidence" and lower the confidence accordingly.
+- Prefer few well-evidenced connections to many speculative ones, and do not chain every item to
+  its neighbour by default.
 
 General rules:
-- LENGTH IS NOT A VIRTUE, BUT NEITHER IS BREVITY. There is no entry limit. Every distinct item
-  above that carries its own date, its own evidence and its own way of being wrong is its own
-  entry. Merging two items because they are related loses the thing this report is for: they
-  rest on different evidence and one can fail without the other.
+- LENGTH IS NOT A VIRTUE, BUT NEITHER IS BREVITY. There is no limit on steps or conclusions.
+  Every distinct object with its own date, its own evidence and its own way of being wrong is
+  its own step.
 - Every claim must be backed by at least one citation URL from the provided list.
-- Where the only citations available for a claim are tier 4-5, say so in "why" and set the
-  evidence_type to what those sources can actually support. Do not describe a claim as primary
-  or contemporary evidence because a website stated it confidently.
-- Prefer the OLDEST well-attested source as origin; if it's truly oral / prehistoric, set year=null
-  and use an era_label.
-- "year" is the COMPOSITION or attestation date, never the date of events a text describes.
-- A scholar's conclusion is "scholarly_inference", not a record. A transmitted belief with no
-  documentary trail is "tradition". Only use "primary_document", "archaeological" or
-  "contemporary_record" when the evidence genuinely is one.
+- Where the only citations available are tier 4-5, say so in "why" and set the evidence_type to
+  what those sources can actually support.
 - Where a SOURCE PAGE was read, prefer what it actually says over any summary of it.
 - Sources that repeat one upstream report count as ONE. Do not describe them as corroboration.
 - "confidence_label" must be consistent with the numeric "confidence" (high >= 0.75,
@@ -522,9 +554,10 @@ Return JSON:
       "year": <signed integer or null>,        // the COMPOSITION date
       "era_label": <string or null>,
       "precision": "exact|year|decade|century|millennium|era|unknown",
-      "node_type": "event|reconstructed_date|text_composition|manuscript_witness|
-                    external_attestation|term_history|linguistic_transmission|
-                    institutional_development|dating_framework|context",
+      "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
+                    archaeological_find",   // what kind of SURVIVING thing this is
+      "is_evidence": <true only if this is a surviving object someone could go and examine;
+                      false for readings, developments, movements, expectations, inferred events>,
       "attribution": "established|attributed|disputed|anonymous|not_applicable",
       "source_title": <string>,
       "claim": <one sentence explaining how this sub-event relates to the anchor>,
@@ -584,9 +617,12 @@ Rules:
 - Being near the anchor in time is NOT a connection. If you cannot name a mechanism, use
   "no_established_link" and say so — a sub-event shown under a false relationship is worse
   than one shown with none. Background that merely predates the anchor is "provides_context".
-- A text and its surviving copies are TWO events: "text_composition" carries the composition
-  date, "manuscript_witness" carries the surviving copy, its date and its repository. A text is
-  evidence that the text existed, not evidence for the events it narrates.
+- A text and its surviving copies are TWO events: the work as "text" carries the composition
+  date, the physical copy as "manuscript" or "scroll" carries its own date and its repository. A
+  text is evidence that the text existed, not evidence for the events it narrates.
+- SUB-EVENTS ARE SURVIVING EVIDENCE TOO. Expanding a step means naming the next surviving objects
+  underneath it, not the story around it. If a sub-event is not something someone could go and
+  examine, it does not belong here.
 - Order events chronologically, oldest first.
 - Return ONLY JSON.
 """

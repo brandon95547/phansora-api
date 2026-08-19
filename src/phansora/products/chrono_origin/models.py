@@ -100,17 +100,30 @@ RelationType = Literal[
 # and what is merely the BACKGROUND it emerged from are four different claims
 # with four different kinds of evidence. Defaults to "event" so every trace
 # written before this taxonomy existed is still valid.
-NodeType = Literal[
-    "event",                     # something that happened, attested as such
-    "reconstructed_date",        # a date scholars reconstruct; no record states it
-    "text_composition",          # when a text was composed — NOT when its events happened
-    "manuscript_witness",        # a physically surviving copy, with its own date and repository
-    "external_attestation",      # an independent source referring to the subject from outside it
-    "term_history",              # the history of a word or title, separate from what it now names
-    "linguistic_transmission",   # how a name or term moved between languages
-    "institutional_development", # canons, creeds, offices — dated to when ATTESTED, never earlier
-    "dating_framework",          # how the dates themselves were derived or converted
-    "context",                   # background; influence explicitly NOT established
+# What kind of SURVIVING THING a step in the chain is.
+#
+# A trace is a chain of evidence, and every link in it must be something that still
+# exists and can be examined. That is the whole constraint: each step answers "what is
+# the next surviving piece of evidence?", and nothing that is not a surviving piece of
+# evidence is a step. The old vocabulary mixed artefacts ("manuscript_witness") with
+# interpretations of them ("context", "reconstructed_date", "institutional_development"),
+# which is how traces filled up with things nobody can go and look at — a supposed
+# climate of expectation, a movement's mood, a development inferred from silence. Those
+# are conclusions, and conclusions now live in their own list, AFTER the evidence that
+# is supposed to support them (see Conclusion below).
+#
+# If you cannot name where the object is, or the edition that publishes it, it is not
+# one of these.
+EvidenceKind = Literal[
+    "text",                # a work surviving through copies — a gospel, a history, a treatise
+    "manuscript",          # a specific physical copy: codex, papyrus, parchment leaf
+    "scroll",              # a rolled manuscript, kept distinct because its finds are dated as such
+    "letter",              # correspondence surviving as a text or an object
+    "inscription",         # cut, carved, painted or stamped onto a durable surface
+    "document",            # a charter, deed, contract, decree, or administrative record
+    "record",              # a register kept as a series: census, court, tax, parish
+    "artifact",            # an object carrying evidence: coin, seal, ostracon, tablet
+    "archaeological_find", # an excavated site, structure, or assemblage, as reported
 ]
 
 # Whether a work is really by whom it is credited to. "Attributed" is the honest
@@ -250,7 +263,7 @@ class TimelineEvent(BaseModel):
         default=None,
         description="Signed end year when this item spans a period rather than happening at a moment.",
     )
-    node_type: NodeType = "event"
+    node_type: EvidenceKind = "text"
     attribution: Attribution = "not_applicable"
     source_title: str
     claim: str
@@ -265,7 +278,7 @@ class OriginResult(BaseModel):
     era_label: Optional[str] = None
     precision: DatePrecision = "unknown"
     year_end: Optional[int] = None
-    node_type: NodeType = "event"
+    node_type: EvidenceKind = "text"
     attribution: Attribution = "not_applicable"
     source_title: str
     summary: str
@@ -349,6 +362,37 @@ class TokenUsage(BaseModel):
     by_stage: dict = Field(default_factory=dict)
 
 
+class Conclusion(BaseModel):
+    """Something the evidence is taken to show — kept OUT of the chain, and after it.
+
+    The chain answers one question at every step: what is the next surviving piece of
+    evidence? Anything that is not a surviving piece of evidence is a reading OF that
+    evidence, and mixing the two is what lets an interpretation inherit the authority of
+    an artefact. A reader who sees "messianic expectation" sitting between two
+    manuscripts has been shown a conclusion dressed as a find.
+
+    So conclusions are stated separately, after the evidence, and each one has to name
+    which pieces it rests on. A conclusion resting on nothing in the chain is exactly the
+    kind of claim this product exists to expose, and it stays visible rather than being
+    quietly dropped.
+    """
+
+    statement: str = Field(description="What the evidence is taken to show, as one plain proposition.")
+    rests_on: List[str] = Field(
+        default_factory=list,
+        description="Ids of the chain steps supporting this. Empty means nothing in the chain supports it.",
+    )
+    confidence_label: ConfidenceLabel = "moderate"
+    reasoning: str = Field(
+        default="",
+        description="How the named evidence gets you to the statement, in plain language.",
+    )
+    dissent: str = Field(
+        default="",
+        description="Serious disagreement with this reading, or 'None identified'.",
+    )
+
+
 class TraceResponse(BaseModel):
     title: str
     normalized_title: str
@@ -374,6 +418,10 @@ class TraceResponse(BaseModel):
     open_questions: List[str] = Field(
         default_factory=list,
         description="Evidence the research rounds looked for and did not find. What we do not know.",
+    )
+    conclusions: List[Conclusion] = Field(
+        default_factory=list,
+        description="What the evidence is taken to show. Stated after the chain, never inside it.",
     )
     usage: Optional[TokenUsage] = None
     iterations: int = 0

@@ -42,7 +42,7 @@ from ..config import get_settings
 #     a claimed tier can no longer promote a lead. Every one of those changes what
 #     a trace CONTAINS rather than what it looks like, so a v3 answer served for a
 #     v4 request would be the old research wearing the new pipeline's name.
-SCHEMA_VERSION = "v4"
+SCHEMA_VERSION = "v5"
 
 
 def normalize_title(title: str) -> str:
