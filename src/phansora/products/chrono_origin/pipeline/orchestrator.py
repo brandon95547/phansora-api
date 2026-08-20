@@ -1393,6 +1393,7 @@ class TraceOrchestrator:
             parent_claim=req.parent_claim or "(no prior claim recorded)",
             search_doctrine=SEARCH_DOCTRINE,
             mode_search=mode["search"],
+            mode_query=mode["query"],
             existing_block=existing_block,
         )
         try:

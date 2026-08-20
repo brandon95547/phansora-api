@@ -489,3 +489,72 @@ def test_the_existing_list_is_bounded():
     from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
 
     assert len(format_existing_block([f"Item {i}" for i in range(200)]).split("\n")) == 40
+
+
+# ------------------------------------------- the expand search must state its query
+# A real expansion came back with queries_run == ["jesus christ"] and citations full
+# of wallpaper pages and an article about basilisk lizards. The web query is scraped
+# out of the prompt by _derive_queries: it reads a "Search query:" line, and
+# EXPAND_SEARCH_PROMPT never had one, so it fell through to "first quoted string" —
+# the story title. Every expansion ever run searched the bare subject.
+def test_the_expand_prompt_states_a_query_the_client_can_find():
+    from phansora.products.chrono_origin.pipeline import prompts as P
+    from phansora.shared.ai.deepseek_research import _QUERY_LINE
+
+    m = P.expand_mode("discovery")
+    out = P.EXPAND_SEARCH_PROMPT.format(
+        story_title="Jesus Christ", context_clause="", when="1200-400 BC",
+        parent_source_title="Hebrew scriptures", parent_claim="c",
+        search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
+        mode_query=m["query"], existing_block=P.format_existing_block([]),
+    )
+    found = _QUERY_LINE.search(out)
+    assert found, "no 'Search query:' line — the search falls back to the story title"
+    query = found.group(1).strip()
+    # It must be about the ANCHOR, not the subject of the whole trace.
+    assert "Hebrew scriptures" in query
+    assert query.strip().lower() != "jesus christ"
+
+
+def test_the_expand_query_is_aimed_by_the_mode():
+    from phansora.products.chrono_origin.pipeline import prompts as P
+    from phansora.shared.ai.deepseek_research import _QUERY_LINE
+
+    def query_for(mode):
+        m = P.expand_mode(mode)
+        out = P.EXPAND_SEARCH_PROMPT.format(
+            story_title="S", context_clause="", when="", parent_source_title="Anchor",
+            parent_claim="c", search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
+            mode_query=m["query"], existing_block=P.format_existing_block([]),
+        )
+        return _QUERY_LINE.search(out).group(1).strip()
+
+    # Six modes must produce six different searches, or the choice is decorative.
+    queries = {q for q in (query_for(m) for m in P.EXPAND_MODES)}
+    assert len(queries) == len(P.EXPAND_MODES)
+
+
+def test_every_mode_carries_search_keywords():
+    """The prose directive instructs the summariser; it is useless as a web query."""
+    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
+
+    for name, spec in EXPAND_MODES.items():
+        assert spec.get("query"), f"{name} has no web-query keywords"
+        assert len(spec["query"].split()) >= 3, name
+
+
+def test_the_anchor_is_what_the_fallback_angle_picks_up():
+    """_derive_queries adds the first quoted string as a second search.
+
+    That used to be the story title, so even the second angle was the bare subject.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+    from phansora.shared.ai.deepseek_research import _QUOTED
+
+    m = P.expand_mode("related")
+    out = P.EXPAND_SEARCH_PROMPT.format(
+        story_title="Jesus Christ", context_clause="", when="", parent_source_title="Dead Sea Scrolls",
+        parent_claim="c", search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
+        mode_query=m["query"], existing_block=P.format_existing_block([]),
+    )
+    assert _QUOTED.search(out).group(1).strip() == "Dead Sea Scrolls"
