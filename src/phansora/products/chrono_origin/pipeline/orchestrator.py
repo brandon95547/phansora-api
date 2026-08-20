@@ -1494,8 +1494,13 @@ class TraceOrchestrator:
                 # a node could sprout children the chain rule would have refused — an
                 # undated press headline came back as a step under the Dead Sea Scrolls.
                 # A branch is part of the timeline; it is held to the timeline's rules.
-                if not is_evidence_kind(entry.get("node_type")):
-                    logger.info("Expand: dropped non-evidence %r", entry.get("source_title"))
+                # A branch may be an event; the chain may not. Expanding explains a
+                # node, and "in 1947 shepherds found jars in a cave" is the true answer
+                # to how the scrolls were discovered — refusing it because a shepherd is
+                # not an artefact is what made three of the six modes unanswerable.
+                kind = entry.get("node_type")
+                if not (is_evidence_kind(kind) or kind == "event"):
+                    logger.info("Expand: dropped unusable kind %r for %r", kind, entry.get("source_title"))
                     continue
                 if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
                     logger.info("Expand: dropped undated %r", entry.get("source_title"))

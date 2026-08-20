@@ -1,7 +1,7 @@
 """Pydantic schemas for the Chrono-Origin API."""
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -125,6 +125,18 @@ EvidenceKind = Literal[
     "artifact",            # an object carrying evidence: coin, seal, ostracon, tablet
     "archaeological_find", # an excavated site, structure, or assemblage, as reported
 ]
+
+
+# What a node may be on the WIRE. Wider than EvidenceKind by exactly one member.
+#
+# The chain admits only surviving objects, and the gate in the orchestrator enforces
+# that regardless of what arrives. A BRANCH is a different thing: it explains the node
+# it hangs from, and the honest answer to "how was this discovered" is often something
+# that happened — shepherds finding jars in a cave in 1947. Refusing that because a
+# shepherd is not an artefact is what made three of the six expansion modes
+# unanswerable, so "event" is legal here and still refused by the chain.
+NodeKind = Union[EvidenceKind, Literal["event"]]
+
 
 # Whether a work is really by whom it is credited to. "Attributed" is the honest
 # default for most ancient texts and has nowhere to live in a plain title string.
@@ -263,7 +275,7 @@ class TimelineEvent(BaseModel):
         default=None,
         description="Signed end year when this item spans a period rather than happening at a moment.",
     )
-    node_type: EvidenceKind = "text"
+    node_type: NodeKind = "text"
     attribution: Attribution = "not_applicable"
     source_title: str
     claim: str
@@ -278,7 +290,7 @@ class OriginResult(BaseModel):
     era_label: Optional[str] = None
     precision: DatePrecision = "unknown"
     year_end: Optional[int] = None
-    node_type: EvidenceKind = "text"
+    node_type: NodeKind = "text"
     attribution: Attribution = "not_applicable"
     source_title: str
     summary: str

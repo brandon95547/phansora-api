@@ -740,6 +740,13 @@ of this anchor in the history of "{story_title}".
 WHAT THIS EXPANSION IS FOR — {mode_label}:
 {mode_extract}
 
+A BRANCH MAY BE AN EVENT. The main chain admits only surviving objects, because a
+chain asserts what exists. A branch does a different job — it explains the node it hangs
+from — so a dated, cited happening is a legitimate answer here: a discovery, an
+excavation, a publication, a decipherment, a test. Prefer the object when there is one
+(name the excavation report rather than the dig), but do not return nothing merely
+because the honest answer is something that happened.
+
 EVERY SUB-EVENT CARRIES A DATE. "year", or "year"+"year_end" for something produced over
 a period. A branch takes a position on the timeline exactly as a step does, so an undated
 one has nowhere to sit and is DISCARDED before it reaches the board — an estimate with a
@@ -779,9 +786,15 @@ Return JSON:
       "era_label": <string or null>,
       "precision": "exact|year|decade|century|millennium|era|unknown",
       "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
-                    archaeological_find",   // what kind of SURVIVING thing this is
-      "is_evidence": <true only if this is a surviving object someone could go and examine;
-                      false for readings, developments, movements, expectations, inferred events>,
+                    archaeological_find|event",
+      // The nine object kinds, OR "event" — and event is allowed HERE and not in the
+      // main chain. A branch explains an anchor; the chain asserts what survives. "In
+      // 1947 Bedouin shepherds found jars in a cave at Qumran" is the true answer to how
+      // the scrolls were discovered, and refusing it because a shepherd is not an
+      // artefact makes the question unanswerable. Use an object kind whenever the thing
+      // IS one — the excavation report, the first edition — and "event" when the honest
+      // answer is something that happened.
+      "is_evidence": <true if this is a surviving object; false for an event or an account>,
       "attribution": "established|attributed|disputed|anonymous|not_applicable",
       "source_title": <string>,
       "claim": <one sentence explaining how this sub-event relates to the anchor>,
