@@ -369,6 +369,26 @@ and background is not a step and not a conclusion either; it is simply out of sc
 That test is also what stops the chain regressing forever. It reaches back while documents point
 at documents, and halts where they stop pointing.
 
+EVERY STEP CARRIES A DATE. "year", or "year"+"year_end" for something produced over a period.
+This is the one field a step cannot do without: a chain is an order, and an undated object has
+no position in it. Where the date is a scholarly estimate or a wide range, give the range and say
+so in the dossier — a range is a date, "unknown" is not. An object you genuinely cannot date is
+not a step; put what it shows in "conclusions" instead.
+
+Corpora get ranges: scriptures composed across centuries take the span of their composition, not
+the date of one book inside them, and not nothing.
+
+ONE WORK PER STEP WHEN THE DATES DIFFER. "New Testament writings (Gospels, Epistles), 50-100" is
+two steps wearing one label — the letters of Paul at roughly 50-65 and the gospels at roughly
+65-100 have different authors, different dates and different evidence, and either can be wrong
+without the other. Group only what was genuinely produced and dated as a unit.
+
+NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM. A later church, a site, an object from the
+right region and the wrong century may be perfectly real evidence of something else. The test is
+still the one above: does a later step quote, translate, continue or physically witness it? If
+you find yourself writing that a step does not bear on the subject, you have written a
+conclusion, and it belongs in "conclusions".
+
 WHO WROTE IT DOES NOT DECIDE WHETHER IT IS A STEP.
 
 A text written from inside the tradition, by a believer, a partisan, a follower or an

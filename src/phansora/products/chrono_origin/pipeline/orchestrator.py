@@ -1191,6 +1191,12 @@ class TraceOrchestrator:
             if not is_evidence_kind(entry.get("node_type")):
                 demoted.append(entry)
                 continue
+            if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
+                # A chain is an order. An object with no date has no place in one, and
+                # letting it in is what put an undated step at the head of the chain
+                # while the first thing a reader could see a date on was centuries later.
+                demoted.append(entry)
+                continue
             conf = float(entry.get("confidence", 0.5) or 0.5)
             # Ids come from the model so connections can reference them, but must
             # be unique and present — a duplicate id would silently reroute edges.
@@ -1232,6 +1238,17 @@ class TraceOrchestrator:
         # Chronological sort, oldest first; null years go last. Ids were assigned
         # before this so they survive the reordering and connections stay valid.
         timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+
+        # If the model's origin has no date and the chain does, the two swap places —
+        # ids included, so "origin" keeps naming the first step and connections still
+        # resolve. The model picked the right object last time and simply left the date
+        # off it, which is enough to make a trace look like it starts centuries late.
+        if origin.year is None and origin.year_end is None and timeline:
+            first = timeline.pop(0)
+            displaced = TimelineEvent(**{**origin.model_dump(), "id": first.id, "claim": origin.summary})
+            origin = OriginResult(**{**first.model_dump(), "id": "origin", "summary": first.claim})
+            timeline.append(displaced)
+            timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
 
         conclusions = _build_conclusions(final.get("conclusions"), demoted, valid_ids=used_ids)
 

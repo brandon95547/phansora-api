@@ -376,3 +376,35 @@ def test_independence_stays_a_dossier_field_not_a_gate():
     assert "independent_corroboration" not in "".join(
         ln for ln in P.SYNTHESIZE_PROMPT.split("\n") if "RULES FOR THE CHAIN" in ln
     )
+
+
+# ------------------------------------------------------ every step is dated
+# A live trace put the Hebrew scriptures at the head of the chain with year=null,
+# so the first step a reader could see a date on was 50 CE and the trace looked
+# like it began five centuries late. A chain is an order; an undated object has no
+# position in one.
+def test_an_undated_step_is_not_a_step():
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    s = P.SYNTHESIZE_PROMPT
+    assert "EVERY STEP CARRIES A DATE" in s
+    assert "an undated object has" in s
+
+
+def test_the_prompt_refuses_to_let_works_be_lumped():
+    """"New Testament writings (Gospels, Epistles), 50-100" is two steps in one label."""
+    import re
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+    assert "ONE WORK PER STEP WHEN THE DATES DIFFER" in flat
+    assert "Group only what was genuinely produced and dated as a unit" in flat
+
+
+def test_the_descent_test_covers_the_real_but_unrelated_find():
+    """A 4th-century church is real evidence, and nothing in the chain descends from it."""
+    import re
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+    assert "NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM" in flat
