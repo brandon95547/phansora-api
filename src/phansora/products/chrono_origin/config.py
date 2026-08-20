@@ -27,7 +27,20 @@ class Settings(BaseSettings):
     chrono_min_depth: int = 2
     chrono_max_sources_per_stage: int = 8
     chrono_max_queries_per_stage: int = 6
-    chrono_request_timeout_s: int = 300
+    # MUST exceed the LLM client's worst case, or every slow call leaks a thread.
+    #
+    # /trace and /expand run their work in a ThreadPoolExecutor and bound it with
+    # asyncio.wait_for. wait_for cancels the AWAIT; it cannot cancel the thread. So
+    # when the budget is shorter than the work, the handler returns 504 and the thread
+    # keeps running, holding a worker until it finishes on its own. Four of those and
+    # the pool is exhausted: later requests queue and never start, which looks exactly
+    # like the product being dead — requests arriving, no LLM calls being made.
+    #
+    # The DeepSeek client is 120s per attempt with 3 attempts plus backoff: ~370s worst
+    # case. This sits above it so the thread always completes before the handler gives
+    # up. The caller sees a failure sooner regardless — the Node proxy times out at
+    # 180s — but the worker is always returned.
+    chrono_request_timeout_s: int = 420
 
     # Reading real source pages. This is the expensive half of the budget and the
     # only thing that makes a provenance claim checkable rather than recalled, so

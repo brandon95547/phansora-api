@@ -558,3 +558,33 @@ def test_the_anchor_is_what_the_fallback_angle_picks_up():
         mode_query=m["query"], existing_block=P.format_existing_block([]),
     )
     assert _QUOTED.search(out).group(1).strip() == "Dead Sea Scrolls"
+
+
+# --------------------------------------------- the executor must not leak workers
+# /trace and /expand run their work in a ThreadPoolExecutor and bound it with
+# asyncio.wait_for, which cancels the AWAIT and cannot cancel the thread. When the
+# budget is shorter than the work, the handler returns 504 and the thread keeps
+# running, holding a worker until it finishes. Four of those exhausted the pool and
+# the product went silent: requests arriving, no LLM calls made.
+def test_the_request_budget_exceeds_the_client_worst_case():
+    from phansora.products.chrono_origin.config import get_settings
+    from phansora.shared.ai.deepseek_research import DeepSeekConfig
+
+    budget = get_settings().chrono_request_timeout_s
+    # 3 attempts is what tenacity is configured for on the DeepSeek client.
+    worst_case = DeepSeekConfig.timeout_s * 3
+    assert budget > worst_case, (
+        f"budget {budget}s is below the client's {worst_case}s worst case — a slow call "
+        "abandons its thread and leaks an executor worker"
+    )
+
+
+def test_the_pool_is_wide_enough_that_one_product_cannot_starve_the_process():
+    """The executor is shared by every product in this process, not just Chrono."""
+    import re
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src/phansora/products/chrono_origin/server.py"
+    m = re.search(r"ThreadPoolExecutor\(max_workers=(\d+)", src.read_text())
+    assert m, "executor construction moved; this guard needs updating"
+    assert int(m.group(1)) >= 8, "a handful of slow requests should not take the product down"

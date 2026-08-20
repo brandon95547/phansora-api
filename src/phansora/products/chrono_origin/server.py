@@ -36,7 +36,10 @@ async def lifespan(app: FastAPI):
     logger.info("Chrono-Origin LLM provider: %s", provider)
     if provider == "deepseek":
         logger.info("DeepSeek external search: %s", os.getenv("CHRONO_SEARCH_PROVIDER", "auto"))
-    app.state.executor = ThreadPoolExecutor(max_workers=4)
+    # Four was enough when nothing leaked. It is not a safety limit — the work is
+    # network-bound, so idle threads cost almost nothing — and at four, a handful of
+    # slow requests took the whole product down for every user in the process.
+    app.state.executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="chrono")
     app.state.orchestrator = TraceOrchestrator()
     app.state.job_manager = JobManager(app.state.orchestrator, app.state.executor)
     yield
@@ -156,6 +159,12 @@ async def expand(req: ExpandRequest):
             timeout=timeout,
         )
     except asyncio.TimeoutError:
+        # The thread is still running and still holds a worker. Logged loudly because
+        # this is the shape of a pool leak, and it was invisible until now.
+        logger.warning(
+            "Expand exceeded %ss; its worker is still occupied until the work finishes.",
+            timeout,
+        )
         raise HTTPException(status_code=504, detail=f"Expand exceeded {timeout}s timeout.")
     except RuntimeError as exc:
         # RuntimeError reaches here from the LLM client, whose message embeds the
