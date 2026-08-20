@@ -110,31 +110,33 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Research the historical evidence for "{title}"{context_clause} and build a chronological evidence trace.
+Research the historical evidence for "{title}"{context_clause} and build a chronological evidence timeline.
 
-Do not begin with the earliest evidence that directly mentions or exists during the lifetime of the search term.
+Before building the timeline, identify the earliest strong evidence directly associated with the search term.
 
-Before choosing the first node, determine whether the evidence surrounding the search term points to an older documented source, text, object, practice, technology, work, system, event, or body of evidence.
+Then trace backward from that evidence.
 
-If it does, follow those connections backward.
+Ask what that evidence came from, relied upon, quoted, copied, translated, inherited, developed from, or was directly connected to.
 
-Continue working backward for as long as identifiable evidence supports the connection.
+For every earlier connection you find, ask the same question again.
 
-The first node should represent the earliest meaningful point in that evidence chain, not simply the earliest surviving object that directly mentions the search term.
+Continue tracing backward until the evidence no longer supports another meaningful step.
 
-Then work forward chronologically toward the search term and beyond it where later evidence materially strengthens the trace.
+That earliest supported point becomes the beginning of the timeline.
 
-The purpose is to answer:
+Then build the timeline forward chronologically from that point.
 
-Where does the evidence trail actually begin?
+The timeline should therefore not automatically begin with the first evidence that directly mentions "{title}". It should begin with the earliest evidence reached by tracing the supported evidence chain backward.
 
-What earlier evidence does the later evidence depend upon, reference, quote, preserve, translate, reproduce, develop from, respond to, or otherwise demonstrably connect to?
+Only follow connections that can be supported by identifiable evidence. Do not move backward merely to find something older.
 
-Do not require a direct mention of "{title}" for an earlier item to qualify. An earlier item belongs when there is evidence establishing why it is part of the chain.
+Do not use theories, assumptions, traditions, beliefs, cultural context, expectations, or reconstructed ideas as timeline nodes simply because they may have influenced the subject.
 
-Do not include general historical background merely because it existed earlier. Every earlier node must have a demonstrable reason for belonging to the trace.
+Every node must represent identifiable evidence relevant to the trace.
 
-For each timeline item determine:
+Depending on the search term, evidence may be textual, physical, documentary, archaeological, visual, scientific, technical, institutional, or another appropriate form. Let the subject determine the evidence.
+
+For each node determine:
 
 Date
 When does the evidence date from?
@@ -145,41 +147,35 @@ What exactly is it?
 Source
 What is the underlying source for our knowledge of it?
 
-Original vs. surviving evidence
-Does the original survive? If not, identify the earliest surviving copy, record, description, reproduction, documentation, or other evidence through which it is known.
-
-What it establishes
-What can this evidence actually establish?
+Original and surviving evidence
+If the original no longer survives, identify the earliest surviving evidence for it when known.
 
 Connection
-Why does this item belong in this particular evidence chain?
+What evidence connects this node to the trace?
+
+What it establishes
+What can actually be established from this evidence?
 
 Uncertainty
 What is estimated, disputed, reconstructed, or unknown?
 
-When a work was originally created at one date but its earliest surviving evidence comes from a later date, keep those dates separate.
-
-Keep evidence separate from interpretation.
-
-Do not create nodes solely from theories, beliefs, traditions, assumptions, expectations, scholarly interpretations, or general historical context.
-
-Every node must add new and meaningful evidence.
+Do not assume that chronological order establishes a connection.
 
 Do not repeat evidence already represented elsewhere.
 
-Do not assume two items are connected merely because one occurred before the other. Only establish a connection when evidence supports it.
+If there is a gap in the evidence, leave the gap visible.
 
-If there is a gap, leave the gap visible. Never fill it with a plausible assumption.
+Never fill a gap with a plausible explanation.
 
 Prefer primary evidence and authoritative documentation whenever available. Trace secondary reporting back to the underlying evidence whenever possible.
 
-If multiple sources ultimately rely upon the same underlying evidence, do not treat them as independent confirmation.
+If multiple sources rely on the same underlying evidence, treat them as one source of evidence rather than independent confirmation.
 
 If sources disagree, preserve the disagreement.
 
-If something cannot be established, say so plainly.
+If something cannot be established, say so.
 
-The goal is to produce the strongest chronological chain of identifiable evidence for "{title}", beginning where the evidence trail actually begins rather than where the search term itself first appears.
+The goal is to find "{title}", trace its supported evidence chain backward as far as it can reasonably go, and then present the complete evidence chain forward in chronological order.
 """
 
 
