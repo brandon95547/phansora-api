@@ -118,6 +118,19 @@ Before constructing the timeline, perform multiple web searches using different 
 
 Do not construct the final timeline until the web research is complete.
 
+BEGIN BY ANSWERING THIS QUESTION, BY SEARCHING. Do this before anything else.
+
+"What older, already-existing thing does the earliest evidence about "{title}" draw on —
+quoting it, citing it, translating it, depicting it, building on it, or deriving from it?"
+
+Search for that. Then search for the oldest surviving evidence of THAT older thing — what it
+is, its date, and the institution holding or publishing it. Then ask the same question again
+of what you just found, and keep going while the evidence supports another step.
+
+Drawing on a different, older thing is a step backward. A later copy, reprint, reissue or
+reproduction of the SAME thing is not — that is one item, however many copies exist.
+
+
 Build a chronological evidence trace showing both the evidence directly concerning "{title}" and the earlier identifiable evidence that later sources demonstrably use.
 
 Earlier evidence may be included even when it does not mention "{title}".
