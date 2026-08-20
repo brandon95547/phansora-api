@@ -160,48 +160,83 @@ def test_a_demoted_step_with_no_words_is_skipped():
 
 
 # ------------------------------------------------------------------- strands
-def test_the_research_prompt_asks_for_descent_first():
-    """Where the chain starts is decided here, before any model reasoning.
+def test_the_research_prompt_goes_backward_before_forward():
+    """Where a chain starts is decided here, before any model reasoning.
 
     Seven fixed queries used to fan out from this stage — six asking what survives
-    ABOUT the subject, one asking what its evidence DESCENDS FROM. The chain rule
-    says a chain begins with descent, so the deciding half was outvoted six to one in
-    every corpus and a trace of Jesus opened at the Dead Sea Scrolls, dropping the
-    four centuries of scripture the Scrolls are copies of.
+    ABOUT the subject, one asking what its evidence DESCENDS FROM — so the deciding
+    half was outvoted six to one and a trace of Jesus opened at the Dead Sea Scrolls,
+    dropping the four centuries of scripture the Scrolls are copies of. The prompt now
+    walks back first and only then forward, and stops where the evidence stops rather
+    than at a fixed depth.
     """
     from phansora.products.chrono_origin.pipeline import prompts as P
 
     body = P.RESEARCH_PROMPT
-    assert "PART 1 — WHAT THIS DESCENDS FROM" in body
-    assert "PART 2 — WHAT SURVIVES ABOUT THE SUBJECT" in body
-    assert body.index("PART 1") < body.index("PART 2")
+    assert "continue backward until the evidence no longer supports going further" in body
+    assert "Then trace the evidence forward chronologically" in body
+    assert body.index("backward") < body.index("forward")
 
 
-def test_the_research_prompt_keeps_the_evidence_vocabulary():
-    """The strand list was the useful half of the fan-out and had to survive it.
+def test_the_research_prompt_lets_the_subject_choose_its_evidence_types():
+    """A fixed category list is the fan-out's mistake one level down.
 
-    Naming shelfmarks, ostraca and excavation reports is how the model is told what a
-    findable object looks like — which is the whole test for whether something may be
-    a step at all.
+    Prescribing manuscripts, inscriptions and excavation reports suits an ancient
+    figure and quietly misfits a 1947 aircraft, a patent or a piece of software — the
+    model spends the search satisfying our categories instead of following the subject.
     """
     from phansora.products.chrono_origin.pipeline import prompts as P
 
-    body = P.RESEARCH_PROMPT.lower()
-    for word in ("shelfmark", "ostraca", "excavation report", "repository",
-                 "critical edition", "palaeographic", "composition"):
-        assert word in body, f"{word!r} was lost with the strand templates"
+    body = P.RESEARCH_PROMPT
+    assert "Let the search term determine what types of evidence are relevant" in body
+    assert "Do not force predetermined evidence categories onto the subject" in body
 
 
-def test_the_research_prompt_demands_both_dates():
-    """Composition and earliest surviving copy are different facts.
+def test_the_research_prompt_asks_what_survives_of_each_item():
+    """Original and surviving copy are different facts.
 
-    Collapsing them is how a copy ends up standing in for the work it copies, which
-    is exactly the failure that put the Dead Sea Scrolls at the head of a chain.
+    Collapsing them is how a copy stands in for the work it copies — which is exactly
+    what put the Dead Sea Scrolls at the head of a chain with nothing before them.
     """
     from phansora.products.chrono_origin.pipeline import prompts as P
 
-    assert "COMPOSITION" in P.RESEARCH_PROMPT
-    assert "EARLIEST SURVIVING COPY" in P.RESEARCH_PROMPT
+    body = P.RESEARCH_PROMPT
+    assert "Original vs. surviving evidence" in body
+    assert "Does the original survive?" in body
+    assert "earliest surviving copy" in body
+
+
+def test_the_research_prompt_asks_the_same_six_things_of_every_item():
+    """The per-item shape synthesis is expecting to find in the corpus."""
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    body = P.RESEARCH_PROMPT
+    for field in ("Date", "Evidence", "Source", "Original vs. surviving evidence",
+                  "What it establishes", "Uncertainty"):
+        assert f"\n{field}\n" in body, f"{field!r} is not asked for per item"
+
+
+def test_the_research_prompt_keeps_interpretation_out_of_the_chain():
+    """The chain rule, stated at the point the material is gathered.
+
+    Filtering at synthesis alone is too late: a corpus made of readings gives synthesis
+    nothing else to build from, and a reading placed among artefacts inherits an
+    authority it has not earned.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    body = P.RESEARCH_PROMPT
+    assert "Keep evidence separate from interpretation" in body
+    for word in ("theories", "beliefs", "traditions", "assumptions", "expectations",
+                 "scholarly interpretations", "general historical context"):
+        assert word in body, f"{word!r} is no longer ruled out as a node on its own"
+
+
+def test_the_research_prompt_says_when_to_admit_a_gap():
+    """A stated absence is a finding. A filled one is a fabrication."""
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    assert "If no established connection exists, say so." in P.RESEARCH_PROMPT
 
 
 def test_the_strand_fan_out_is_gone():
@@ -398,6 +433,18 @@ def test_the_research_prompt_does_not_call_descent_background_only():
     from phansora.products.chrono_origin.pipeline import prompts as P
 
     assert "BACKGROUND ONLY" not in P.RESEARCH_PROMPT
+
+
+def test_a_search_can_still_be_disambiguated():
+    """"Mercury" is a planet, a god and an element.
+
+    The context box is a real field on the dashboard form, so the term the model is
+    handed has to carry it or the trace silently researches the wrong subject.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    out = P.RESEARCH_PROMPT.format(title="Mercury", context_clause=" (the planet)")
+    assert '"Mercury" (the planet)' in out
 
 
 # --------------------------------------------- provenance is not admissibility

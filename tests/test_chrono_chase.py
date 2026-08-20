@@ -91,9 +91,6 @@ class TestPromptDiscipline:
         assert "LEAD GENERATORS, NOT EVIDENCE" in synthesize
 
     def test_the_short_form_reaches_every_searching_stage(self):
-        search = P.RESEARCH_PROMPT.format(
-            title="t", context_clause="", search_doctrine=P.SEARCH_DOCTRINE
-        )
         chase = P.CHASE_SEARCH_PROMPT.format(
             title="t", claim="c", weak_source="w", cites="", references="",
             search_doctrine=P.SEARCH_DOCTRINE,
@@ -106,7 +103,7 @@ class TestPromptDiscipline:
             mode_query=P.expand_mode("related")["query"],
             existing_block=P.format_existing_block(["Already shown"]),
         )
-        for prompt in (search, chase, expand):
+        for prompt in (chase, expand):
             assert "LEADS" in prompt
 
     def test_the_stage_that_assigns_tiers_is_told_what_they_are(self):
@@ -158,13 +155,13 @@ class TestPromptDiscipline:
         assert "Dead Sea Scrolls" in s and "Septuagint" in s and "Tacitus" in s
         assert "messianic expectation" in s.lower()
 
-    def test_the_research_stage_is_told_what_a_findable_object_looks_like(self):
-        # This replaced a check that the planner named every strand the loop
-        # measured. There is no planner and no strand list now — one research call
-        # carries the vocabulary itself, and if it loses that the model has nothing
-        # telling it what may be a step.
-        research = P.RESEARCH_PROMPT.format(
-            title="t", context_clause="", search_doctrine=P.SEARCH_DOCTRINE
-        )
-        for word in ("shelfmark", "repository", "excavation report", "critical edition"):
-            assert word in research.lower(), word
+    def test_the_research_stage_carries_its_own_rules_not_the_doctrine_block(self):
+        # The research prompt is self-contained now: it asks per item what the
+        # underlying source is, whether the original survives, and what is disputed,
+        # which is the same ground SEARCH_DOCTRINE covered in the abstract. The
+        # doctrine block still goes to the chase and expand stages, which have no
+        # such structure of their own.
+        research = P.RESEARCH_PROMPT.format(title="t", context_clause="")
+        assert "EVIDENCE RULES for this summary" not in research
+        assert "What is the underlying source for our knowledge of it?" in research
+        assert "What is estimated, disputed, reconstructed, or unknown?" in research

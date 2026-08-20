@@ -88,73 +88,72 @@ metadata · 4 institutional write-ups (university, museum, agency pages ABOUT so
 Tiers 4-5 are leads, never the basis of a claim. When a mention rests only on them, say so and
 name what THEY cite so it can be chased. Never fill an unknown with a plausible guess.
 """
+
+
 # ---------------------------------------------------------------------------
 # The research pass. One call, and the model does its own searching.
 #
 # There used to be seven, one per evidence "strand", each a fixed template fired
 # blind. That existed because the model could not search: the queries had to be
 # guessed in advance, and one per category was the only way to guarantee coverage.
-# It also broke the chain. Six of the seven asked what survives ABOUT the subject
-# and one asked what its evidence DESCENDS FROM — so the half that decides where a
-# chain STARTS was outvoted six to one in every corpus. A trace of Jesus opened at
-# the Dead Sea Scrolls and lost the four centuries before them.
+# It also broke the chain — six of the seven asked what survives ABOUT the subject
+# and one asked what its evidence DESCENDS FROM, so the half that decides where a
+# chain STARTS was outvoted six to one. A trace of Jesus opened at the Dead Sea
+# Scrolls and lost the four centuries of scripture the Scrolls are copies of.
 #
-# Gemini runs its own searches, so there are no slots left to allocate badly. The
-# strand vocabulary — shelfmarks, ostraca, excavation reports, repositories,
-# critical editions — moved in here, where its real job is telling the model what a
-# findable object looks like. Descent leads, and the answer is structured in two
-# parts so it cannot be squeezed out by material merely about the subject.
+# This prompt is the user's own text, kept verbatim. It replaces the prescribed
+# evidence categories with a rule that the SUBJECT decides which kinds of evidence
+# are relevant — a fixed list is the same mistake the fan-out made, one level down.
+# `{context_clause}` rides along with the term so a search can still be
+# disambiguated ("Mercury" the planet from "Mercury" the god); nothing else was
+# added, and the SEARCH_DOCTRINE block that used to sit here is gone with it.
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Research the surviving physical evidence for "{title}"{context_clause}, searching the web
-as many times as the question needs.
+Research the historical evidence for "{title}"{context_clause} and build a chronological trace showing its origin and development through identifiable evidence.
 
-Everything you report must be something that STILL EXISTS AND CAN BE EXAMINED: a text, a
-manuscript, a scroll, a letter, an inscription, a document, a record, an object, an
-excavated find. The test, applied without mercy: could someone go and look at it? If you
-cannot name a repository, a shelfmark, an excavation report or a critical edition, it is
-not evidence for this purpose. A tradition, a movement, an expectation or a climate of
-belief is not a surviving object — say plainly when the sources support only that.
+Start by determining the earliest identifiable evidence relevant to the search term.
 
-For every item give its COMPOSITION date and the date of its EARLIEST SURVIVING COPY
-separately whenever both are known. They are different facts and both are needed.
+If that evidence clearly points to something earlier, continue backward until the evidence no longer supports going further. Then trace the evidence forward chronologically.
 
-{search_doctrine}
+Let the search term determine what types of evidence are relevant. Do not force predetermined evidence categories onto the subject.
 
-Answer in two parts, both required.
+Use identifiable historical evidence appropriate to the subject, including physical, textual, documentary, archaeological, visual, scientific, technical, institutional, or other documented evidence when relevant.
 
-PART 1 — WHAT THIS DESCENDS FROM. Do this part first and do not skimp on it.
+For each timeline item determine:
 
-The older material the subject's own sources are made out of: the corpus its texts quote,
-the tradition they are composed inside, the text they translate, the language they are
-written in — and the surviving objects that carry those things today.
+Date
+When does the evidence date from?
 
-Work BACKWARDS and reach far. For a first-century subject that means asking what
-scriptures, translations and copies already existed and are still readable now —
-centuries earlier, not decades. Keep stepping back while documents point at documents,
-and stop where they stop pointing. This is the part most often researched thinly, and it
-is where the chain begins: a trace that opens in the subject's own century has silently
-answered a much smaller question than the one asked.
+Evidence
+What exactly is it?
 
-PART 2 — WHAT SURVIVES ABOUT THE SUBJECT. Cover each of these, and say when one is empty:
+Source
+What is the underlying source for our knowledge of it?
 
-- the earliest surviving texts about or by the subject, earliest first, with estimated
-  composition dates and the scholarly basis for each date
-- the manuscripts, scrolls and fragments carrying those texts: shelfmark, repository,
-  palaeographic date, and how far each copy postdates composition
-- surviving texts from OUTSIDE the subject's own tradition that mention it, with their
-  own composition dates and how those texts themselves survive
-- surviving documents and administrative records — decrees, censuses, court, tax or
-  official registers — and the archive holding them
-- surviving inscriptions, coins, seals, ostraca and inscribed objects, with find context,
-  date and holding institution
-- excavated sites, structures and assemblages, as published in excavation reports
+Original vs. surviving evidence
+Does the original survive? If not, identify the earliest surviving copy, record, description, reproduction, documentation, or other evidence through which it is known.
 
-At most 900 words across both parts. Name dates, works, shelfmarks, repositories and
-excavation reports wherever the sources do. Where a category genuinely has nothing, say
-so explicitly — a stated absence is a finding; an absence filled with a plausible guess
-is a fabrication.
+What it establishes
+What can this evidence actually establish about the search term?
+
+Uncertainty
+What is estimated, disputed, reconstructed, or unknown?
+
+Keep evidence separate from interpretation.
+
+Do not create timeline nodes solely from theories, beliefs, traditions, assumptions, expectations, scholarly interpretations, or general historical context. These may help explain evidence, but they are not themselves evidence unless supported by something identifiable that belongs on the timeline.
+
+Every node must add new and meaningful evidence to the trace.
+
+If no established connection exists, say so.
+
+The goal is to produce the strongest chronological chain of identifiable evidence for "{title}", clearly distinguishing what is directly evidenced, what survives, what is reconstructed, what is disputed, and where the evidence stops.
+
+
+
+
+{title}
 """
 
 

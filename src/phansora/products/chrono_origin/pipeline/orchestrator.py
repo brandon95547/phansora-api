@@ -653,7 +653,6 @@ class TraceOrchestrator:
         research_prompt = RESEARCH_PROMPT.format(
             title=req.title,
             context_clause=f" ({req.context})" if req.context else "",
-            search_doctrine=SEARCH_DOCTRINE,
         )
         answers = self._search_prompts([research_prompt])
         # What the model actually searched for, reported back so the user sees the

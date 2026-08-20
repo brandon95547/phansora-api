@@ -91,32 +91,37 @@ class TestTheResearchIsOneCall:
         o.run(TraceRequest(title="Jesus Christ"))
         assert len(client.searches) == 1
 
-    def test_the_prompt_asks_for_descent_before_evidence_about_the_subject(self, pipeline):
+    def test_the_prompt_walks_backward_before_forward(self, pipeline):
         """The ordering is the fix, not a formatting choice.
 
-        Descent decides where a chain starts, and it is the half that loses whenever
-        anything competes with it. Asking for it first, in its own required part, is
-        what stops a trace opening at a copy of something older.
+        Where a chain starts is decided by how hard the stage looks for what came
+        before, and that is the half that loses whenever anything competes with it.
         """
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
         prompt = client.searches[0]
-        assert "WHAT THIS DESCENDS FROM" in prompt
-        assert "WHAT SURVIVES ABOUT THE SUBJECT" in prompt
-        assert prompt.index("WHAT THIS DESCENDS FROM") < prompt.index("WHAT SURVIVES ABOUT THE SUBJECT")
+        assert "continue backward until the evidence no longer supports going further" in prompt
+        assert prompt.index("backward") < prompt.index("forward")
 
-    def test_the_prompt_still_carries_the_evidence_vocabulary(self, pipeline):
-        """The strand list was worth keeping; the fan-out was not.
+    def test_the_prompt_does_not_prescribe_evidence_categories(self, pipeline):
+        """A fixed list suits an ancient figure and misfits everything else.
 
-        Naming shelfmarks, ostraca and excavation reports is how the model is told
-        what a findable object looks like.
+        The old fan-out hunted manuscripts, inscriptions and excavation reports for
+        every subject alike. A 1947 aircraft, a patent and a piece of software each
+        have their own kinds of evidence, and the subject is what should pick them.
         """
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        prompt = client.searches[0].lower()
-        for word in ("shelfmark", "ostraca", "excavation report", "repository",
-                     "critical edition", "composition"):
-            assert word in prompt, f"{word!r} dropped from the research prompt"
+        prompt = client.searches[0]
+        assert "Do not force predetermined evidence categories onto the subject" in prompt
+
+    def test_the_prompt_rules_out_nodes_made_of_interpretation(self, pipeline):
+        """Filtering only at synthesis is too late — the corpus decides what exists."""
+        o, client = pipeline
+        o.run(TraceRequest(title="Jesus Christ"))
+        prompt = client.searches[0]
+        assert "Keep evidence separate from interpretation" in prompt
+        assert "Do not create timeline nodes solely from theories" in prompt
 
     def test_the_subject_is_named(self, pipeline):
         o, client = pipeline
