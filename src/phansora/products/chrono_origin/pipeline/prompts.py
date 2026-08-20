@@ -598,7 +598,7 @@ General rules:
 # half the product's range.
 EXPAND_MODES = {
     "discovery": {
-        "query": "discovery excavation report first publication announcement found",
+        "query": "oldest surviving manuscript discovery excavation found",
         "label": "Path to Discovery",
         "search": (
             "the surviving RECORDS of how this came to be known: the excavation report, the "
@@ -614,7 +614,7 @@ EXPAND_MODES = {
         ),
     },
     "preservation": {
-        "query": "surviving copies transmission conservation custody archive history",
+        "query": "manuscript transmission copies custody conservation",
         "label": "Path to Preservation",
         "search": (
             "the surviving objects and records that carried this forward: later copies, "
@@ -629,7 +629,7 @@ EXPAND_MODES = {
         ),
     },
     "verification": {
-        "query": "radiocarbon dating authentication palaeography analysis authenticity",
+        "query": "radiocarbon dating authentication palaeography analysis",
         "label": "Path to Verification",
         "search": (
             "the surviving reports of tests and analysis: radiocarbon and scientific dating "
@@ -644,7 +644,7 @@ EXPAND_MODES = {
         ),
     },
     "related": {
-        "query": "associated finds companion objects same archive catalogue",
+        "query": "associated finds same site archive catalogue",
         "label": "Related Evidence",
         "search": (
             "other surviving evidence DIRECTLY connected to this: companion finds from the same "
@@ -658,7 +658,7 @@ EXPAND_MODES = {
         ),
     },
     "earlier": {
-        "query": "earlier sources predecessors what it was copied from origins",
+        "query": "earlier sources older manuscript predecessor origins",
         "label": "Earlier Evidence",
         "search": (
             "surviving evidence from BEFORE this that bears on its origin: what it was copied "
@@ -672,7 +672,7 @@ EXPAND_MODES = {
         ),
     },
     "later": {
-        "query": "later citations influence quoted by reception",
+        "query": "later citations quoted influence reception",
         "label": "Later Influence",
         "search": (
             "surviving later evidence showing this had an effect: texts that quote, copy, answer "
