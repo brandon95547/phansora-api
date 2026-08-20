@@ -34,7 +34,11 @@ from .search import SearchConfig, SearchResult, web_search
 # The ceiling the truncation retry may escalate to. Past this a prompt is not merely
 # large, it is wrong — and doubling forever would turn one bad trace into a very
 # expensive one.
-MAX_REASON_TOKENS = int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS_CEILING", "32000"))
+# Headroom ABOVE the starting budget, not the starting budget itself. Raising the
+# start to where the work lands without raising this left the two equal, which
+# silently disabled the retry: the escalation is guarded by budget < ceiling, so a
+# genuine overrun would have failed on the first attempt instead of escalating.
+MAX_REASON_TOKENS = int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS_CEILING", "64000"))
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +94,13 @@ class DeepSeekConfig:
     # if nothing is configured rather than falling back to a name that may be retired.
     model: str = ""
     reasoning_model: str = ""
-    reason_max_tokens: int = 8000
+    # Start where this workload actually lands, not where a doubling ladder would
+    # eventually reach it. At 8000 a trace synthesis generated ~8k tokens, was cut off,
+    # regenerated at 16k, was cut off again, and only succeeded on the third attempt at
+    # 32k — three generations for one answer, two of them discarded. It is a CAP and not
+    # a charge: nothing is billed unless the tokens are produced, so a ceiling set where
+    # the work already is costs nothing and saves two full passes.
+    reason_max_tokens: int = 32000
     search_max_tokens: int = 1024
     timeout_s: int = 120
 
@@ -104,7 +114,7 @@ class DeepSeekConfig:
             base_url=base,
             model=model,
             reasoning_model=resolve_reasoning_model("CHRONO_MODEL", provider="deepseek"),
-            reason_max_tokens=int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS", "8000")),
+            reason_max_tokens=int(os.getenv("DEEPSEEK_REASON_MAX_TOKENS", "32000")),
             search_max_tokens=int(os.getenv("DEEPSEEK_SEARCH_MAX_TOKENS", "1024")),
         )
 

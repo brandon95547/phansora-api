@@ -369,6 +369,18 @@ and background is not a step and not a conclusion either; it is simply out of sc
 That test is also what stops the chain regressing forever. It reaches back while documents point
 at documents, and halts where they stop pointing.
 
+A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS. If the chain contains a
+manuscript, a scroll or a fragment, then the work it carries is itself a step, dated by its
+COMPOSITION and placed earlier. A chain that lists the Dead Sea Scrolls but not the scriptures
+they preserve has recorded the witness and dropped what it witnesses — which is the older half,
+and the half the later steps quote. Emit both: the text at its composition date, the copy at the
+date of the object.
+
+A STEP IS EITHER ABOUT THE SUBJECT OR DESCENDED FROM. Those are the only two ways in. Evidence
+that merely dates the period, fixes a background fact, or establishes the setting is neither,
+however genuine the object — a census inscription that helps date a nativity is doing
+chronology, not descent, and belongs in "conclusions" with the dating argument it supports.
+
 EVERY STEP CARRIES A DATE. "year", or "year"+"year_end" for something produced over a period.
 This is the one field a step cannot do without: a chain is an order, and an undated object has
 no position in it. Where the date is a scholarly estimate or a wide range, give the range and say

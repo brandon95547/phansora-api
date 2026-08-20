@@ -408,3 +408,32 @@ def test_the_descent_test_covers_the_real_but_unrelated_find():
 
     flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
     assert "NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM" in flat
+
+
+# --------------------------------------- the witness implies what it witnesses
+# A live chain listed the Dead Sea Scrolls but not the scriptures they preserve —
+# the witness kept, the witnessed dropped, which is the older half and the half the
+# later steps quote.
+def test_a_surviving_copy_implies_the_work_it_copies():
+    import re
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+    assert "A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS" in flat
+    assert "the text at its composition date, the copy at the date of the object" in flat
+
+
+def test_there_are_exactly_two_ways_into_the_chain():
+    """A census inscription that helps date a nativity is chronology, not descent."""
+    import re
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+    assert "A STEP IS EITHER ABOUT THE SUBJECT OR DESCENDED FROM" in flat
+
+
+def test_the_reasoning_budget_starts_where_the_work_lands():
+    """8000 meant three generations per answer, two of them discarded."""
+    from phansora.shared.ai.deepseek_research import DeepSeekConfig
+
+    assert DeepSeekConfig.reason_max_tokens >= 32000
