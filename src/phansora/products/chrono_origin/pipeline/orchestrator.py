@@ -52,6 +52,8 @@ from .prompts import (
     DECOMPOSE_PROMPT,
     EXPAND_EXTRACT_PROMPT,
     EXPAND_SEARCH_PROMPT,
+    expand_mode,
+    format_existing_block,
     CHASE_SEARCH_PROMPT,
     EXTRACT_DOCTRINE,
     EXTRACT_PROMPT,
@@ -1378,6 +1380,11 @@ class TraceOrchestrator:
 
         # Stage 1 - grounded search around the anchor.
         usage.stage("search")
+        # The axis this expansion was asked for. Unaimed, an expansion mostly returns
+        # the anchor's own neighbours — which are already on the board.
+        mode = expand_mode(req.mode)
+        existing_block = format_existing_block(req.existing)
+
         search_prompt = EXPAND_SEARCH_PROMPT.format(
             story_title=req.story_title,
             context_clause=context_clause,
@@ -1385,6 +1392,8 @@ class TraceOrchestrator:
             parent_source_title=req.parent_source_title,
             parent_claim=req.parent_claim or "(no prior claim recorded)",
             search_doctrine=SEARCH_DOCTRINE,
+            mode_search=mode["search"],
+            existing_block=existing_block,
         )
         try:
             answer = self.client.grounded_search(search_prompt)
@@ -1444,6 +1453,9 @@ class TraceOrchestrator:
             citations_block=_format_citations_block(citations),
             extract_doctrine=EXTRACT_DOCTRINE,
             max_events=req.max_events,
+            mode_label=mode["label"],
+            mode_extract=mode["extract"],
+            existing_block=existing_block,
         )
         try:
             # Light path — same reason as _extract: mechanical event extraction, and

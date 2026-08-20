@@ -103,6 +103,9 @@ class TestPromptDiscipline:
         expand = P.EXPAND_SEARCH_PROMPT.format(
             story_title="t", context_clause="", when="", parent_source_title="",
             parent_claim="", search_doctrine=P.SEARCH_DOCTRINE,
+            # An expansion is aimed at one axis and told what the board already shows.
+            mode_search=P.expand_mode("related")["search"],
+            existing_block=P.format_existing_block(["Already shown"]),
         )
         for prompt in (search, chase, expand):
             assert "LEADS" in prompt

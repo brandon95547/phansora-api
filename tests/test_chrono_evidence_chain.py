@@ -437,3 +437,55 @@ def test_the_reasoning_budget_starts_where_the_work_lands():
     from phansora.shared.ai.deepseek_research import DeepSeekConfig
 
     assert DeepSeekConfig.reason_max_tokens >= 32000
+
+
+# ------------------------------------------------------------ expand modes
+# Expanding exists to GROW a timeline. Unaimed, an expansion mostly returns the
+# anchor's own neighbours — ask around Paul's letters and the gospels come back,
+# which are already the next step along.
+def test_the_six_modes_are_the_ones_the_dialog_offers():
+    from phansora.products.chrono_origin.models import ExpandMode
+    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
+
+    ids = {"discovery", "preservation", "verification", "related", "earlier", "later"}
+    assert set(ExpandMode.__args__) == ids
+    assert set(EXPAND_MODES) == ids, "model vocabulary and prompt directives have drifted"
+
+
+def test_every_mode_aims_both_stages():
+    """A search can only be pointed at a topic; extraction can be told what to reject."""
+    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
+
+    for name, spec in EXPAND_MODES.items():
+        assert spec["label"], name
+        assert len(spec["search"]) > 40, f"{name} has no search directive"
+        assert len(spec["extract"]) > 40, f"{name} has no extraction directive"
+
+
+def test_an_unknown_mode_falls_back_rather_than_failing():
+    from phansora.products.chrono_origin.pipeline.prompts import expand_mode
+
+    assert expand_mode("nonsense")["label"] == "Related Evidence"
+    assert expand_mode(None)["label"] == "Related Evidence"
+
+
+def test_what_is_already_shown_is_named_for_the_model():
+    """A duplicate cannot be avoided by a model that was never shown it."""
+    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
+
+    block = format_existing_block(["The four Gospels", "Tacitus, Annals"])
+    assert "The four Gospels" in block and "Tacitus, Annals" in block
+
+
+def test_an_empty_board_says_so_rather_than_printing_nothing():
+    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
+
+    assert "nothing else on the timeline" in format_existing_block([])
+    assert "nothing else on the timeline" in format_existing_block(["  ", None])
+
+
+def test_the_existing_list_is_bounded():
+    """It rides on every expansion call; a long trace should not turn it into a wall."""
+    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
+
+    assert len(format_existing_block([f"Item {i}" for i in range(200)]).split("\n")) == 40

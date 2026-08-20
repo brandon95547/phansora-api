@@ -429,6 +429,28 @@ class TraceResponse(BaseModel):
 
 
 # --------------------------------------------------------------------- expand
+# What an expansion is being asked to go and find.
+#
+# Expanding exists to GROW a timeline with material it does not already contain, and
+# an unaimed expansion mostly returns the neighbours the chain already has: ask for
+# "related sub-events" around Paul's letters and you get the gospels back, which are
+# already the next step along. Each mode points the search at a different axis, so
+# six expansions of one node produce six different kinds of finding rather than six
+# rewordings of one.
+#
+# Deliberately subject-agnostic. These have to read the same way for a manuscript, a
+# telescope observation, a treaty, an excavation and a patent, because Chrono Origin
+# does not know which it is looking at.
+ExpandMode = Literal[
+    "discovery",     # how this became known to us
+    "preservation",  # how it survived or was carried forward
+    "verification",  # how what we know about it was established
+    "related",       # other evidence directly connected to it
+    "earlier",       # evidence before it that fills a gap
+    "later",         # what it influenced or contributed to afterwards
+]
+
+
 class ExpandRequest(BaseModel):
     """Request to expand a single timeline entry into finer-grained sub-events."""
 
@@ -440,6 +462,17 @@ class ExpandRequest(BaseModel):
     parent_id: str = Field(default="parent", description="id the returned connections should hang off.")
     context: Optional[str] = Field(default=None, description="Optional disambiguating context for the overall story.")
     max_events: int = Field(default=6, ge=1, le=12, description="Max sub-events to return.")
+    mode: ExpandMode = Field(
+        default="related",
+        description="Which axis to expand along. See ExpandMode.",
+    )
+    # What the board already shows. An expansion that returns the step sitting next to
+    # the anchor has cost a call and added nothing, and the user cannot tell the
+    # difference from a card that looks new until they read it.
+    existing: List[str] = Field(
+        default_factory=list,
+        description="Titles already on the timeline, so the expansion can avoid repeating them.",
+    )
     language: str = Field(default="en")
 
 

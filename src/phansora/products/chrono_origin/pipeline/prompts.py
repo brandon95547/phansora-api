@@ -586,6 +586,119 @@ General rules:
 """
 
 
+# What each expansion mode goes looking for.
+#
+# Two directives per mode: one aims the WEB SEARCH, one aims the EXTRACTION. They are
+# separate because the stages can act on different things — a search can only be
+# pointed at a topic, while extraction can be told what to reject.
+#
+# Every one of these has to read sensibly for a manuscript, a telescope observation, a
+# treaty, an excavation and a patent alike. Chrono Origin does not know which kind of
+# subject it is looking at, so a directive that assumes documents would quietly fail on
+# half the product's range.
+EXPAND_MODES = {
+    "discovery": {
+        "label": "Path to Discovery",
+        "search": (
+            "how this came to be KNOWN: the excavation, decipherment, observation, "
+            "publication, rediscovery, unsealing or announcement that brought it into "
+            "the record, who did it, when, and what was reported at the time"
+        ),
+        "extract": (
+            "Return the sequence by which this became known — findings, observations, "
+            "records and announcements that brought it into knowledge. The step where "
+            "someone first encountered, recognised, read or reported it is the one that "
+            "matters most. Not the thing's own history: how we came to have it."
+        ),
+    },
+    "preservation": {
+        "label": "Path to Preservation",
+        "search": (
+            "how this SURVIVED and was carried forward: copying, translation, storage, "
+            "custody, transmission, restoration, reburial, archiving, or the chain of "
+            "hands and institutions that held it between then and now"
+        ),
+        "extract": (
+            "Return what carried this forward — copies, translations, custodians, "
+            "archives, restorations, the physical or institutional chain by which it "
+            "reached a later period. Each step should be something that DID the "
+            "carrying, not a statement that it survived."
+        ),
+    },
+    "verification": {
+        "label": "Path to Verification",
+        "search": (
+            "how what is known about this was ESTABLISHED: dating tests, authentication, "
+            "provenance research, palaeography, radiocarbon, replication, peer review, "
+            "forensic or scientific analysis, and any challenge to its authenticity"
+        ),
+        "extract": (
+            "Return the evidence and methods used to authenticate, date, identify or "
+            "test this — analyses, examinations, replications, and the disputes over "
+            "them. A finding that something is FALSE or contested belongs here as much "
+            "as a confirmation; that is what verification produces."
+        ),
+    },
+    "related": {
+        "label": "Related Evidence",
+        "search": (
+            "other surviving evidence DIRECTLY connected to this: companion finds, the "
+            "same hoard or site or archive, works by the same hand, contemporaneous "
+            "records naming it, objects found with it"
+        ),
+        "extract": (
+            "Return other evidence with a direct, statable relationship to the anchor — "
+            "found with it, produced by the same hand, naming it, held with it. Name the "
+            "relationship in the claim. Proximity in time alone is not a relationship."
+        ),
+    },
+    "earlier": {
+        "label": "Earlier Evidence",
+        "search": (
+            "evidence from BEFORE this that bears on its origin or development: what it "
+            "was made from, drew on, replaced, or descended from, and the older material "
+            "that explains how it came to exist"
+        ),
+        "extract": (
+            "Return evidence PREDATING the anchor that fills a gap in how it came about. "
+            "It must be genuinely earlier and genuinely new — the point is the missing "
+            "stretch of timeline, not the step that already sits before this one."
+        ),
+    },
+    "later": {
+        "label": "Later Influence",
+        "search": (
+            "what this LED TO afterwards: works that cite, copy, answer, build on, "
+            "reuse or react to it, and the later evidence showing its effect"
+        ),
+        "extract": (
+            "Return later evidence showing this had an effect — things that cite, reuse, "
+            "answer or build on it, with the route named. It must be genuinely new: the "
+            "step that already follows this one on the timeline is not an influence."
+        ),
+    },
+}
+
+
+def expand_mode(mode: str) -> dict:
+    """The directives for a mode, defaulting to the least presumptuous one."""
+    return EXPAND_MODES.get(mode) or EXPAND_MODES["related"]
+
+
+def format_existing_block(existing) -> str:
+    """What the board already shows, so an expansion can avoid handing it back.
+
+    The most common way an expansion wastes a call is by returning the anchor's own
+    neighbour — ask for material around Paul's letters and the gospels come back, which
+    are already the next step along. Naming them is cheaper than any instruction about
+    novelty, because the model cannot avoid a duplicate it has not been shown.
+    """
+    items = [str(t).strip() for t in (existing or []) if str(t or "").strip()]
+    if not items:
+        return "(nothing else on the timeline yet)"
+    return "\n".join(f"- {t}" for t in items[:40])
+
+
 EXPAND_SEARCH_PROMPT = """\
 You are a research assistant performing focused web searches to find sub-events that
 happened in, around, or directly because of the following moment in the broader history
@@ -598,10 +711,13 @@ Anchor item being expanded:
 
 {search_doctrine}
 
-Search the web to surface specific, dated sub-events tightly related to that anchor:
-contemporaneous retellings, immediate predecessors or successors, manuscript variants,
-translations, recensions, archaeological finds, related contemporary events, named
-people involved, or documented influences.
+WHAT TO LOOK FOR — this expansion is aimed at one axis, not at "anything nearby":
+
+{mode_search}
+
+ALREADY ON THE TIMELINE. These are shown to the user already, so finding them again
+adds nothing. Search past them:
+{existing_block}
 
 Write a concise (<= 350 words) factual summary naming specific dates, manuscript names,
 shelfmarks, repositories, authors, places and cultures whenever the sources do. Do not
@@ -610,8 +726,18 @@ speculate beyond the cited sources.
 
 
 EXPAND_EXTRACT_PROMPT = """\
-From the research material below, extract distinct dated sub-events that are tightly
-related to this anchor in the history of "{story_title}":
+From the research material below, extract distinct dated sub-events for ONE named axis
+of this anchor in the history of "{story_title}".
+
+WHAT THIS EXPANSION IS FOR — {mode_label}:
+{mode_extract}
+
+An expansion exists to GROW the timeline. These are already on it, and returning any of
+them costs the user a call and shows them a card they have already read:
+{existing_block}
+
+Return nothing rather than something already listed. An empty result is a fair answer —
+this axis may have nothing new on it, and saying so is more useful than padding.
 
 Anchor (its id is "{parent_id}"):
 - when: {when}
