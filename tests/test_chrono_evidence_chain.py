@@ -160,30 +160,55 @@ def test_a_demoted_step_with_no_words_is_skipped():
 
 
 # ------------------------------------------------------------------- strands
-def test_research_strands_hunt_for_surviving_things():
-    """Every strand must be answerable by an object, or the research plans for prose."""
-    assert orch._STRANDS == {
-        "precursor_evidence",
-        "earliest_texts",
-        "manuscripts",
-        "external_sources",
-        "documents_records",
-        "inscriptions_artifacts",
-        "archaeology",
-    }
+def test_the_research_prompt_asks_for_descent_first():
+    """Where the chain starts is decided here, before any model reasoning.
+
+    Seven fixed queries used to fan out from this stage — six asking what survives
+    ABOUT the subject, one asking what its evidence DESCENDS FROM. The chain rule
+    says a chain begins with descent, so the deciding half was outvoted six to one in
+    every corpus and a trace of Jesus opened at the Dead Sea Scrolls, dropping the
+    four centuries of scripture the Scrolls are copies of.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    body = P.RESEARCH_PROMPT
+    assert "PART 1 — WHAT THIS DESCENDS FROM" in body
+    assert "PART 2 — WHAT SURVIVES ABOUT THE SUBJECT" in body
+    assert body.index("PART 1") < body.index("PART 2")
 
 
-def test_every_evidence_kind_reports_coverage_of_some_strand():
-    """A kind with no strand is a kind the loop can never mark as covered."""
-    for kind in orch._EVIDENCE_KINDS:
-        assert kind in orch._NODE_TYPE_STRAND, f"{kind} maps to no strand"
-        assert orch._NODE_TYPE_STRAND[kind] in orch._STRANDS
+def test_the_research_prompt_keeps_the_evidence_vocabulary():
+    """The strand list was the useful half of the fan-out and had to survive it.
+
+    Naming shelfmarks, ostraca and excavation reports is how the model is told what a
+    findable object looks like — which is the whole test for whether something may be
+    a step at all.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    body = P.RESEARCH_PROMPT.lower()
+    for word in ("shelfmark", "ostraca", "excavation report", "repository",
+                 "critical edition", "palaeographic", "composition"):
+        assert word in body, f"{word!r} was lost with the strand templates"
 
 
-def test_every_strand_has_a_query():
-    for strand in orch._STRANDS:
-        assert strand in orch._STRAND_QUERIES
-        assert "{title}" in orch._STRAND_QUERIES[strand]
+def test_the_research_prompt_demands_both_dates():
+    """Composition and earliest surviving copy are different facts.
+
+    Collapsing them is how a copy ends up standing in for the work it copies, which
+    is exactly the failure that put the Dead Sea Scrolls at the head of a chain.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    assert "COMPOSITION" in P.RESEARCH_PROMPT
+    assert "EARLIEST SURVIVING COPY" in P.RESEARCH_PROMPT
+
+
+def test_the_strand_fan_out_is_gone():
+    """A leftover table would be a second, silent place that decides coverage."""
+    for name in ("_STRANDS", "_STRAND_QUERIES", "_NODE_TYPE_STRAND", "_strand_queries",
+                 "_as_strands", "_strands_covered", "_open_strands", "_format_strands_block"):
+        assert not hasattr(orch, name), f"{name} survived the fan-out removal"
 
 
 # ------------------------------------------------- prompt size is bounded
@@ -364,15 +389,15 @@ def test_the_prompt_says_where_a_chain_starts():
     assert "DOCUMENTARY, not thematic" in s
 
 
-def test_the_planner_no_longer_calls_precursor_evidence_background_only():
+def test_the_research_prompt_does_not_call_descent_background_only():
     """That phrase belonged to the deleted `context` node type.
 
-    Left in place it told the planner to research the corpus a subject descends from
-    and then treat it as scenery — which is exactly what came back.
+    Left in place it told the research stage to go and find the corpus a subject
+    descends from and then treat it as scenery — which is exactly what came back.
     """
     from phansora.products.chrono_origin.pipeline import prompts as P
 
-    assert "BACKGROUND ONLY" not in P.DECOMPOSE_PROMPT
+    assert "BACKGROUND ONLY" not in P.RESEARCH_PROMPT
 
 
 # --------------------------------------------- provenance is not admissibility
@@ -630,3 +655,90 @@ def test_the_pool_is_wide_enough_that_one_product_cannot_starve_the_process():
     m = re.search(r"ThreadPoolExecutor\(max_workers=(\d+)", src.read_text())
     assert m, "executor construction moved; this guard needs updating"
     assert int(m.group(1)) >= 8, "a handful of slow requests should not take the product down"
+
+
+# ------------------------------------------- dates at the head of the chain
+# Both of these drop the OLDEST material specifically, which is the half a chain is
+# ordered by and the half a reader cannot tell is missing.
+def test_a_span_dated_step_is_not_sorted_to_the_bottom():
+    """Corpora composed across centuries are asked for as a span.
+
+    prompts.py tells the model to give exactly that for the works that open a chain —
+    "scriptures composed across centuries take the span of their composition". Keying
+    the sort on `year` alone sent any step carrying only `year_end` to the END of the
+    timeline: the oldest thing in the trace, sorted last.
+    """
+    assert orch._sort_key(None, -400) < orch._sort_key(50, 60)
+    assert orch._sort_key(None, -400) < orch._sort_key(None, 100)
+    # A step with neither still goes last, which is correct — it has no position.
+    assert orch._sort_key(-400, None) < orch._sort_key(None, None)
+
+
+def test_a_date_the_model_wrote_as_text_is_still_a_date():
+    """The gate ran on the raw JSON, before pydantic would have coerced anything.
+
+    A step dated "-400" or -400.0 was demoted into `conclusions` and told it was "not
+    a surviving object" — untrue, and not the reason.
+    """
+    assert orch._as_year(-400) == -400
+    assert orch._as_year("-400") == -400
+    assert orch._as_year(-400.0) == -400
+    assert orch._as_year("c. 400 BC") == 400  # a number is there; the sign is the model's job
+    assert orch._as_year(None) is None
+    assert orch._as_year("") is None
+    assert orch._as_year("unknown") is None
+
+
+def test_a_boolean_is_not_read_as_a_year():
+    """bool subclasses int, so a flag would otherwise date a step to year 1."""
+    assert orch._as_year(True) is None
+    assert orch._as_year(False) is None
+
+
+def test_an_undated_step_is_not_told_it_is_not_an_object():
+    """The two demotions have different causes and need different words.
+
+    Telling a reader a manuscript "is not a surviving object" because its year field
+    was missing is a false statement about the evidence itself.
+    """
+    out = orch._build_conclusions(
+        [], [], valid_ids=set(),
+        undated=[{"source_title": "Hebrew scriptures", "claim": "A corpus reaching its form by c. 400 BC."}],
+    )
+    assert len(out) == 1
+    assert "not a surviving object" not in out[0].reasoning
+    assert "no date" in out[0].reasoning
+
+
+def test_a_chain_that_starts_at_a_copy_says_so(caplog):
+    """The rule is in the prompt and nothing checked it.
+
+    A trace of Jesus opened at the Dead Sea Scrolls: the copies were there, the
+    scriptures they are copies OF were not. Every step was real, so the trace looked
+    complete and the reader had no way to see the oldest half was missing.
+    """
+    import logging
+
+    from phansora.products.chrono_origin.models import OriginResult, TimelineEvent
+
+    origin = OriginResult(id="origin", year=-250, node_type="scroll",
+                          source_title="The Dead Sea Scrolls", summary="s")
+    later = [TimelineEvent(id="t1", year=50, node_type="letter",
+                           source_title="Paul's letters", claim="c")]
+    with caplog.at_level(logging.WARNING):
+        orch._warn_if_copy_without_work(origin, later)
+    assert any("starts at a copy" in r.message for r in caplog.records)
+
+
+def test_a_chain_whose_copy_has_an_older_step_is_quiet(caplog):
+    import logging
+
+    from phansora.products.chrono_origin.models import OriginResult, TimelineEvent
+
+    origin = OriginResult(id="origin", year=-250, node_type="scroll",
+                          source_title="The Dead Sea Scrolls", summary="s")
+    with_work = [TimelineEvent(id="t1", year=-400, node_type="text",
+                               source_title="Hebrew scriptures", claim="c")]
+    with caplog.at_level(logging.WARNING):
+        orch._warn_if_copy_without_work(origin, with_work)
+    assert not [r for r in caplog.records if "starts at a copy" in r.message]

@@ -80,21 +80,19 @@ class TestReferenceHarvesting:
 class TestPromptDiscipline:
     """Where the doctrine reaches, and what it costs to put it there."""
 
-    def test_the_full_hierarchy_reaches_the_stages_that_can_act_on_it(self):
-        decompose = P.DECOMPOSE_PROMPT.format(
-            title="t", context="", max_queries=5, source_hierarchy=P.SOURCE_HIERARCHY
-        )
+    def test_the_full_hierarchy_reaches_the_stage_that_can_act_on_it(self):
+        # Synthesis is the only stage that weighs one source against another, so it
+        # is the only one that needs the whole hierarchy rather than the short form.
         synthesize = P.SYNTHESIZE_PROMPT.format(
             title="t", mentions_block="", citations_block="", pages_block="",
-            strands_block="", source_hierarchy=P.SOURCE_HIERARCHY, max_connections=24,
+            source_hierarchy=P.SOURCE_HIERARCHY, max_connections=24,
         )
-        for prompt in (decompose, synthesize):
-            assert "TIER 1 — PRIMARY EVIDENCE" in prompt
-            assert "LEAD GENERATORS, NOT EVIDENCE" in prompt
+        assert "TIER 1 — PRIMARY EVIDENCE" in synthesize
+        assert "LEAD GENERATORS, NOT EVIDENCE" in synthesize
 
     def test_the_short_form_reaches_every_searching_stage(self):
-        search = P.SEARCH_PROMPT.format(
-            title="t", context_clause="", query="q", search_doctrine=P.SEARCH_DOCTRINE
+        search = P.RESEARCH_PROMPT.format(
+            title="t", context_clause="", search_doctrine=P.SEARCH_DOCTRINE
         )
         chase = P.CHASE_SEARCH_PROMPT.format(
             title="t", claim="c", weak_source="w", cites="", references="",
@@ -160,13 +158,13 @@ class TestPromptDiscipline:
         assert "Dead Sea Scrolls" in s and "Septuagint" in s and "Tacitus" in s
         assert "messianic expectation" in s.lower()
 
-    def test_the_planner_offers_the_strands_the_loop_measures(self):
-        # The planner names strands and the loop counts them covered; if the two
-        # lists drift the loop silently never finishes covering anything.
-        from phansora.products.chrono_origin.pipeline.orchestrator import _STRANDS
-
-        decompose = P.DECOMPOSE_PROMPT.format(
-            title="t", context="", max_queries=5, source_hierarchy=P.SOURCE_HIERARCHY
+    def test_the_research_stage_is_told_what_a_findable_object_looks_like(self):
+        # This replaced a check that the planner named every strand the loop
+        # measured. There is no planner and no strand list now — one research call
+        # carries the vocabulary itself, and if it loses that the model has nothing
+        # telling it what may be a step.
+        research = P.RESEARCH_PROMPT.format(
+            title="t", context_clause="", search_doctrine=P.SEARCH_DOCTRINE
         )
-        for strand in _STRANDS:
-            assert strand in decompose, strand
+        for word in ("shelfmark", "repository", "excavation report", "critical edition"):
+            assert word in research.lower(), word

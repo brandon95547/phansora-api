@@ -19,12 +19,7 @@ import pytest
 
 from phansora.products.chrono_origin.pipeline import evidence as ev
 from phansora.products.chrono_origin.pipeline import source_policy as sp
-from phansora.products.chrono_origin.pipeline.orchestrator import (
-    _coerce_dossier,
-    _as_strands,
-    _open_strands,
-    _strands_covered,
-)
+from phansora.products.chrono_origin.pipeline.orchestrator import _coerce_dossier
 
 WIKI = "https://en.wikipedia.org/wiki/Gospel_of_Mark"
 JSTOR = "https://www.jstor.org/stable/3268034"
@@ -262,28 +257,6 @@ class TestChasingLeads:
         cites = [{"url": WIKI}, {"url": BL}]
         assert ev.select_for_reading(cites, [], self._tier, limit=5) == [BL]
 
-
-class TestStrandCoverage:
-    def test_reads_both_planner_shapes(self):
-        assert _as_strands(
-            [{"strand": "manuscripts", "why": "x"}, "archaeology", "not_a_strand"]
-        ) == ["manuscripts", "archaeology"]
-
-    def test_node_types_report_their_strand_covered(self):
-        covered = _strands_covered(
-            [{"node_type": "scroll"}, {"node_type": "inscription"}, {"node_type": "context"}]
-        )
-        # A scroll is found by the manuscripts hunt, an inscription by the artefacts
-        # one. "context" is not a surviving object at all, so it covers nothing —
-        # under the chain rule it is not even eligible to be a step.
-        assert covered == {"manuscripts", "inscriptions_artifacts"}
-
-    def test_open_strands_drive_the_next_round(self):
-        planned = ["earliest_texts", "manuscripts", "external_sources"]
-        assert _open_strands(planned, {"earliest_texts"}) == [
-            "manuscripts",
-            "external_sources",
-        ]
 
 
 class TestContextIsNotInfluence:

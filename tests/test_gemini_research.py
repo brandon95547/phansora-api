@@ -34,6 +34,9 @@ def client(monkeypatch, response):
     return c, captured
 
 
+PROXY = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbC123"
+
+
 def grounded_body(text="Summary.", chunks=(), queries=()):
     return {
         "candidates": [{
@@ -269,3 +272,81 @@ def test_it_satisfies_the_same_contract_as_the_other_clients():
     reason = inspect.signature(G.GeminiResearchClient.reason_json)
     for kw in ("schema", "temperature", "use_reasoning_model"):
         assert kw in reason.parameters, kw
+
+
+# ---------------------------------------------------- grounding proxy URLs
+# Grounding hands back redirect proxies, not the pages it read, with the real domain
+# only in the chunk title. Left unresolved, every citation in a trace reports the
+# SAME host — so the five-tier source policy scored quora.com and a university
+# library alike, the "never read a low-authority page" rule never fired, page-read
+# ranking went arbitrary, and per-domain diversification saw one domain. Nothing
+# raised. A whole schema version of traces was built on sources nothing had weighed.
+def test_a_proxy_url_is_resolved_to_the_page_it_points_at(monkeypatch):
+    real = "https://www.bl.uk/collection-items/codex-sinaiticus"
+    monkeypatch.setattr(G, "_resolve_proxy", lambda u: real)
+    c, _ = client(monkeypatch, grounded_body(chunks=[(PROXY, "bl.uk")]))
+    assert c.grounded_search("q").citations[0]["url"] == real
+
+
+def test_a_resolved_citation_is_tierable(monkeypatch):
+    """The point of resolving: the host heuristic can finally see a real host."""
+    from phansora.products.chrono_origin.pipeline import source_policy as sp
+
+    monkeypatch.setattr(G, "_resolve_proxy", lambda u: "https://www.quora.com/some-answer")
+    c, _ = client(monkeypatch, grounded_body(chunks=[(PROXY, "quora.com")]))
+    url = c.grounded_search("q").citations[0]["url"]
+    assert sp.default_tier(url) != "unknown"
+    assert sp.default_tier(url) == "low_authority"
+
+
+def test_an_unresolvable_proxy_still_tiers_from_its_domain(monkeypatch):
+    """Grounding puts the bare domain in the title, so a failure is still tierable.
+
+    The site root is a worse link than the page, but it is a REAL one that outlives
+    the proxy and scores correctly. An untiered source is treated as though nothing
+    is known about its authority, which is how a forum post gets weighed like a
+    university library.
+    """
+    from phansora.products.chrono_origin.pipeline import source_policy as sp
+
+    monkeypatch.setattr(G, "_resolve_proxy", lambda u: u)  # redirect never resolves
+    c, _ = client(monkeypatch, grounded_body(chunks=[(PROXY, "reddit.com")]))
+    url = c.grounded_search("q").citations[0]["url"]
+    assert not G._is_proxy(url)
+    assert sp.default_tier(url) == "low_authority"
+
+
+def test_an_unresolvable_proxy_with_no_domain_hint_is_left_alone(monkeypatch):
+    """Nothing to fall back to. Better a proxy URL than an invented one."""
+    monkeypatch.setattr(G, "_resolve_proxy", lambda u: u)
+    c, _ = client(monkeypatch, grounded_body(chunks=[(PROXY, "Some Page Title")]))
+    assert c.grounded_search("q").citations[0]["url"] == PROXY
+
+
+def test_two_proxies_resolving_to_one_page_collapse(monkeypatch):
+    """Distinct before resolution, the same source after — and one source is one."""
+    monkeypatch.setattr(G, "_resolve_proxy", lambda u: "https://a.example/x")
+    c, _ = client(monkeypatch, grounded_body(chunks=[(PROXY, "a.example"), (PROXY + "z", "a.example")]))
+    assert len(c.grounded_search("q").citations) == 1
+
+
+def test_a_url_that_is_not_a_proxy_is_never_touched(monkeypatch):
+    real = "https://www.jstor.org/stable/1234"
+
+    def explode(_):
+        raise AssertionError("resolution attempted on a normal URL")
+
+    monkeypatch.setattr(G, "_resolve_proxy", explode)
+    c, _ = client(monkeypatch, grounded_body(chunks=[(real, "jstor.org")]))
+    assert c.grounded_search("q").citations[0]["url"] == real
+
+
+def test_resolution_failure_does_not_kill_the_search(monkeypatch):
+    """A dead redirect costs one citation's precision, not the trace."""
+    import httpx
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("no route")
+
+    monkeypatch.setattr(httpx, "Client", boom)
+    assert G._resolve_proxy(PROXY) == PROXY

@@ -88,98 +88,76 @@ metadata · 4 institutional write-ups (university, museum, agency pages ABOUT so
 Tiers 4-5 are leads, never the basis of a claim. When a mention rests only on them, say so and
 name what THEY cite so it can be chased. Never fill an unknown with a plausible guess.
 """
+# ---------------------------------------------------------------------------
+# The research pass. One call, and the model does its own searching.
+#
+# There used to be seven, one per evidence "strand", each a fixed template fired
+# blind. That existed because the model could not search: the queries had to be
+# guessed in advance, and one per category was the only way to guarantee coverage.
+# It also broke the chain. Six of the seven asked what survives ABOUT the subject
+# and one asked what its evidence DESCENDS FROM — so the half that decides where a
+# chain STARTS was outvoted six to one in every corpus. A trace of Jesus opened at
+# the Dead Sea Scrolls and lost the four centuries before them.
+#
+# Gemini runs its own searches, so there are no slots left to allocate badly. The
+# strand vocabulary — shelfmarks, ostraca, excavation reports, repositories,
+# critical editions — moved in here, where its real job is telling the model what a
+# findable object looks like. Descent leads, and the answer is structured in two
+# parts so it cannot be squeezed out by material merely about the subject.
+# ---------------------------------------------------------------------------
 
+RESEARCH_PROMPT = """\
+Research the surviving physical evidence for "{title}"{context_clause}, searching the web
+as many times as the question needs.
 
-DECOMPOSE_PROMPT = """\
-You are a research planner. The user wants a historian's map of where a story, claim, person,
-object or event actually comes from — not a summary of what is generally said about it.
+Everything you report must be something that STILL EXISTS AND CAN BE EXAMINED: a text, a
+manuscript, a scroll, a letter, an inscription, a document, a record, an object, an
+excavated find. The test, applied without mercy: could someone go and look at it? If you
+cannot name a repository, a shelfmark, an excavation report or a critical edition, it is
+not evidence for this purpose. A tradition, a movement, an expectation or a climate of
+belief is not a surviving object — say plainly when the sources support only that.
 
-Subject: {title}
-Optional context: {context}
-
-{source_hierarchy}
-
-A trace is a CHAIN OF SURVIVING EVIDENCE. Every step in the finished trace is a thing that
-still exists and can be examined — a text, a manuscript, a scroll, a letter, an inscription, a
-document, a record, an object, an excavated find — placed in the order it was produced. Your job
-here is to plan the hunt for those objects. Not for the story, not for what happened, not for
-what the period was like: for what SURVIVES.
-
-The test that decides everything downstream: CAN SOMEONE GO AND LOOK AT IT? Plan searches that
-end at a repository, a shelfmark, an excavation report or a critical edition.
-
-The strands are kinds of surviving evidence. Pick the ones this subject genuinely has; do not
-force the rest. A medieval poem has manuscripts, a 1960s assassination has government records, a
-disputed site has excavation reports.
-
-- precursor_evidence — what survives from BEFORE the subject that the subject's own evidence
-  DESCENDS FROM: the corpus its texts quote, the tradition they are written inside, the language
-  they translate. This is where the chain starts, and it is the strand most often researched and
-  then thrown away. Reach back centuries, not decades — for a first-century subject that means
-  asking what scriptures, translations and copies already existed and are still readable now.
-  It is evidence of what existed, never of a mood, a climate or an expectation.
-- earliest_texts — the earliest surviving texts about or by the subject, with estimated
-  COMPOSITION dates and the basis for each. Earliest first, including ones earlier than the
-  famous ones, and the dependence between them.
-- manuscripts — the physically surviving copies: which one, how old, which repository, what
-  shelfmark, and how far the copy postdates the composition.
-- external_sources — surviving texts from OUTSIDE the tradition that mention the subject, their
-  own composition dates, and how those texts themselves survive.
-- documents_records — surviving documents and administrative records: decrees, censuses, court,
-  tax, parish or official registers, and the archive that holds them.
-- inscriptions_artifacts — surviving inscriptions, coins, seals, ostraca and inscribed objects,
-  with find context, date and holding institution.
-- archaeology — excavated sites, structures and assemblages, as published in excavation reports.
-
-NOT STRANDS, because they are not surviving objects: expectations, movements, moods, climates of
-belief, developments, influences, reconstructed events, periods of oral transmission. Those are
-conclusions to be drawn AFTER the evidence is laid out, and the final report has a separate place
-for them. Do not spend searches establishing them.
-
-Produce a JSON object with:
-- "entities": 3-8 key proper nouns / concepts to anchor searches.
-- "strands": the applicable strand names from the list above, each as
-  {{"strand": <name>, "why": <one line on what this subject specifically needs here>}}.
-  Prefer 3-5 strands, and pick the ones where this subject's evidence ACTUALLY IS. Every
-  strand you name reserves a search in every later round, so a strand chosen out of
-  completeness rather than judgement costs the whole trace and returns nothing.
-  precursor_evidence and manuscripts are near-universal — almost nothing appears with no
-  surviving ancestry, and a text known only through copies has a copy history rarely the
-  same age as the text. The other five are subject-specific: name documents_records,
-  inscriptions_artifacts or archaeology only when this subject plainly has them.
-- "queries": {max_queries} diverse web search queries covering the strands you chose, weighted
-  toward the ones most likely to yield tier 1-2 sources. Include at least one hunting for
-  INDEPENDENT corroboration from a different information chain, and at least one hunting for
-  evidence that CONTRADICTS or disputes the standard account. Queries must be self-contained
-  (no pronouns), in English unless another language is clearly required.
-- "domains_of_interest": short list of fields (e.g. "Assyriology", "biblical archaeology",
-  "ufology", "folklore studies").
-
-Return ONLY JSON. No prose.
-"""
-
-
-SEARCH_PROMPT = """\
-You are a research assistant performing a SINGLE web search to help trace the origin of:
-"{title}" {context_clause}
-
-Search query: {query}
+For every item give its COMPOSITION date and the date of its EARLIEST SURVIVING COPY
+separately whenever both are known. They are different facts and both are needed.
 
 {search_doctrine}
 
-Search the web for this query. Then write a concise (<= 300 words) factual summary of what the
-sources say that is RELEVANT to dating the earliest origin or any historical retelling of this story.
+Answer in two parts, both required.
 
-Name specific dates, eras, manuscript names, shelfmarks, repositories, authors and cultures
-whenever the sources do, and tag each source with its tier (primary / repository / academic /
-press / low-authority). Do not speculate beyond what the cited sources state.
+PART 1 — WHAT THIS DESCENDS FROM. Do this part first and do not skimp on it.
+
+The older material the subject's own sources are made out of: the corpus its texts quote,
+the tradition they are composed inside, the text they translate, the language they are
+written in — and the surviving objects that carry those things today.
+
+Work BACKWARDS and reach far. For a first-century subject that means asking what
+scriptures, translations and copies already existed and are still readable now —
+centuries earlier, not decades. Keep stepping back while documents point at documents,
+and stop where they stop pointing. This is the part most often researched thinly, and it
+is where the chain begins: a trace that opens in the subject's own century has silently
+answered a much smaller question than the one asked.
+
+PART 2 — WHAT SURVIVES ABOUT THE SUBJECT. Cover each of these, and say when one is empty:
+
+- the earliest surviving texts about or by the subject, earliest first, with estimated
+  composition dates and the scholarly basis for each date
+- the manuscripts, scrolls and fragments carrying those texts: shelfmark, repository,
+  palaeographic date, and how far each copy postdates composition
+- surviving texts from OUTSIDE the subject's own tradition that mention it, with their
+  own composition dates and how those texts themselves survive
+- surviving documents and administrative records — decrees, censuses, court, tax or
+  official registers — and the archive holding them
+- surviving inscriptions, coins, seals, ostraca and inscribed objects, with find context,
+  date and holding institution
+- excavated sites, structures and assemblages, as published in excavation reports
+
+At most 900 words across both parts. Name dates, works, shelfmarks, repositories and
+excavation reports wherever the sources do. Where a category genuinely has nothing, say
+so explicitly — a stated absence is a finding; an absence filled with a plausible guess
+is a fabrication.
 """
 
 
-# Extract and plan-the-next-round in one call. These were two calls until the
-# merge: the model that has just read the notes is better placed to say what is
-# still missing than a second call given only the earliest year, and the round's
-# planning now costs nothing extra.
 EXTRACT_PROMPT = """\
 From the research material below, extract every distinct historical item relating to "{title}".
 
@@ -280,8 +258,6 @@ Items gathered across all research rounds (already deduplicated):
 Available citations:
 {citations_block}
 {pages_block}
-RESEARCH PLAN AND WHAT IT COVERED:
-{strands_block}
 {source_hierarchy}
 
 THE ONE RULE. A trace is a chain of SURVIVING EVIDENCE, in the order it was produced. Every
@@ -518,9 +494,12 @@ RULES FOR THE CHAIN:
 - SAY WHAT IS MISSING. Where there is no contemporary documentation, that absence is one of the
   most valuable findings here: name what does not exist, in "missing_piece" and in
   "contemporary_evidence", and put the significance of the silence in "conclusions".
-- EVERY RESEARCHED STRAND IS ACCOUNTED FOR. The block above says what the rounds found. Material
-  that is a surviving object becomes a step; material that is not becomes a conclusion. Nothing
-  researched is silently dropped — dropping it tells the reader the evidence was not there.
+- NOTHING RESEARCHED IS SILENTLY DROPPED. Material that is a surviving object becomes a step;
+  material that is not becomes a conclusion. Dropping it altogether tells the reader the evidence
+  was not there.
+- THE RESEARCH HAS TWO PARTS AND SO DOES THE CHAIN. Part 1 of the material is what the subject's
+  evidence descends from; it supplies the EARLIEST steps and cannot be discharged as a conclusion.
+  A chain whose first step comes from Part 2 has thrown away the half that decides where it starts.
 
 RULES FOR CONCLUSIONS:
 

@@ -42,7 +42,13 @@ from ..config import get_settings
 #     a claimed tier can no longer promote a lead. Every one of those changes what
 #     a trace CONTAINS rather than what it looks like, so a v3 answer served for a
 #     v4 request would be the old research wearing the new pipeline's name.
-SCHEMA_VERSION = "v5"
+# v6: every v5 trace was researched through Gemini grounding proxies, which made
+#     each citation report the SAME host and so left every source untiered. The
+#     five-tier policy was inert for the whole of v5: forum posts and a university
+#     library scored alike, low-authority pages were never skipped, and page reads
+#     were ranked arbitrarily. Those traces rest on sources nothing ever weighed,
+#     which is not a display difference — it is different research.
+SCHEMA_VERSION = "v6"
 
 
 def normalize_title(title: str) -> str:

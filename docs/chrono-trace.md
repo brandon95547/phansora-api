@@ -4,8 +4,9 @@ Every number here is read from the code as it runs today, not from an older desi
 note. Where a figure is configurable the setting is named, so it can be checked
 rather than trusted.
 
-The short version: **8 model calls, 7 grounded searches, 12 page fetches, one JSON
-generation.** Typical wall time on the production box is 2½–5 minutes.
+The short version: **2 model calls, 12 page fetches, one JSON generation.** One
+grounded research call in which the model runs its own web searches, then one call
+that turns the corpus into a timeline.
 
 ---
 
@@ -41,53 +42,44 @@ same subject will serve the cached answer until it is invalidated:
 curl -X POST .../chrono/cache/invalidate -d '{"title":"Jesus Christ"}'
 ```
 
-## Stage 1 — Gather (one round, no planner)
+## Stage 1 — Gather (one grounded call)
 
-**Seven searches, fired at once.** One per evidence strand, each a fixed template
-filled with the subject:
+**One call.** The model is handed `RESEARCH_PROMPT` and runs as many web searches as
+it judges the question needs; the queries it actually ran come back in
+`webSearchQueries` and are what the UI reports, rather than a template we wrote.
 
-| Strand | Looks for |
+The prompt asks for two parts, in this order:
+
+| Part | Asks for |
 |---|---|
-| `precursor_evidence` | what survives from *before* the subject that its sources descend from |
-| `earliest_texts` | earliest surviving texts about or by the subject, with composition dates |
-| `manuscripts` | physical copies: shelfmark, repository, palaeographic date |
-| `external_sources` | surviving texts from outside the tradition that mention it |
-| `documents_records` | decrees, censuses, court, tax and official registers |
-| `inscriptions_artifacts` | inscriptions, coins, seals, ostraca |
-| `archaeology` | excavated sites and assemblages, as published in excavation reports |
+| **1 — what this descends from** | the corpus its texts quote, the tradition they are composed inside, the text they translate, and the surviving objects carrying those today |
+| **2 — what survives about the subject** | earliest texts, manuscripts, external sources, documents and records, inscriptions and artifacts, excavated sites |
 
-There is **no planning call**. The queries are fixed text, so they cost nothing to
-produce. There is also **no round loop** — see [Why it works this way](#why-it-works-this-way).
+Part 1 leads, and that ordering is the whole point.
 
-Each of the seven then runs one `grounded_search`. On the default provider that is
-**one model call with Google Search grounding switched on**: Gemini decides what to
-search, runs it, reads the results, and returns prose plus the list of pages it
-actually used. The queries it ran come back in `webSearchQueries` and the pages in
-`groundingChunks`.
+> **Removed: the seven-way fan-out.** Until now this stage fired seven fixed queries,
+> one per evidence "strand". That existed because the old provider could not search —
+> queries had to be guessed in advance and fired blind to guarantee coverage. It also
+> decided where every chain STARTED, and decided it wrongly: **six of the seven asked
+> what survives ABOUT the subject and exactly one asked what its evidence DESCENDS
+> FROM.** The chain rule says a chain begins with descent, so the deciding half was
+> outvoted six to one in every corpus. A trace of Jesus opened at the Dead Sea Scrolls
+> and lost the four centuries of scripture the Scrolls are copies *of* — while the
+> prompt had named that exact failure by name the whole time.
 
-So the gather stage is **7 model calls, each doing its own searching**. Up to **8
-citations** are kept per answer (`chrono_max_sources_per_stage`).
+**Citations come only from grounding metadata**, never from URLs in the model's prose.
 
-**Citations come only from the grounding metadata** — never from URLs parsed out of
-the model's prose. A URL the model wrote into a sentence is a URL it may have
-invented, and attributing a claim to a page that never made it is the one failure
-this product cannot survive.
+**Grounding proxy URLs are resolved.** The API returns
+`vertexaisearch.cloud.google.com/grounding-api-redirect/...` for every source, with the
+real domain only in the chunk title. Left unresolved that is quietly destructive: every
+citation reports the same host, so the five-tier source policy scored a forum post and
+a university library identically, `low_authority` pages were never skipped, page-read
+ranking was arbitrary, and per-domain diversification saw one domain. Nothing raised.
+Each proxy is now followed to the page it points at; when one will not resolve, the
+domain from the title is used so the source is still tierable.
 
-**An answer with no grounding at all is discarded.** If the response carries neither
-grounding chunks nor search queries, the model did not search — it answered from
-memory, and memory is not evidence. The client returns empty so the caller reports
-*the search did not run* rather than *no evidence exists*. Those two sentences mean
-opposite things and used to be indistinguishable.
-
-> **Removed: DuckDuckGo.** The DeepSeek provider has no hosted search tool, so it
-> fetched results itself and pasted them into a prompt; the keyless backend for that
-> was DuckDuckGo. It answers **202 when it throttles**, which arrives as an empty
-> result list — identical to a search that genuinely found nothing. Throttled traces
-> reported "no evidence found" for subjects with abundant surviving evidence, and
-> days went into rewriting prompts that were never at fault. Nothing keyless replaced
-> it: with no backend configured the code now says so in the log instead of returning
-> quiet emptiness. The `deepseek` provider still works, but requires `BRAVE_API_KEY`
-> or `SEARXNG_URL`.
+**An answer with no grounding at all is discarded** — neither chunks nor queries means
+the model answered from memory, and memory is not evidence.
 
 ## Stage 2 — The corpus
 
@@ -123,8 +115,8 @@ Each page contributes up to **6000 characters** to the prompt.
 
 **A single model call.** This is the only place the pipeline generates JSON.
 
-It receives: the corpus, up to **60 citations**, the read pages, which strands were
-researched, the five-tier source doctrine, and the chain rules.
+It receives: the corpus, up to **60 citations**, the read pages, the five-tier source
+doctrine, and the chain rules.
 
 It returns: the origin, the timeline (**≤14 steps**), `conclusions` (**≤8**),
 `connections` (**≤8**), and a reasoning paragraph. Every step carries an evidence
@@ -144,9 +136,16 @@ The model proposes; these are enforced regardless of what it returns.
 - **Only the nine evidence kinds may be steps.** Anything else is demoted into
   `conclusions` — never dropped, because a silent drop hides a claim the model made.
 - **An undated step is not a step.** A chain is an order; an object with no date has
-  no position in one. Demoted the same way.
+  no position in one. Demoted the same way — but read leniently, so `"-400"` or
+  `-400.0` still counts as a date, and told in `conclusions` that it lacked a date
+  rather than that it "is not a surviving object", which was the wrong reason.
 - **Chronological sort**, oldest first, ids assigned before sorting so connections
-  survive the reordering.
+  survive the reordering. Sorted on the START of a span, falling back to its end — a
+  corpus given only a `year_end` used to sort to the *bottom*, which is where the
+  oldest material in a trace was landing.
+- **A chain starting at a copy is flagged.** If the first step is a manuscript or
+  scroll and nothing predates it, that is logged: the work it copies should be an
+  earlier step. Warned, never invented — the earlier step has to come from research.
 - **If the origin arrives undated** it swaps places with the first dated step, ids
   included, so `origin` keeps naming the head of the chain.
 - **Citations are ranked per claim, not per URL** — a 1963 newspaper is primary
@@ -159,8 +158,8 @@ The model proposes; these are enforced regardless of what it returns.
 
 | | Count | Setting |
 |---|---|---|
-| Model calls | **8** (7 grounded searches + 1 extraction) | — |
-| Web searches | **7**, plus whatever each grounded call runs internally | one per strand |
+| Model calls | **2** (1 grounded research + 1 extraction) | — |
+| Web searches | however many the model runs inside that one call | its own choice |
 | Citations kept per answer | 8 | `chrono_max_sources_per_stage` |
 | Citations into the prompt | ≤60 | `MAX_CITATIONS_IN_PROMPT` |
 | Pages fetched / read | 12 / 6 | `chrono_read_sources` |
@@ -201,18 +200,27 @@ trace **failed outright at twenty minutes**.
 
 Generating JSON is the expensive act, so it now happens exactly once. The adaptivity
 the round loop bought — deciding what to look for next based on what came back — was
-being paid for in the most expensive currency the pipeline has, and the queries a
-subject needs turn out to be the strand templates, which are free.
+being paid for in the most expensive currency the pipeline has.
 
-**The known trade:** one pass over gathered prose notices less than four passes did.
-The first version of this design lost Paul and the Gospels entirely, and was fixed by
-giving the extraction more to read (snippets, more results per search) rather than by
-restoring the loop.
+The searching then went the same way, for a different reason. Fixed templates were a
+workaround for a model that could not search; once the model chose its own queries the
+templates stopped adding coverage and started removing it, because their *proportions*
+silently set where every chain began.
+
+**The known trades.** One pass over gathered prose notices less than four passes did;
+the first version of this design lost Paul and the Gospels entirely, and was fixed by
+giving synthesis more to read rather than by restoring the loop. And one research call
+returns less raw text than seven did — if a chain comes back thin rather than early,
+the fix is asking for more angles *within* that call, not restoring the fan-out.
 
 ## What to watch when a trace looks wrong
 
-- **Chain starts too late** — the precursor strand found the corpus and the
-  extraction judged it "not about the subject". The rule is descent, not aboutness.
+- **Chain starts too late** — the commonest failure, and the log now says so: look for
+  `Chain starts at a copy`. It means the research found the copies and not the work
+  they copy. The rule is descent, not aboutness.
+- **Citations all on one host** — grounding proxies are not being resolved; every
+  source will be tiered `unknown` and the source policy is inert. Look for
+  `could not be resolved past the redirect`.
 - **A step with no date** — should now be impossible; if one appears, the demotion in
   Stage 5 failed.
 - **Two works in one step** ("New Testament writings, 50–100") — different composition

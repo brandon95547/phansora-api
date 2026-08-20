@@ -18,6 +18,7 @@ text we actually saw.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -49,7 +50,7 @@ from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
 from . import source_policy as sp
 from .prompts import (
-    DECOMPOSE_PROMPT,
+    RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
     EXPAND_SEARCH_PROMPT,
     expand_mode,
@@ -58,7 +59,6 @@ from .prompts import (
     EXTRACT_DOCTRINE,
     EXTRACT_PROMPT,
     SEARCH_DOCTRINE,
-    SEARCH_PROMPT,
     SOURCE_HIERARCHY,
     SYNTHESIZE_PROMPT,
 )
@@ -97,6 +97,40 @@ _EVIDENCE_KINDS = {
 _VALID_ATTRIBUTION = {"established", "attributed", "disputed", "anonymous", "not_applicable"}
 
 
+def _as_year(value: Any) -> Optional[int]:
+    """A year from whatever the model emitted, or None if there genuinely is not one.
+
+    Strict ``isinstance(value, int)`` was rejecting dates that are perfectly good:
+    a JSON string ``"-400"``, or ``-400.0`` where a range midpoint had been divided.
+    TimelineEvent coerces both, but the gate below runs on the raw dict and never got
+    that far — so a real, dated step was demoted into `conclusions` and told it was
+    "not a surviving object", which is neither true nor the reason.
+    """
+    if isinstance(value, bool):  # bool is an int subclass; a flag is not a year
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        m = re.search(r"-?\d+", value.strip())
+        if m:
+            return int(m.group(0))
+    return None
+
+
+def _sort_key(year: Optional[int], year_end: Optional[int]):
+    """Order by when a thing STARTS, falling back to when it ends.
+
+    A corpus composed across centuries is asked for as a span, and prompts.py tells
+    the model to give exactly that for the works that open a chain. Keying on `year`
+    alone sent any step carrying only `year_end` to the BOTTOM of the timeline — the
+    oldest material in the trace, sorted last.
+    """
+    start = year if year is not None else year_end
+    return (start is None, start if start is not None else 0)
+
+
 def is_evidence_kind(value: Any) -> bool:
     """Is this step a surviving object, i.e. allowed in the chain at all?
 
@@ -117,11 +151,49 @@ def _attribution(value: Any) -> str:
     return value if value in _VALID_ATTRIBUTION else "not_applicable"
 
 
+def _warn_if_copy_without_work(origin: Any, timeline: List[Any]) -> None:
+    """A chain that starts at a copy has dropped the thing being copied.
+
+    prompts.py states the rule: if the chain contains a manuscript, a scroll or a
+    fragment, the work it carries is itself a step, dated by COMPOSITION and placed
+    earlier. Nothing enforced it, and the failure is invisible — the trace looks
+    complete, every step is real, and the reader has no way to see that the oldest
+    half is missing. A trace of Jesus opened at the Dead Sea Scrolls: the copies were
+    there, the scriptures they are copies OF were not.
+
+    Warns rather than mutates. The earlier step has to come from the research; this
+    cannot invent one, and inventing one is precisely what the product must not do.
+    """
+    head = origin if origin is not None else (timeline[0] if timeline else None)
+    if head is None:
+        return
+    kind = getattr(head, "node_type", None)
+    if kind not in ("manuscript", "scroll"):
+        return
+    start = _as_year(getattr(head, "year", None))
+    if start is None:
+        start = _as_year(getattr(head, "year_end", None))
+    if start is None:
+        return
+    for e in timeline:
+        other = _as_year(getattr(e, "year", None))
+        if other is None:
+            other = _as_year(getattr(e, "year_end", None))
+        if other is not None and other < start:
+            return
+    logger.warning(
+        "Chain starts at a copy: %r is a %s and nothing in the chain predates it. "
+        "The work it carries should be an earlier step, dated by composition.",
+        getattr(head, "source_title", "?"), kind,
+    )
+
+
 def _build_conclusions(
     raw: Any,
     demoted: List[Dict[str, Any]],
     *,
     valid_ids: set,
+    undated: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Conclusion]:
     """The readings of the evidence, stated after it.
 
@@ -133,6 +205,11 @@ def _build_conclusions(
     A demoted step keeps its own words as the statement and declares that nothing in the
     chain supports it, which is the honest reading: it was offered as evidence, and it
     was not evidence.
+
+    ``undated`` is the other way a step falls out, and it needs its own wording. Those
+    ARE surviving objects; they simply arrived without a date, and a chain is an order.
+    Telling a reader that a manuscript "is not a surviving object" because its year was
+    missing is a false statement about the evidence.
     """
     out: List[Conclusion] = []
 
@@ -170,6 +247,27 @@ def _build_conclusions(
                     f"Offered as a step in the chain (as \"{kind}\"), but it is not a surviving "
                     "object that can be examined, so it is recorded here as a reading of the "
                     "evidence rather than as evidence."
+                ),
+                dissent="None identified",
+            )
+        )
+
+    for entry in (undated or []):
+        statement = str(entry.get("claim") or entry.get("source_title") or "").strip()
+        if not statement:
+            continue
+        title = str(entry.get("source_title") or "").strip()
+        named = f" ({title})" if title and title not in statement else ""
+        out.append(
+            Conclusion(
+                statement=statement,
+                rests_on=[],
+                confidence_label="low",
+                reasoning=(
+                    f"Offered as a step in the chain{named} and it may well be a surviving "
+                    "object, but it arrived with no date the chain could place it by. A chain "
+                    "is an order, so it is recorded here rather than given a position it has "
+                    "not earned."
                 ),
                 dissent="None identified",
             )
@@ -344,120 +442,6 @@ def _coerce_connection_evidence(
     )
 
 
-# The strands a trace can be built from. Kept here rather than in the prompt
-# alone so the loop can measure coverage instead of taking the model's word for it.
-_STRANDS = {
-    "precursor_evidence", "earliest_texts", "manuscripts", "external_sources",
-    "documents_records", "inscriptions_artifacts", "archaeology",
-}
-# A mention reports its strand covered by the KIND of surviving thing it is. The
-# strands are categories of evidence to go looking for, so the mapping is just
-# "which hunt would have turned this up".
-_NODE_TYPE_STRAND = {
-    "text": "earliest_texts",
-    "letter": "earliest_texts",
-    "manuscript": "manuscripts",
-    "scroll": "manuscripts",
-    "inscription": "inscriptions_artifacts",
-    "artifact": "inscriptions_artifacts",
-    "document": "documents_records",
-    "record": "documents_records",
-    "archaeological_find": "archaeology",
-}
-
-
-# A search for each strand, written here rather than asked for. The extract
-# prompt has always been told to cover the open strands first, and it has always
-# had to do that inside one list of six queries also carrying "push further
-# back", "chase this lead", "find independent corroboration" and "find the
-# scholarship that disputes this". Recency won every time, which is how a trace
-# for Jesus Christ ran twenty-four searches without one of them asking what
-# calendar the dates were in, who Paul was, or when the gospels were written.
-#
-# So the open strands get their slots taken off the top and the model plans with
-# what is left. These are deliberately generic: a strand is a KIND of question,
-# and the grounded-search step is what turns "what texts exist and when were
-# they written" into a subject's actual bibliography.
-_STRAND_QUERIES = {
-    "precursor_evidence": (
-        "what texts, manuscripts, inscriptions and excavated objects survive from BEFORE "
-        "{title}, in the same culture and language, with their dates and where they are held"
-    ),
-    "earliest_texts": (
-        "the earliest surviving texts about or by {title}, ordered earliest first, with "
-        "estimated composition dates and the scholarly basis for each date"
-    ),
-    "manuscripts": (
-        "earliest surviving manuscripts, scrolls and fragments relating to {title}: shelfmark, "
-        "holding repository, palaeographic date, and how far they postdate composition"
-    ),
-    "external_sources": (
-        "surviving texts from outside the tradition of {title} that mention it, their own "
-        "composition dates, and how those texts themselves physically survive"
-    ),
-    "documents_records": (
-        "surviving documents and administrative records — decrees, censuses, court, tax or "
-        "official registers — from the period and place of {title}, and which archive holds them"
-    ),
-    "inscriptions_artifacts": (
-        "surviving inscriptions, coins, seals, ostraca and inscribed objects relating to "
-        "{title}, with their find context, date and holding institution"
-    ),
-    "archaeology": (
-        "excavated sites, structures and assemblages relevant to {title}, as reported in "
-        "excavation reports, with dates and the report that publishes each find"
-    ),
-}
-
-
-def _strand_queries(title: str, open_strands: List[str], already_run: List[str], *, limit: int) -> List[str]:
-    """One search per still-open strand, up to ``limit``, skipping repeats."""
-    if limit <= 0:
-        return []
-    seen = {q.strip().lower() for q in already_run}
-    out: List[str] = []
-    for strand in open_strands:
-        template = _STRAND_QUERIES.get(strand)
-        if not template:
-            continue
-        query = template.format(title=title)
-        if query.lower() in seen:
-            continue
-        seen.add(query.lower())
-        out.append(query)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def _as_strands(raw: Any) -> List[str]:
-    """The planned strands, tolerating both ['name'] and [{'strand': name}] shapes."""
-    out: List[str] = []
-    for item in raw or []:
-        name = item.get("strand") if isinstance(item, dict) else item
-        name = str(name or "").strip().lower()
-        if name in _STRANDS and name not in out:
-            out.append(name)
-    return out
-
-
-def _strands_covered(mentions: List[Dict[str, Any]]) -> set:
-    """Which strands this batch of mentions actually produced evidence for."""
-    covered: set = set()
-    for m in mentions or []:
-        if not isinstance(m, dict):
-            continue
-        node_type = str(m.get("node_type") or "").strip().lower()
-        strand = _NODE_TYPE_STRAND.get(node_type, node_type)
-        if strand in _STRANDS:
-            covered.add(strand)
-    return covered
-
-
-def _open_strands(planned: List[str], covered: set) -> List[str]:
-    return [s for s in planned if s not in covered]
-
-
 def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     dated = [m for m in mentions if isinstance(m.get("year"), int)]
     if not dated:
@@ -571,26 +555,6 @@ def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _format_strands_block(planned: List[str], covered: set) -> str:
-    """What the research plan asked for, and which parts of it found something.
-
-    Handed to synthesis so it can tell the two kinds of silence apart. A strand
-    the rounds covered and the report omits is a report that threw away research
-    the user paid for; a strand the rounds could not cover is a finding, and
-    belongs in the open questions rather than being quietly dropped.
-    """
-    if not planned:
-        return "(no strand plan recorded)"
-    lines = []
-    for strand in planned:
-        state = "RESEARCHED — must appear as at least one entry" if strand in covered else (
-            "NOT COVERED — say so in the reasoning; do not invent entries for it"
-        )
-        lines.append(f"- {strand}: {state}")
-    extra = sorted(covered - set(planned))
-    for strand in extra:
-        lines.append(f"- {strand}: RESEARCHED (unplanned) — must appear as at least one entry")
-    return "\n".join(lines)
 
 
 def _as_queries(raw: Any) -> List[str]:
@@ -655,10 +619,7 @@ class TraceOrchestrator:
             progress(100, "Loaded from cache")
             return TraceResponse(**cached)
 
-        max_depth = req.max_depth or self.settings.chrono_max_depth
-        min_depth = max(1, min(self.settings.chrono_min_depth, max_depth))
         max_sources = req.max_sources_per_stage or self.settings.chrono_max_sources_per_stage
-        max_queries = self.settings.chrono_max_queries_per_stage
 
         all_mentions: List[Dict[str, Any]] = []
         all_citations: Dict[str, Dict[str, str]] = {}
@@ -666,24 +627,39 @@ class TraceOrchestrator:
         gaps: List[str] = []
         iterations = 0
 
-        # Stage 1 - Gather. One fixed search per strand, all fired at once.
+        # Stage 1 - Gather. ONE grounded call; the model runs its own searches.
         #
-        # There is no planner call and no round loop here any more. Both existed to
-        # make the searching adaptive, and adaptivity cost far more than it bought:
-        # measured on a live trace, a round's six searches finished in 14 seconds and
-        # the call that turned them into structured JSON took 104 — every round, every
-        # time overrunning its output budget and regenerating from scratch. Synthesis
-        # then overran the doubled budget and the trace failed outright at 20 minutes.
+        # There is no planner call and no round loop. Both existed to make the
+        # searching adaptive, and adaptivity cost far more than it bought: measured on
+        # a live trace, a round's six searches finished in 14 seconds and the call
+        # that turned them into structured JSON took 104 — every round, overrunning
+        # its output budget and regenerating from scratch. Synthesis then overran the
+        # doubled budget and the trace failed outright at 20 minutes. Generating JSON
+        # is the expensive act, so it happens exactly once.
         #
-        # Generating JSON is the expensive act, so it now happens exactly once. The
-        # queries are the strand templates, which are fixed text and cost nothing.
+        # There is no seven-way fan-out either. That was written for a provider with
+        # no search of its own: the queries had to be guessed in advance and fired
+        # blind, one per evidence category, to guarantee coverage. It also decided
+        # where every chain STARTED, and decided it wrongly — six of the seven asked
+        # what survives ABOUT the subject and exactly one asked what its evidence
+        # DESCENDS FROM, so the half the chain begins with was outvoted six to one in
+        # every corpus. A trace of Jesus opened at the Dead Sea Scrolls and lost the
+        # four centuries of scripture the Scrolls are copies OF.
+        #
+        # The model now chooses and runs its own queries, so there are no slots left
+        # to allocate badly. RESEARCH_PROMPT asks for descent first and evidence about
+        # the subject second, in one answer.
         progress(15, "Searching")
-        planned_strands = sorted(_STRANDS)
-        current_queries = _strand_queries(
-            req.title, planned_strands, [], limit=len(planned_strands)
+        research_prompt = RESEARCH_PROMPT.format(
+            title=req.title,
+            context_clause=f" ({req.context})" if req.context else "",
+            search_doctrine=SEARCH_DOCTRINE,
         )
-        answers = self._search_many(req, current_queries)
-        queries_run.extend(current_queries)
+        answers = self._search_prompts([research_prompt])
+        # What the model actually searched for, reported back so the user sees the
+        # real queries rather than a template we wrote.
+        for answer in answers:
+            queries_run.extend(answer.queries or [])
         iterations = 1
 
         for answer in answers:
@@ -692,14 +668,12 @@ class TraceOrchestrator:
                 if url and url not in all_citations:
                     all_citations[url] = c
 
-        # What the searches actually said, kept as prose with the query that found it.
-        # This is the "compiled context" the single extraction reads.
-        def _block(query: str, answer: Any) -> str:
+        def _block(answer: Any) -> str:
             # The summary AND the raw result snippets. The snippets are already
-            # fetched and already paid for, and a summariser writing 300 words about
-            # six results necessarily drops most of what they said — which is exactly
-            # the detail the extraction downstream is looking for.
-            parts = [f"[{query}]"]
+            # fetched and already paid for, and a summariser writing a few hundred
+            # words about a page necessarily drops most of what it said — which is
+            # exactly the detail synthesis downstream is looking for.
+            parts = []
             text = (answer.text or "").strip()
             if text:
                 parts.append(text)
@@ -711,11 +685,7 @@ class TraceOrchestrator:
                     parts.append(f"- {c.get('title') or c.get('url')}: {snippet}")
             return "\n".join(parts)
 
-        corpus = "\n\n".join(
-            _block(q, a) for q, a in zip(current_queries, answers)
-        ) or "(no search results)"
-
-        covered_strands = set(planned_strands)
+        corpus = "\n\n".join(b for b in (_block(a) for a in answers) if b) or "(no search results)"
 
         # No extract stage means no per-URL tier claims; the resolver falls back to
         # its host heuristic, which is what it did for un-mentioned URLs anyway.
@@ -752,8 +722,6 @@ class TraceOrchestrator:
             # four rounds could be collapsed into one line or dropped, and
             # nothing downstream could tell the difference between "the evidence
             # was not there" and "the report did not mention it".
-            planned_strands=planned_strands,
-            covered_strands=covered_strands,
         )
 
         progress(97, "Building response")
@@ -808,52 +776,10 @@ class TraceOrchestrator:
                     out[url] = tier
         return out
 
-    def _decompose(self, req: TraceRequest, *, max_queries: int) -> Dict[str, Any]:
-        prompt = DECOMPOSE_PROMPT.format(
-            title=req.title,
-            context=req.context or "(none)",
-            max_queries=max_queries,
-            source_hierarchy=SOURCE_HIERARCHY,
-        )
-        return self.client.reason_json(prompt, use_reasoning_model=False)
-
-    def _search_many(self, req: TraceRequest, queries: List[str]) -> List[GroundedAnswer]:
-        """Run this round's searches concurrently, in the order asked.
-
-        Each worker meters itself and hands the total back: the usage counter is
-        thread-local so concurrent traces cannot contaminate each other, which
-        also means a worker's calls land in its own meter until absorbed here.
-        """
-        def one(query: str) -> Tuple[GroundedAnswer, Dict[str, Any]]:
-            usage.start()
-            usage.stage("search")
-            try:
-                answer = self._search_one(req, query)
-            except Exception as exc:  # noqa: BLE001 - a dead query must not kill the round
-                logger.warning("Grounded search failed for %r: %s", query, exc)
-                answer = GroundedAnswer(text="", citations=[], queries=[])
-            return answer, usage.snapshot()
-
-        if len(queries) == 1:
-            usage.stage("search")
-            return [self._search_one(req, queries[0])]
-
-        # One worker per query, not five. The query budget is
-        # chrono_max_queries_per_stage (6 by default), so a hard cap of 5 left every
-        # round running five searches concurrently and then one straggler alone —
-        # a whole extra search latency per round, bought for nothing. These are
-        # network-bound and each is already a separate LLM call, so the pool costs
-        # threads, not tokens.
-        with ThreadPoolExecutor(max_workers=len(queries)) as pool:
-            results = list(pool.map(one, queries))
-        for _, snap in results:
-            usage.absorb(snap)
-        return [answer for answer, _ in results]
-
     def _search_prompts(self, prompts: List[str]) -> List[GroundedAnswer]:
         """Run already-formatted search prompts concurrently.
 
-        _search_many builds SEARCH_PROMPT around a bare query; the chase writes
+        The gather and expand stages build their own prompt; the chase writes
         its own prompt, so it needs the concurrency without the template.
         """
         def one(prompt: str) -> Tuple[GroundedAnswer, Dict[str, Any]]:
@@ -881,20 +807,6 @@ class TraceOrchestrator:
         for _, snap in results:
             usage.absorb(snap)
         return [answer for answer, _ in results]
-
-    def _search_one(self, req: TraceRequest, query: str) -> GroundedAnswer:
-        ctx = f"(context: {req.context})" if req.context else ""
-        prompt = SEARCH_PROMPT.format(
-            title=req.title,
-            context_clause=ctx,
-            query=query,
-            search_doctrine=SEARCH_DOCTRINE,
-        )
-        try:
-            return self.client.grounded_search(prompt)
-        except Exception as exc:
-            logger.warning("Grounded search failed for %r: %s", query, exc)
-            return GroundedAnswer(text="", citations=[], queries=[])
 
     def _extract(
         self,
@@ -1038,8 +950,6 @@ class TraceOrchestrator:
         corpus: str,
         citations: List[Dict[str, str]],
         reads: List[PageRead],
-        planned_strands: Optional[List[str]] = None,
-        covered_strands: Optional[set] = None,
     ) -> Dict[str, Any]:
         pages_block = ""
         if reads:
@@ -1052,7 +962,6 @@ class TraceOrchestrator:
             mentions_block=corpus,
             citations_block=_format_citations_block(citations),
             pages_block=pages_block,
-            strands_block=_format_strands_block(planned_strands or [], covered_strands or set()),
             source_hierarchy=SOURCE_HIERARCHY,
             max_connections=self.settings.chrono_max_connections,
         )
@@ -1188,16 +1097,23 @@ class TraceOrchestrator:
         # reading of the evidence belongs. Dropping them would hide that the model
         # believes something the evidence does not show.
         demoted: List[Dict[str, Any]] = []
+        undated: List[Dict[str, Any]] = []
         used_ids = {"origin"}
         for i, entry in enumerate(final.get("timeline") or []):
             if not is_evidence_kind(entry.get("node_type")):
+                logger.info(
+                    "Demoted %r to a conclusion: %r is not a surviving object.",
+                    entry.get("source_title"), entry.get("node_type"),
+                )
                 demoted.append(entry)
                 continue
-            if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
+            year, year_end = _as_year(entry.get("year")), _as_year(entry.get("year_end"))
+            if year is None and year_end is None:
                 # A chain is an order. An object with no date has no place in one, and
                 # letting it in is what put an undated step at the head of the chain
                 # while the first thing a reader could see a date on was centuries later.
-                demoted.append(entry)
+                logger.info("Demoted %r to a conclusion: no usable date.", entry.get("source_title"))
+                undated.append(entry)
                 continue
             conf = float(entry.get("confidence", 0.5) or 0.5)
             # Ids come from the model so connections can reference them, but must
@@ -1216,10 +1132,10 @@ class TraceOrchestrator:
             timeline.append(
                 TimelineEvent(
                     id=event_id,
-                    year=entry.get("year"),
+                    year=year,
                     era_label=entry.get("era_label"),
                     precision=entry.get("precision", "unknown"),
-                    year_end=entry.get("year_end"),
+                    year_end=year_end,
                     node_type=entry.get("node_type"),
                     attribution=_attribution(entry.get("attribution")),
                     source_title=entry.get("source_title", "Unknown"),
@@ -1239,7 +1155,7 @@ class TraceOrchestrator:
 
         # Chronological sort, oldest first; null years go last. Ids were assigned
         # before this so they survive the reordering and connections stay valid.
-        timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+        timeline.sort(key=lambda e: _sort_key(e.year, e.year_end))
 
         # If the model's origin has no date and the chain does, the two swap places —
         # ids included, so "origin" keeps naming the first step and connections still
@@ -1250,9 +1166,13 @@ class TraceOrchestrator:
             displaced = TimelineEvent(**{**origin.model_dump(), "id": first.id, "claim": origin.summary})
             origin = OriginResult(**{**first.model_dump(), "id": "origin", "summary": first.claim})
             timeline.append(displaced)
-            timeline.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+            timeline.sort(key=lambda e: _sort_key(e.year, e.year_end))
 
-        conclusions = _build_conclusions(final.get("conclusions"), demoted, valid_ids=used_ids)
+        _warn_if_copy_without_work(origin, timeline)
+
+        conclusions = _build_conclusions(
+            final.get("conclusions"), demoted, valid_ids=used_ids, undated=undated
+        )
 
 
         connections = self._build_connections(

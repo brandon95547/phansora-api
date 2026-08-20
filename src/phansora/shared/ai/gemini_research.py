@@ -21,8 +21,10 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -41,6 +43,55 @@ _REASON_MAX_TOKENS = int(os.getenv("GEMINI_REASON_MAX_TOKENS", "32000"))
 _SEARCH_MAX_TOKENS = int(os.getenv("GEMINI_SEARCH_MAX_TOKENS", "4000"))
 
 _JSON_SYSTEM = "You return only valid JSON. No prose, no code fences, no commentary."
+
+# Grounding does not hand back the pages it read. It hands back redirect proxies on
+# this host, one per source, with the real domain tucked into the chunk's `title`.
+#
+# Left unresolved that is quietly destructive, because every downstream decision about
+# a source is made from its URL. Every citation resolves to the SAME host, so the
+# five-tier source policy scores quora.com and a university library identically, the
+# "never read a low-authority page" rule never fires, page-read ranking becomes
+# arbitrary, and per-domain diversification sees one domain and stops diversifying.
+# Nothing raises; the trace just quietly rests on forum posts.
+#
+# They are also proxies, so a saved citation stops resolving once Google expires it —
+# in a product whose whole promise is that you can go and look at the thing.
+_PROXY_HOST = "vertexaisearch.cloud.google.com"
+_RESOLVE_TIMEOUT_S = float(os.getenv("GEMINI_RESOLVE_TIMEOUT_S", "6"))
+_RESOLVE_WORKERS = int(os.getenv("GEMINI_RESOLVE_WORKERS", "8"))
+
+_REDIRECT_CODES = {301, 302, 303, 307, 308}
+
+
+def _is_proxy(url: str) -> bool:
+    try:
+        return (urlsplit(url).hostname or "").lower().endswith(_PROXY_HOST)
+    except ValueError:
+        return False
+
+
+def _looks_like_domain(text: str) -> bool:
+    """Grounding puts the bare domain in `title` — "quora.com", not a page title."""
+    t = (text or "").strip()
+    return bool(t) and " " not in t and "." in t and "/" not in t
+
+
+def _resolve_proxy(url: str) -> str:
+    """Follow one grounding redirect to the page it actually points at.
+
+    Header-only: redirects are answered without a body worth reading, and the page
+    itself is fetched later by the reader stage if it earns a read.
+    """
+    try:
+        with httpx.Client(timeout=_RESOLVE_TIMEOUT_S, follow_redirects=False) as client:
+            resp = client.get(url)
+        if resp.status_code in _REDIRECT_CODES:
+            target = (resp.headers.get("location") or "").strip()
+            if target.startswith("http"):
+                return target
+    except Exception as exc:  # noqa: BLE001 - an unresolved proxy is not fatal
+        logger.debug("Could not resolve a grounding redirect: %s", exc)
+    return url
 
 
 def _env(name: str, default: str = "") -> str:
@@ -176,8 +227,11 @@ class GeminiResearchClient:
         Kept to what the response says it used. Inventing citations from the model's
         prose is how a trace ends up attributing a claim to a page that never mentioned
         it, and this product exists to make that impossible.
+
+        Proxy URLs are resolved to the pages they point at — see _PROXY_HOST above for
+        why leaving them unresolved silently disables source tiering.
         """
-        out: List[Dict[str, str]] = []
+        raw: List[Dict[str, str]] = []
         seen = set()
         for cand in data.get("candidates") or []:
             gm = cand.get("groundingMetadata") or {}
@@ -187,7 +241,43 @@ class GeminiResearchClient:
                 if not url or url in seen:
                     continue
                 seen.add(url)
-                out.append({"url": url, "title": (web.get("title") or url).strip(), "snippet": ""})
+                raw.append({"url": url, "title": (web.get("title") or "").strip()})
+
+        proxies = [c["url"] for c in raw if _is_proxy(c["url"])]
+        resolved: Dict[str, str] = {}
+        if proxies:
+            # Concurrent: these are sequential round trips to the same host, and a
+            # trace gathers dozens of them.
+            with ThreadPoolExecutor(max_workers=min(_RESOLVE_WORKERS, len(proxies))) as pool:
+                resolved = dict(zip(proxies, pool.map(_resolve_proxy, proxies)))
+
+        out: List[Dict[str, str]] = []
+        final_seen = set()
+        unresolved = 0
+        for c in raw:
+            url, title = c["url"], c["title"]
+            if _is_proxy(url):
+                url = resolved.get(url, url)
+            if _is_proxy(url):
+                unresolved += 1
+                # Still not a usable URL. Fall back to the domain, which grounding
+                # supplies as the chunk title: the site root is a worse link than the
+                # page, but it is a REAL one that tiers correctly and outlives the
+                # proxy. An untiered source is treated as though nothing is known
+                # about its authority, which is how a forum post ends up weighted
+                # like a university library.
+                if _looks_like_domain(title):
+                    url = "https://%s/" % title
+            if url in final_seen:
+                continue
+            final_seen.add(url)
+            out.append({"url": url, "title": title or url, "snippet": ""})
+
+        if unresolved:
+            logger.warning(
+                "%d of %d grounding sources could not be resolved past the redirect.",
+                unresolved, len(raw),
+            )
         return out
 
     @staticmethod

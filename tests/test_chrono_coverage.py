@@ -85,50 +85,7 @@ class TestStrandsSurviveADedupe:
         assert merged[0]["node_type"] == "manuscript"
 
 
-class TestOpenStrandsBuyTheirOwnSearches:
-    """A strand nobody searched for is a strand that stays open forever."""
 
-    def test_each_open_strand_gets_a_query(self):
-        qs = orch._strand_queries("Jesus Christ", ["archaeology", "earliest_texts"], [], limit=5)
-        assert len(qs) == 2
-        assert any("excavation reports" in q for q in qs)
-        assert any("earliest surviving texts" in q for q in qs)
-        assert all("Jesus Christ" in q for q in qs)
-
-    def test_every_strand_the_planner_may_name_can_be_searched_for(self):
-        """A strand with no query template can never be closed, so it burns a
-        reserved slot every round and returns nothing for it."""
-        assert set(orch._STRAND_QUERIES) == orch._STRANDS
-
-    def test_respects_the_reserved_slot_count(self):
-        qs = orch._strand_queries(
-            "X", ["archaeology", "earliest_texts", "manuscripts"], [], limit=2
-        )
-        assert len(qs) == 2
-
-    def test_never_reruns_a_search_already_paid_for(self):
-        first = orch._strand_queries("X", ["archaeology"], [], limit=1)
-        again = orch._strand_queries("X", ["archaeology"], first, limit=1)
-        assert first and again == []
-
-    def test_a_covered_strand_asks_nothing(self):
-        assert orch._strand_queries("X", [], [], limit=5) == []
-
-
-class TestSynthesisIsToldWhatWasResearched:
-    def test_separates_a_researched_strand_from_an_uncovered_one(self):
-        block = orch._format_strands_block(
-            ["earliest_texts", "archaeology"], {"earliest_texts"}
-        )
-        assert "earliest_texts: RESEARCHED" in block
-        assert "archaeology: NOT COVERED" in block
-
-    def test_a_strand_found_without_being_planned_still_has_to_appear(self):
-        block = orch._format_strands_block(["earliest_texts"], {"earliest_texts", "manuscripts"})
-        assert "manuscripts: RESEARCHED (unplanned)" in block
-
-    def test_says_so_plainly_when_there_was_no_plan(self):
-        assert "no strand plan" in orch._format_strands_block([], set())
 
 
 class TestATierIsNotWhateverTheModelSaysItIs:

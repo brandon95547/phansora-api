@@ -1,20 +1,24 @@
 """The trace pipeline, driven end to end against a scripted model.
 
 This file used to test a research LOOP: plan strands, search, extract, decide
-whether to go round again. That loop is gone, and the reason it went is the thing
-worth pinning now. Measured on a live trace, a round's six searches finished in 14
-seconds and the call that turned them into structured JSON took 104 — every round,
-every time, because it overran its output budget and regenerated from scratch.
-Synthesis then overran the doubled budget and the whole trace failed at 20 minutes.
-Generating JSON was the expensive act, and the loop was buying it once per round.
+whether to go round again. Then it tested a seven-way fan-out. Both are gone, and
+the reasons are what is worth pinning.
 
-So the pipeline is one pass: one fixed search per strand, fired together, then a
-single JSON call that turns the whole corpus into a timeline. The searches are
-template text and cost nothing to produce.
+The loop went because generating JSON is the expensive act and the loop bought it
+once per round: a round's six searches finished in 14 seconds and the call that
+turned them into JSON took 104, every round, overrunning its budget and starting
+over. The trace failed outright at 20 minutes.
 
-What these tests hold in place is that shape. The fake model is deliberately
-unhelpful — it never proposes a query of its own — because everything the pipeline
-covers has to come from the pipeline, not from the model volunteering.
+The fan-out went because it decided where every chain STARTED, and decided it
+wrongly. Seven fixed queries, one per evidence category — six asking what survives
+ABOUT the subject, one asking what its evidence DESCENDS FROM. The chain rule says a
+chain begins with descent, so the deciding half was outvoted six to one in every
+corpus. A trace of Jesus opened at the Dead Sea Scrolls and lost the four centuries
+of scripture the Scrolls are copies of. It existed only because the old provider
+could not search and the queries had to be guessed in advance.
+
+So a trace is now two model calls: one grounded research call where the model runs
+its own searches, and one JSON call that turns the corpus into a timeline.
 """
 from __future__ import annotations
 
@@ -49,16 +53,16 @@ class ScriptedClient:
         }
 
     def grounded_search(self, prompt):
-        query = prompt.split("Search query: ", 1)[-1].split("\n", 1)[0]
-        self.searches.append(query)
+        self.searches.append(prompt)
         return GroundedAnswer(
-            text=f"Summary for: {query}",
+            text="What the research found.",
             citations=[{
                 "url": "https://www.jstor.org/stable/1",
                 "title": "A paper",
                 "snippet": "A detail the summary left out.",
             }],
-            queries=[query],
+            # The queries the MODEL chose, which is what grounding reports back.
+            queries=["septuagint earliest manuscripts", "dead sea scrolls dating"],
         )
 
 
@@ -79,41 +83,51 @@ def pipeline(monkeypatch, tmp_path):
     return o, client
 
 
-class TestEveryStrandIsSearchedFor:
-    """Coverage comes from the strand templates now, not from a model's judgement."""
+class TestTheResearchIsOneCall:
+    """One grounded call, and the model chooses its own queries."""
 
-    def test_each_strand_buys_exactly_one_search(self, pipeline):
+    def test_exactly_one_search_call_per_trace(self, pipeline):
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        assert len(client.searches) == len(orch._STRANDS)
+        assert len(client.searches) == 1
 
-    def test_no_strand_is_skipped(self, pipeline):
+    def test_the_prompt_asks_for_descent_before_evidence_about_the_subject(self, pipeline):
+        """The ordering is the fix, not a formatting choice.
+
+        Descent decides where a chain starts, and it is the half that loses whenever
+        anything competes with it. Asking for it first, in its own required part, is
+        what stops a trace opening at a copy of something older.
+        """
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        searched = " ".join(client.searches).lower()
-        # One distinctive phrase per strand template. A strand that stops being
-        # searched for stops being able to appear in any trace at all.
-        for phrase in (
-            "survive from before",           # precursor_evidence
-            "earliest surviving texts",      # earliest_texts
-            "shelfmark",                     # manuscripts
-            "outside the tradition",         # external_sources
-            "administrative records",        # documents_records
-            "inscriptions, coins, seals",    # inscriptions_artifacts
-            "excavation reports",            # archaeology
-        ):
-            assert phrase in searched, f"nothing searched for {phrase!r}"
+        prompt = client.searches[0]
+        assert "WHAT THIS DESCENDS FROM" in prompt
+        assert "WHAT SURVIVES ABOUT THE SUBJECT" in prompt
+        assert prompt.index("WHAT THIS DESCENDS FROM") < prompt.index("WHAT SURVIVES ABOUT THE SUBJECT")
 
-    def test_the_subject_is_named_in_every_search(self, pipeline):
+    def test_the_prompt_still_carries_the_evidence_vocabulary(self, pipeline):
+        """The strand list was worth keeping; the fan-out was not.
+
+        Naming shelfmarks, ostraca and excavation reports is how the model is told
+        what a findable object looks like.
+        """
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        assert client.searches
-        assert all("Jesus Christ" in q for q in client.searches)
+        prompt = client.searches[0].lower()
+        for word in ("shelfmark", "ostraca", "excavation report", "repository",
+                     "critical edition", "composition"):
+            assert word in prompt, f"{word!r} dropped from the research prompt"
 
-    def test_no_search_is_paid_for_twice(self, pipeline):
+    def test_the_subject_is_named(self, pipeline):
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        assert len(client.searches) == len(set(client.searches))
+        assert "Jesus Christ" in client.searches[0]
+
+    def test_the_queries_reported_are_the_models_own(self, pipeline):
+        """Not the prompt we sent. The user is shown what was actually searched."""
+        o, _ = pipeline
+        result = o.run(TraceRequest(title="Jesus Christ"))
+        assert result.queries_run == ["septuagint earliest manuscripts", "dead sea scrolls dating"]
 
 
 class TestTheExpensiveCallHappensOnce:
@@ -136,18 +150,21 @@ class TestTheExpensiveCallHappensOnce:
 
 
 class TestSynthesisIsHandedTheResearch:
-    def test_the_strand_plan_reaches_synthesis(self, pipeline):
-        o, client = pipeline
-        o.run(TraceRequest(title="Jesus Christ"))
-        assert "RESEARCH PLAN AND WHAT IT COVERED" in client.synthesize_prompt
-        assert "earliest_texts: RESEARCHED" in client.synthesize_prompt
-
-    def test_every_search_result_reaches_synthesis(self, pipeline):
+    def test_the_research_reaches_synthesis(self, pipeline):
         """With no extract stage in between, the corpus IS the research."""
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        for query in client.searches:
-            assert f"[{query}]" in client.synthesize_prompt, f"{query!r} never arrived"
+        assert "What the research found." in client.synthesize_prompt
+
+    def test_synthesis_is_not_told_a_strand_plan_that_no_longer_exists(self, pipeline):
+        """The old block asserted every strand was RESEARCHED, unconditionally.
+
+        It was built from the planned list, not from what came back, so it said the
+        same thing on every trace and told synthesis nothing it could act on.
+        """
+        o, client = pipeline
+        o.run(TraceRequest(title="Jesus Christ"))
+        assert "RESEARCH PLAN AND WHAT IT COVERED" not in client.synthesize_prompt
 
     def test_the_raw_snippets_arrive_too_not_just_the_summary(self, pipeline):
         """A summariser writing 300 words about six results drops most of what they
@@ -165,9 +182,14 @@ class TestTheResponseIsStillWellFormed:
         assert result.model_dump()["origin"]["source_title"] == "O"
 
     def test_the_searches_are_reported_back(self, pipeline):
-        o, client = pipeline
+        """What the MODEL searched, not the prompt we handed it.
+
+        The prompt is ours and says nothing about what was looked up; grounding
+        reports the real queries, and those are what the user is shown.
+        """
+        o, _ = pipeline
         result = o.run(TraceRequest(title="Jesus Christ"))
-        assert set(result.queries_run) == set(client.searches)
+        assert result.queries_run == ["septuagint earliest manuscripts", "dead sea scrolls dating"]
 
     def test_an_empty_synthesis_fails_instead_of_caching_a_hollow_success(self, pipeline):
         """A trace with no origin and no timeline is a FAILED trace.
