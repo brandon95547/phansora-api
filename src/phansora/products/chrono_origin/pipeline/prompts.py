@@ -740,6 +740,12 @@ of this anchor in the history of "{story_title}".
 WHAT THIS EXPANSION IS FOR — {mode_label}:
 {mode_extract}
 
+EVERY SUB-EVENT CARRIES A DATE. "year", or "year"+"year_end" for something produced over
+a period. A branch takes a position on the timeline exactly as a step does, so an undated
+one has nowhere to sit and is DISCARDED before it reaches the board — an estimate with a
+range beats a correct answer with no date on it. Date the RECORD, not the thing it
+records: an excavation report is dated to its publication.
+
 An expansion exists to GROW the timeline. These are already on it, and returning any of
 them costs the user a call and shows them a card they have already read:
 {existing_block}
