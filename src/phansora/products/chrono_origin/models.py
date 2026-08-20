@@ -495,6 +495,15 @@ class ExpandResponse(BaseModel):
     parent_year: Optional[int] = None
     parent_era_label: Optional[str] = None
     events: List[TimelineEvent] = Field(default_factory=list)
+    # Whether the WEB SEARCH came back with nothing, as distinct from the extraction
+    # finding nothing in what it was given. Those are opposite problems and looked
+    # identical for a long time: an expansion over an empty corpus reports "no evidence
+    # found", which sends everyone to check the prompts when the search never ran.
+    # DuckDuckGo is keyless here and answers 202 when it throttles, so this is not rare.
+    search_unavailable: bool = Field(
+        default=False,
+        description="True when the search returned no results at all, so nothing could be extracted.",
+    )
     # Parent -> sub-event edges, graded exactly like the main trace's connections.
     # An expansion that cannot justify why a sub-event belongs under its anchor is
     # showing the user a false relationship, which is worse than showing none.

@@ -1402,6 +1402,17 @@ class TraceOrchestrator:
             logger.warning("Expand grounded search failed: %s", exc)
             answer = GroundedAnswer(text="", citations=[], queries=[])
 
+        # No citations at all means the search itself came back empty — throttled,
+        # blocked, or down — and everything after this is extraction over nothing.
+        # Reported rather than inferred: a silent empty corpus is indistinguishable
+        # from a subject with no evidence, and that ambiguity cost hours.
+        search_unavailable = not (answer.citations or (answer.text or "").strip())
+        if search_unavailable:
+            logger.warning(
+                "Expand: the search returned no results for %r; nothing to extract from.",
+                req.parent_source_title,
+            )
+
         citations: List[Dict[str, str]] = []
         seen_urls: set[str] = set()
         for c in answer.citations:
@@ -1412,6 +1423,7 @@ class TraceOrchestrator:
 
         if not answer.text:
             return ExpandResponse(
+                search_unavailable=search_unavailable,
                 parent_source_title=req.parent_source_title,
                 parent_year=req.parent_year,
                 parent_era_label=req.parent_era_label,
