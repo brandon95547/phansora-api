@@ -269,8 +269,8 @@ answering exactly one question:
 Nothing else is a step. Not a movement, not a mood, not an expectation, not a development, not a
 period, not a reconstruction, not an event you infer from a text rather than read in one. Those
 are readings OF evidence, and a reading placed in the chain inherits the authority of an
-artefact it has not earned. A reader who meets "messianic expectation" between two manuscripts
-has been shown a conclusion dressed as a find. Put it in "conclusions" instead, where it belongs
+artefact it has not earned. A reader who meets "a growing public appetite for reform" sitting
+between two dated objects has been shown a conclusion dressed as a find. Put it in "conclusions" instead, where it belongs
 and where it is still fully visible.
 
 The test for every step, applied without mercy: CAN SOMEONE GO AND LOOK AT IT? Name the holding
@@ -279,7 +279,7 @@ you cannot name where the thing is or what publishes it, it is not a step in the
 
 WHAT COUNTS AS A STEP — pick the "node_type" that says what kind of surviving thing it is:
 
-  "text"                — a work surviving through copies: a gospel, a history, a treatise
+  "text"                — a work surviving through copies: a history, a treatise, a report
   "manuscript"          — a specific physical copy: codex, papyrus, parchment leaf
   "scroll"              — a rolled manuscript, where the find is dated and reported as such
   "letter"              — correspondence, surviving as a text or as an object
@@ -289,34 +289,37 @@ WHAT COUNTS AS A STEP — pick the "node_type" that says what kind of surviving 
   "artifact"            — an object carrying evidence: coin, seal, ostracon, tablet
   "archaeological_find" — an excavated site, structure or assemblage, as reported
 
-A worked example of the shape wanted, for a trace of Jesus. The chain is exactly this, and
-nothing between the links:
+The SHAPE of a chain, schematically — roles, not a particular subject, because the objects
+that fill these roles are completely different for a manuscript tradition, an aircraft, a
+patent, a disease, a company or a piece of software. Fill the roles this subject actually
+has and drop the ones it does not:
 
-  Hebrew scriptures, composed over centuries, reaching their form by roughly 400 BC   [text]
-      the corpus the later steps quote and are written inside
-  the Septuagint, the Greek translation, 250-100 BC                                   [text]
-      the Greek text the New Testament writers actually quote from
-  the Dead Sea Scrolls, 250 BC - 70 AD                                                [scroll]
-      surviving physical witnesses to that corpus, centuries older than any other copy
-  the authentic letters of Paul, 50-65 AD                                             [letter]
-      the earliest surviving writing about the subject — a step despite being written
-      from inside the movement, which is a fact for its dossier, not a disqualification
-  the four Gospels, 65-100 AD                                                         [text]
-  Josephus, Antiquities, 93-94 AD                                                     [text]
-      a writer outside the movement
-  Tacitus, Annals, around 116 AD                                                      [text]
+  the older body of work the subject's own sources are made out of        [earliest]
+      what the later steps quote, translate, continue, implement or are built on
+  the surviving copies or records that carry that older material
+      physical witnesses, usually much later than the thing they carry — and a
+      separate step from it, at the date of the OBJECT
+  the earliest surviving record of the subject itself
+      a step even when produced from inside the movement, company, agency or
+      institution it concerns; that is a fact for its dossier, not a disqualification
+  records from outside that circle
+      independent of whoever had an interest in the account
+  later material evidence
+      objects, inscriptions, instruments, registers, filings, excavated finds,
+      recordings — whatever this particular subject actually left behind    [latest]
 
-Note where that chain BEGINS. Not at the subject, and not at the earliest text about him — it
-begins roughly four centuries earlier, with the corpus his sources quote. The first three steps
-earn their place by documentary descent, not by being about him: each is something the later
-steps translate, quote or physically witness. A chain for this subject that opens in the first
-century has dropped its first four hundred years, and that is the single most common way this
-goes wrong.
+Note where that BEGINS. Not at the subject, and not at the earliest record ABOUT it: it begins
+with the material its own sources are made out of, which is frequently much earlier — centuries
+earlier for an ancient subject, decades for a modern one. The opening steps earn their place by
+descent, not by being about the subject: each is something the later steps quote, translate,
+implement or physically witness. A chain that opens at the subject's own moment has dropped
+everything before it, and that is the single most common way this goes wrong.
 
-Note what is ABSENT from that chain and must stay absent from yours: no "messianic expectation",
-no "rise of the Jesus movement", no "oral tradition period", no birth, no ministry, no
-crucifixion as steps. Some of those may well be true; none of them is a surviving object. What
-the chain shows is which documents exist and when. What they mean comes afterwards.
+Note what must be ABSENT. No expectations, no "rise of" a movement, no period of oral
+transmission, no climate of opinion, and none of the events the sources narrate — no birth, no
+disaster, no discovery, no founding — as steps. Some of those may well be true; none of them is
+a surviving object. What the chain shows is which evidence exists and when. What it means comes
+afterwards.
 
 DATING A STEP. "year" and "year_end" date the EVIDENCE ITSELF — when the text was composed, when
 the object was made, when the record was kept. Never the date of the events it describes. Where
@@ -346,15 +349,16 @@ at documents, and halts where they stop pointing.
 
 A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS. If the chain contains a
 manuscript, a scroll or a fragment, then the work it carries is itself a step, dated by its
-COMPOSITION and placed earlier. A chain that lists the Dead Sea Scrolls but not the scriptures
-they preserve has recorded the witness and dropped what it witnesses — which is the older half,
-and the half the later steps quote. Emit both: the text at its composition date, the copy at the
-date of the object.
+COMPOSITION and placed earlier. A chain that lists surviving copies but not the work they carry
+has recorded the witness and dropped what it witnesses — which is the older half, and the half
+the later steps quote. Emit both: the work at its composition date, the copy at the date of the
+object.
 
 A STEP IS EITHER ABOUT THE SUBJECT OR DESCENDED FROM. Those are the only two ways in. Evidence
 that merely dates the period, fixes a background fact, or establishes the setting is neither,
-however genuine the object — a census inscription that helps date a nativity is doing
-chronology, not descent, and belongs in "conclusions" with the dating argument it supports.
+however genuine the object — a dated register that only helps pin down WHEN something happened
+is doing chronology, not descent, and belongs in "conclusions" with the dating argument it
+supports.
 
 EVERY STEP CARRIES A DATE. "year", or "year"+"year_end" for something produced over a period.
 This is the one field a step cannot do without: a chain is an order, and an undated object has
@@ -362,13 +366,14 @@ no position in it. Where the date is a scholarly estimate or a wide range, give 
 so in the dossier — a range is a date, "unknown" is not. An object you genuinely cannot date is
 not a step; put what it shows in "conclusions" instead.
 
-Corpora get ranges: scriptures composed across centuries take the span of their composition, not
-the date of one book inside them, and not nothing.
+Anything produced over a period gets a range: a body of work composed across centuries, a design
+revised over decades, a series of filings. Take the span of its production, not the date of one
+member inside it, and not nothing.
 
-ONE WORK PER STEP WHEN THE DATES DIFFER. "New Testament writings (Gospels, Epistles), 50-100" is
-two steps wearing one label — the letters of Paul at roughly 50-65 and the gospels at roughly
-65-100 have different authors, different dates and different evidence, and either can be wrong
-without the other. Group only what was genuinely produced and dated as a unit.
+ONE WORK PER STEP WHEN THE DATES DIFFER. A single label spanning works produced a generation
+apart is several steps wearing one name. Where the members have different authors, different
+dates and different evidence, and either can be wrong without the other, split them. Group only
+what was genuinely produced and dated as a unit.
 
 NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM. A later church, a site, an object from the
 right region and the wrong century may be perfectly real evidence of something else. The test is
@@ -404,7 +409,7 @@ Every step carries an "evidence" dossier — a plain, arguable statement of what
 The evidence dossier shape (same for the origin and every step):
 {{
   "claim": <what this evidence establishes, as ONE testable proposition about the OBJECT,
-            e.g. "A Greek translation of the Hebrew scriptures existed by the 2nd century BC">,
+            e.g. "A translation of this work into another language existed by a given date">,
   "earliest_supporting_source": <named source + what kind of thing it is, or "None identified">,
   "estimated_source_date": <when it was COMPOSED or made; a range is fine, or "Unknown">,
   "earliest_surviving_copy": <oldest physically existing copy + its date + repository if known,
@@ -483,8 +488,9 @@ RULES FOR THE CHAIN:
 - A STEP MUST BE LOCATABLE. Name the repository, shelfmark, excavation report or critical
   edition in "provenance". A step you cannot locate anywhere is a step you should not emit.
 - ONE OBJECT, ONE STEP; A CORPUS MAY BE ONE STEP. Where a group was produced together and is
-  dated and published as a group — the Dead Sea Scrolls, the four Gospels — one step for the
-  group is correct, with the range in "year"/"year_end". Where members carry genuinely different
+  dated and published as a group — an excavated assemblage, one archive deposit, a set of
+  volumes issued together — one step for the group is correct, with the range in
+  "year"/"year_end". Where members carry genuinely different
   dates and evidence and one can fail without the other, they are separate steps.
 - COMPOSITION AND SURVIVING COPY ARE NOT THE SAME FACT. The step is dated by composition; the
   physical copy goes in "earliest_surviving_copy" and "provenance". Where a specific manuscript
@@ -766,10 +772,10 @@ Return JSON:
       "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
                     archaeological_find|event",
       // The nine object kinds, OR "event" — and event is allowed HERE and not in the
-      // main chain. A branch explains an anchor; the chain asserts what survives. "In
-      // 1947 Bedouin shepherds found jars in a cave at Qumran" is the true answer to how
-      // the scrolls were discovered, and refusing it because a shepherd is not an
-      // artefact makes the question unanswerable. Use an object kind whenever the thing
+      // main chain. A branch explains an anchor; the chain asserts what survives. "A
+      // farmer turned it up while ploughing" can be the true answer to how something was
+      // discovered, and refusing it because a farmer is not an artefact makes the
+      // question unanswerable. Use an object kind whenever the thing
       // IS one — the excavation report, the first edition — and "event" when the honest
       // answer is something that happened.
       "is_evidence": <true if this is a surviving object; false for an event or an account>,

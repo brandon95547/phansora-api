@@ -148,12 +148,18 @@ class TestPromptDiscipline:
         # The failure mode the whole structure exists to prevent.
         assert "DO NOT LAUNDER A CONCLUSION INTO A STEP" in s
 
-    def test_the_prompt_shows_the_worked_chain_and_what_it_excludes(self):
-        # The brief's own example. Without it the model reliably reaches for the
-        # connective tissue between documents, which is the one thing banned.
-        s = P.SYNTHESIZE_PROMPT
-        assert "Dead Sea Scrolls" in s and "Septuagint" in s and "Tacitus" in s
-        assert "messianic expectation" in s.lower()
+    def test_the_prompt_shows_the_chain_shape_and_what_it_excludes(self):
+        # Without a shape to copy, the model reliably reaches for the connective
+        # tissue between documents, which is the one thing banned. The shape used to
+        # be a fully worked first-century religious chain, which taught the lesson and
+        # a subject along with it; it is now the same shape stated as roles.
+        import re
+
+        flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
+        assert "The SHAPE of a chain, schematically" in flat
+        assert "the older body of work the subject's own sources are made out of" in flat
+        assert "Note what must be ABSENT" in flat
+        assert "none of them is a surviving object" in flat
 
     def test_the_research_stage_carries_its_own_rules_not_the_doctrine_block(self):
         # The research prompt is self-contained now: it asks per item what the

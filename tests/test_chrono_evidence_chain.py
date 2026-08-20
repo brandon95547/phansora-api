@@ -528,11 +528,11 @@ def test_a_surviving_copy_implies_the_work_it_copies():
 
     flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
     assert "A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS" in flat
-    assert "the text at its composition date, the copy at the date of the object" in flat
+    assert "the work at its composition date, the copy at the date of the object" in flat
 
 
 def test_there_are_exactly_two_ways_into_the_chain():
-    """A census inscription that helps date a nativity is chronology, not descent."""
+    """Evidence that only helps DATE something is chronology, not descent."""
     import re
     from phansora.products.chrono_origin.pipeline import prompts as P
 
@@ -789,3 +789,57 @@ def test_a_chain_whose_copy_has_an_older_step_is_quiet(caplog):
     with caplog.at_level(logging.WARNING):
         orch._warn_if_copy_without_work(origin, with_work)
     assert not [r for r in caplog.records if "starts at a copy" in r.message]
+
+
+# ------------------------------------------------ the prompts name no subject
+def test_no_prompt_is_written_around_one_subject():
+    """Chrono Origin traces anything. Its prompts must not teach from one case.
+
+    SYNTHESIZE_PROMPT carried a fully worked example of a first-century religious
+    chain — Hebrew scriptures, Septuagint, Dead Sea Scrolls, Paul, the Gospels,
+    Josephus, Tacitus — introduced as "the shape wanted. The chain is exactly this."
+    That text went out on EVERY trace, so a trace of a transistor, an aircraft, a
+    patent or a company was handed a biblical chain as its template of a good answer,
+    along with worked examples about censuses and nativities.
+
+    The shape it taught was real and is still taught — as ROLES, which any subject can
+    fill. What is gone is the assumption that every subject looks like that one.
+    """
+    import re
+
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    subject_terms = re.compile(
+        r"jesus|christ|septuagint|dead sea|qumran|josephus|tacitus|gospel|pauline|"
+        r"paul's|hebrew scripture|messian|new testament|crucif|nativity|testimonium|"
+        r"epistle|scripture|bedouin|scrolls",
+        re.I,
+    )
+    offenders = []
+    for name in dir(P):
+        if not name.isupper():
+            continue
+        value = getattr(P, name)
+        if not isinstance(value, str):
+            continue
+        for i, line in enumerate(value.splitlines(), 1):
+            if subject_terms.search(line):
+                offenders.append(f"{name}:{i}: {line.strip()[:70]}")
+    assert not offenders, "a subject leaked into the prompts:\n  " + "\n  ".join(offenders)
+
+
+def test_the_shape_is_still_taught_as_roles():
+    """Removing the example must not remove the lesson.
+
+    The ordering it demonstrated — what the sources are made of, then the copies
+    carrying it, then the earliest record of the subject, then independent records —
+    is the whole reason a chain starts where it does.
+    """
+    from phansora.products.chrono_origin.pipeline import prompts as P
+
+    body = P.SYNTHESIZE_PROMPT
+    assert "The SHAPE of a chain, schematically" in body
+    assert "the older body of work the subject's own sources are made out of" in body
+    assert "records from outside that circle" in body
+    # And it must say the roles are optional, or a subject without one invents it.
+    assert "drop the ones it does not" in body
