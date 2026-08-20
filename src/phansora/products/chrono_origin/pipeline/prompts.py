@@ -600,54 +600,55 @@ EXPAND_MODES = {
     "discovery": {
         "label": "Path to Discovery",
         "search": (
-            "how this came to be KNOWN: the excavation, decipherment, observation, "
-            "publication, rediscovery, unsealing or announcement that brought it into "
-            "the record, who did it, when, and what was reported at the time"
+            "the surviving RECORDS of how this came to be known: the excavation report, the "
+            "first publication announcing it, field notes, site photographs, the accession or "
+            "purchase record, the paper that deciphered or identified it — with dates, authors "
+            "and where each is held"
         ),
         "extract": (
-            "Return the sequence by which this became known — findings, observations, "
-            "records and announcements that brought it into knowledge. The step where "
-            "someone first encountered, recognised, read or reported it is the one that "
-            "matters most. Not the thing's own history: how we came to have it."
+            "Return the surviving records that document how this became known — the excavation "
+            "report, the first published announcement, the field notes, the photographs, the "
+            "accession record. The DISCOVERY ITSELF is an event and cannot be a step; the report "
+            "that records it is a document and can. Date each to when the record was made."
         ),
     },
     "preservation": {
         "label": "Path to Preservation",
         "search": (
-            "how this SURVIVED and was carried forward: copying, translation, storage, "
-            "custody, transmission, restoration, reburial, archiving, or the chain of "
-            "hands and institutions that held it between then and now"
+            "the surviving objects and records that carried this forward: later copies, "
+            "translations, editions, conservation and restoration reports, inventories, catalogues "
+            "and archive records naming it, with their dates and repositories"
         ),
         "extract": (
-            "Return what carried this forward — copies, translations, custodians, "
-            "archives, restorations, the physical or institutional chain by which it "
-            "reached a later period. Each step should be something that DID the "
-            "carrying, not a statement that it survived."
+            "Return the surviving things that did the carrying — the copies, the translations, "
+            "the editions, the conservation report, the inventory or catalogue entry that proves "
+            "it was held somewhere at a date. Each is an object with its own date, not a statement "
+            "that the subject survived."
         ),
     },
     "verification": {
         "label": "Path to Verification",
         "search": (
-            "how what is known about this was ESTABLISHED: dating tests, authentication, "
-            "provenance research, palaeography, radiocarbon, replication, peer review, "
-            "forensic or scientific analysis, and any challenge to its authenticity"
+            "the surviving reports of tests and analysis: radiocarbon and scientific dating "
+            "papers, palaeographic studies, provenance and authentication reports, forensic "
+            "examinations, and published challenges to its authenticity"
         ),
         "extract": (
-            "Return the evidence and methods used to authenticate, date, identify or "
-            "test this — analyses, examinations, replications, and the disputes over "
-            "them. A finding that something is FALSE or contested belongs here as much "
-            "as a confirmation; that is what verification produces."
+            "Return the published reports and studies that establish or dispute what is known — "
+            "the dating paper, the analysis, the authentication report, the article contesting it. "
+            "The test is an event; the paper reporting it is a text, and that is the step. A report "
+            "concluding something is FALSE belongs here as much as one confirming it."
         ),
     },
     "related": {
         "label": "Related Evidence",
         "search": (
-            "other surviving evidence DIRECTLY connected to this: companion finds, the "
-            "same hoard or site or archive, works by the same hand, contemporaneous "
-            "records naming it, objects found with it"
+            "other surviving evidence DIRECTLY connected to this: companion finds from the same "
+            "site, hoard or archive, works by the same hand, contemporaneous records naming it, "
+            "objects catalogued alongside it"
         ),
         "extract": (
-            "Return other evidence with a direct, statable relationship to the anchor — "
+            "Return other surviving evidence with a direct, statable relationship to the anchor — "
             "found with it, produced by the same hand, naming it, held with it. Name the "
             "relationship in the claim. Proximity in time alone is not a relationship."
         ),
@@ -655,26 +656,26 @@ EXPAND_MODES = {
     "earlier": {
         "label": "Earlier Evidence",
         "search": (
-            "evidence from BEFORE this that bears on its origin or development: what it "
-            "was made from, drew on, replaced, or descended from, and the older material "
-            "that explains how it came to exist"
+            "surviving evidence from BEFORE this that bears on its origin: what it was copied "
+            "from, drew on, translated or replaced, and older objects and texts in the same "
+            "tradition"
         ),
         "extract": (
-            "Return evidence PREDATING the anchor that fills a gap in how it came about. "
-            "It must be genuinely earlier and genuinely new — the point is the missing "
-            "stretch of timeline, not the step that already sits before this one."
+            "Return surviving evidence PREDATING the anchor that fills a gap in how it came about. "
+            "It must be genuinely earlier and genuinely new — the point is the missing stretch of "
+            "timeline, not the step that already sits before this one."
         ),
     },
     "later": {
         "label": "Later Influence",
         "search": (
-            "what this LED TO afterwards: works that cite, copy, answer, build on, "
-            "reuse or react to it, and the later evidence showing its effect"
+            "surviving later evidence showing this had an effect: texts that quote, copy, answer "
+            "or build on it, and works that cite it by name"
         ),
         "extract": (
-            "Return later evidence showing this had an effect — things that cite, reuse, "
-            "answer or build on it, with the route named. It must be genuinely new: the "
-            "step that already follows this one on the timeline is not an influence."
+            "Return surviving later evidence showing this had an effect — texts that quote, reuse, "
+            "answer or build on it, with the route named. It must be genuinely new: the step that "
+            "already follows this one on the timeline is not an influence."
         ),
     },
 }
@@ -736,8 +737,10 @@ An expansion exists to GROW the timeline. These are already on it, and returning
 them costs the user a call and shows them a card they have already read:
 {existing_block}
 
-Return nothing rather than something already listed. An empty result is a fair answer —
-this axis may have nothing new on it, and saying so is more useful than padding.
+Do not return anything already listed above. If this axis genuinely has nothing beyond
+what is listed, returning nothing is correct — but look properly first: most axes have
+surviving records that simply have not been asked for yet, and an empty answer given
+too readily is the same failure as a padded one.
 
 Anchor (its id is "{parent_id}"):
 - when: {when}
