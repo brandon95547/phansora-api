@@ -1490,6 +1490,16 @@ class TraceOrchestrator:
         used_ids = {parent_id}
         for i, entry in enumerate(raw_events[: req.max_events]):
             try:
+                # The same two gates the trace itself applies. Expanding had neither, so
+                # a node could sprout children the chain rule would have refused — an
+                # undated press headline came back as a step under the Dead Sea Scrolls.
+                # A branch is part of the timeline; it is held to the timeline's rules.
+                if not is_evidence_kind(entry.get("node_type")):
+                    logger.info("Expand: dropped non-evidence %r", entry.get("source_title"))
+                    continue
+                if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
+                    logger.info("Expand: dropped undated %r", entry.get("source_title"))
+                    continue
                 conf = float(entry.get("confidence", 0.5) or 0.5)
                 raw_id = str(entry.get("id") or "").strip()
                 event_id = raw_id if raw_id and raw_id not in used_ids else f"e{i + 1}"
