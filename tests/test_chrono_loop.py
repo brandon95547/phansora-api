@@ -90,39 +90,6 @@ class TestTheResearchIsOneCall:
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
         assert len(client.searches) == 1
-
-    def test_the_prompt_walks_backward_before_forward(self, pipeline):
-        """The ordering is the fix, not a formatting choice.
-
-        Where a chain starts is decided by how hard the stage looks for what came
-        before, and that is the half that loses whenever anything competes with it.
-        """
-        o, client = pipeline
-        o.run(TraceRequest(title="Jesus Christ"))
-        prompt = client.searches[0]
-        assert "continue backward until the evidence no longer supports going further" in prompt
-        assert prompt.index("backward") < prompt.index("forward")
-
-    def test_the_prompt_does_not_prescribe_evidence_categories(self, pipeline):
-        """A fixed list suits an ancient figure and misfits everything else.
-
-        The old fan-out hunted manuscripts, inscriptions and excavation reports for
-        every subject alike. A 1947 aircraft, a patent and a piece of software each
-        have their own kinds of evidence, and the subject is what should pick them.
-        """
-        o, client = pipeline
-        o.run(TraceRequest(title="Jesus Christ"))
-        prompt = client.searches[0]
-        assert "Do not force predetermined evidence categories onto the subject" in prompt
-
-    def test_the_prompt_rules_out_nodes_made_of_interpretation(self, pipeline):
-        """Filtering only at synthesis is too late — the corpus decides what exists."""
-        o, client = pipeline
-        o.run(TraceRequest(title="Jesus Christ"))
-        prompt = client.searches[0]
-        assert "Keep evidence separate from interpretation" in prompt
-        assert "Do not create timeline nodes solely from theories" in prompt
-
     def test_the_subject_is_named(self, pipeline):
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))

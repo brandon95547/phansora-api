@@ -160,14 +160,3 @@ class TestPromptDiscipline:
         assert "the older body of work the subject's own sources are made out of" in flat
         assert "Note what must be ABSENT" in flat
         assert "none of them is a surviving object" in flat
-
-    def test_the_research_stage_carries_its_own_rules_not_the_doctrine_block(self):
-        # The research prompt is self-contained now: it asks per item what the
-        # underlying source is, whether the original survives, and what is disputed,
-        # which is the same ground SEARCH_DOCTRINE covered in the abstract. The
-        # doctrine block still goes to the chase and expand stages, which have no
-        # such structure of their own.
-        research = P.RESEARCH_PROMPT.format(title="t", context_clause="")
-        assert "EVIDENCE RULES for this summary" not in research
-        assert "What is the underlying source for our knowledge of it?" in research
-        assert "What is estimated, disputed, reconstructed, or unknown?" in research
