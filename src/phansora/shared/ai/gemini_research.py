@@ -307,6 +307,19 @@ class GeminiResearchClient:
             logger.warning("Gemini grounded search failed: %s", exc)
             return GroundedAnswer(text="", citations=[], queries=[])
 
+        for cand in data.get("candidates") or []:
+            if (cand.get("finishReason") or "").upper() == "MAX_TOKENS":
+                # Said out loud, because the corpus is prose and a cut-off answer
+                # looks exactly like a short one. Synthesis then builds a chain from
+                # research that stops mid-sentence, with nothing anywhere reporting
+                # that the second half was never delivered. Raise
+                # GEMINI_SEARCH_MAX_TOKENS if this appears — it is a cap, not a charge.
+                logger.warning(
+                    "Grounded answer was cut off at %d tokens; the corpus is incomplete. "
+                    "Raise GEMINI_SEARCH_MAX_TOKENS.", _SEARCH_MAX_TOKENS,
+                )
+            break
+
         citations = self._citations_of(data)
         queries = self._queries_of(data)
 

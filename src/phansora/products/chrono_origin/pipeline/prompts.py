@@ -110,92 +110,139 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Research the historical evidence for "{title}"{context_clause} and build a chronological evidence timeline.
+Research the identifiable historical evidence for "{title}"{context_clause} using live web search.
 
-Do not choose the first timeline node yet.
+Web search is required. Do not answer this task from model knowledge alone.
 
-First locate the earliest identifiable evidence directly associated with "{title}".
+Before constructing the timeline, perform multiple web searches using different queries and consult multiple independent sources. Follow relevant results to their underlying repositories, manuscript catalogs, museums, archives, academic publications, critical editions, excavation reports, or other primary documentation whenever available.
 
-This is only your anchor point. It is not necessarily the beginning of the timeline.
+Do not construct the final timeline until the web research is complete.
 
-Before creating any timeline nodes, perform a separate backward trace from that anchor.
+Build a chronological evidence trace showing both the evidence directly concerning "{title}" and the earlier identifiable evidence that later sources demonstrably use.
 
-For the anchor evidence, determine whether it demonstrably connects to earlier evidence.
+Earlier evidence may be included even when it does not mention "{title}".
 
-Look for earlier sources, texts, objects, records, works, discoveries, technologies, practices, translations, copies, predecessors, or other evidence that the anchor:
+An earlier item belongs in the origin chain when a later piece of evidence demonstrably:
 
-quotes,
-uses,
-copies,
-translates,
-references,
-depends upon,
-develops from,
-responds to,
-preserves,
-or otherwise demonstrably connects to.
+quotes it
 
-When an earlier piece of evidence is found, repeat the same process from that evidence.
+cites it
 
-Continue moving backward one supported step at a time.
+copies it
 
-Do not stop simply because you have moved earlier than the lifetime, creation, invention, publication, or commonly accepted beginning of "{title}".
+translates it
 
-Stop only when you can no longer establish a meaningful earlier connection using identifiable evidence.
+uses its text
 
-Only after completing this backward trace may you choose the first timeline node.
+preserves the same work
 
-The oldest supported evidence reached during the backward trace becomes the starting point of the timeline.
+incorporates material from it
 
-Then present the evidence forward in chronological order.
+or has another direct source-to-source relationship with it.
 
-IMPORTANT:
+Do not include earlier evidence merely because it confirms a person, ruler, place, dynasty, culture, event, or historical setting mentioned by later sources.
 
-The first node must not automatically be the earliest evidence directly mentioning "{title}".
+Historical corroboration is valuable, but it is different from origin evidence.
 
-The first node must be the earliest supported evidence reached through the backward trace.
+Treat written evidence as evidence. Manuscripts, scrolls, papyri, codices, letters, translations, fragments, inscriptions, books, records, objects, archaeological finds, and other identifiable historical materials can qualify.
 
-If your proposed first node directly mentions "{title}", stop and check again for earlier evidence connected to it before accepting it as the first node.
+For written works, distinguish between:
 
-Do not use general historical background simply because it is older.
+the estimated date the work was originally composed
 
-Every earlier node must have an evidence-supported connection to the chain.
+the date of the earliest surviving witness
 
-Do not use theories, assumptions, beliefs, traditions, expectations, cultural context, or reconstructed ideas as evidence nodes.
+the specific surviving manuscript or artifact when known
 
-Let the search term determine what kinds of evidence are relevant.
+Follow direct source-to-source relationships as far as the evidence supports them.
 
-For each node identify:
+If a source uses an earlier translation, investigate that translation using web search.
+
+If that translation derives from an earlier textual work, investigate surviving evidence for that work using web search.
+
+Continue following the documented source chain until the evidence no longer supports another connection.
+
+Then include direct and independent evidence concerning "{title}" and later surviving witnesses that materially strengthen the evidence chain.
+
+Do not create nodes from beliefs, expectations, traditions, theories, general cultural context, or historical assumptions.
+
+Do not create a connection merely because two things are historically related or chronologically close.
+
+Every connection must explain exactly how one piece of evidence connects to another.
+
+Every node must add new evidence to the timeline.
+
+Do not repeat the same evidence in different forms.
+
+Do not fill gaps with assumptions.
+
+If a connection cannot be established, say so.
+
+WEB RESEARCH REQUIREMENTS
+
+Perform multiple separate web searches using different search queries.
+
+Consult multiple independent web sources.
+
+Do not consider the research complete after finding one source or one search result.
+
+Open and evaluate the underlying sources rather than relying only on search-result summaries.
+
+Prefer the institution that holds, catalogs, published, excavated, or directly documents the evidence whenever possible.
+
+Prefer primary sources, manuscript repositories, museums, libraries, archives, archaeological publications, critical editions, peer-reviewed research, and other authoritative sources.
+
+Do not rely on Wikipedia, blogs, forums, social media, general reference sites, or AI-generated summaries when stronger underlying sources are available.
+
+When one website cites another source for an important claim, follow that citation and investigate the underlying source whenever possible.
+
+When multiple websites repeat information originating from the same underlying source, treat them as one source rather than independent confirmation.
+
+Where possible, verify important claims using more than one independent source.
+
+For every timeline node, provide the web source or sources actually consulted to establish it.
+
+If reliable sources disagree, state the disagreement.
+
+Do not claim that something was verified unless the supporting web source was actually opened and consulted during this research.
+
+After completing the web research, arrange all qualifying evidence chronologically from oldest to newest.
+
+The timeline should begin with the oldest identifiable evidence reached through the documented source chain, not simply the earliest evidence that directly mentions "{title}".
+
+For each node provide:
 
 Date
 
 Evidence
 
-Source
+What it is
 
-Original date and earliest surviving evidence, when different
+Original composition or creation date when applicable
 
-Connection to the evidence chain
+Earliest surviving evidence when different
 
-What the evidence establishes
+Connection to the trace
+
+What it establishes
 
 What remains uncertain or disputed
 
-Do not assume chronological order establishes a connection.
+Sources actually consulted
 
-Do not repeat evidence.
+At the end, provide a WEB RESEARCH SUMMARY stating:
 
-If a connection cannot be established, say so.
+How many separate web searches were performed
 
-If there is a gap, leave the gap visible.
+Which major repositories, institutions, primary sources, or academic sources were actually consulted
 
-Never fill a gap with a plausible assumption.
+Which claims were supported by multiple independent sources
 
-Prefer primary evidence and authoritative documentation whenever available. Trace secondary sources back to the underlying evidence whenever possible.
+Which claims could not be independently verified
 
-The goal is not to find the earliest evidence that mentions "{title}".
+The goal is to produce the strongest documented evidence chain leading into the earliest evidence concerning "{title}", followed by the evidence concerning "{title}" itself and its later surviving witnesses.
 
-The goal is to find that evidence, use it as an anchor, deliberately trace its evidence chain backward as far as supported, and only then construct the chronological timeline from the earliest supported point forward.
+The final timeline must be based on the web research performed for this task, not solely on existing model knowledge.
 """
 
 
