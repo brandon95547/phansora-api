@@ -1,15 +1,26 @@
-"""Pluggable web search for grounded answers.
+"""Pluggable web search, for providers whose models cannot search for themselves.
 
-Provides real search results (title/url/snippet) that a model can synthesize +
-cite. Three backends, chosen by ``CHRONO_SEARCH_PROVIDER`` (or auto-detected):
+Two backends, chosen by ``CHRONO_SEARCH_PROVIDER`` (or auto-detected):
 
-  - ``brave``       — Brave Search API. Reliable; free tier (needs BRAVE_API_KEY).
-  - ``searxng``     — a SearXNG instance you host. Free (needs SEARXNG_URL).
-  - ``duckduckgo``  — no key, best-effort scraping via the ``ddgs`` package.
-                      Default, but rate-limited / less reliable than the above.
+  - ``brave``    — Brave Search API. Needs BRAVE_API_KEY.
+  - ``searxng``  — a SearXNG instance you host. Needs SEARXNG_URL.
 
-Auto-detect order when CHRONO_SEARCH_PROVIDER is unset: brave (if key) →
-searxng (if url) → duckduckgo.
+Auto-detect order when CHRONO_SEARCH_PROVIDER is unset: brave (if key) → searxng
+(if url) → **none**, and "none" is a state this module says out loud rather than
+papering over.
+
+There used to be a third, keyless backend: DuckDuckGo, via the ``ddgs`` package. It
+is gone. It answered 202 when it throttled, which arrives here as an empty result
+list — indistinguishable from a search that genuinely found nothing. So a throttled
+trace reported "no evidence found" for subjects with abundant surviving evidence, and
+the retry loop below quietly tripled the latency of every failure on the way there.
+Days went into rewriting prompts that were never the problem.
+
+Nothing keyless replaced it, on purpose. A backend that fails silently is worse than
+no backend: with none configured, ``search_available()`` is False and the caller can
+tell the user their search is not set up, which is a fixable answer. The default
+Chrono-Origin provider is now Gemini, whose model does its own grounded searching and
+never reaches this module at all.
 """
 from __future__ import annotations
 
@@ -29,20 +40,16 @@ logger = logging.getLogger(__name__)
 
 # How many searches may be in flight at once, per backend.
 #
-# This exists because the callers multiply. The orchestrator runs one worker per query
-# (six by default) and each grounded_search now runs its two derived queries
-# concurrently — twelve simultaneous requests, where the arithmetic used to come to
-# five. Against Brave or a SearXNG instance you host, that is fine. Against the keyless
-# DuckDuckGo backend it is not: it throttles, and it signals throttling by returning an
-# EMPTY RESULT SET, which web_search below cannot distinguish from a genuinely empty
-# search and therefore retries with backoff. So the failure mode of too much concurrency
-# here is not an error — it is a slower trace built on fewer sources, which is the exact
-# outcome the retry loop was written to prevent.
+# The callers multiply: the orchestrator runs one worker per query (six by default) and
+# each grounded_search runs its derived queries concurrently, so the arithmetic reaches
+# twelve simultaneous requests where it used to reach five. Brave's free tier is rate
+# limited per second and a self-hosted SearXNG is only as parallel as its own upstreams,
+# so a ceiling still belongs here.
 #
 # The gate belongs at this layer rather than in the callers. Two independent pools cannot
 # see each other's depth, and a limit either of them enforces is a limit the other can
 # multiply.
-_DEFAULT_CONCURRENCY = {"duckduckgo": 4, "brave": 8, "searxng": 8}
+_DEFAULT_CONCURRENCY = {"brave": 8, "searxng": 8}
 
 _sem_lock = threading.Lock()
 _semaphores: dict = {}
@@ -71,7 +78,8 @@ class SearchResult:
 
 @dataclass
 class SearchConfig:
-    provider: str = "duckduckgo"
+    # Empty means no backend is configured. Not a default that might work.
+    provider: str = ""
     brave_api_key: str = ""
     searxng_url: str = ""
     max_results: int = 10
@@ -88,7 +96,7 @@ class SearchConfig:
         searxng = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
         provider = os.getenv("CHRONO_SEARCH_PROVIDER", "").strip().lower()
         if not provider:
-            provider = "brave" if brave else "searxng" if searxng else "duckduckgo"
+            provider = "brave" if brave else "searxng" if searxng else ""
         return cls(
             provider=provider,
             brave_api_key=brave,
@@ -97,6 +105,21 @@ class SearchConfig:
             max_per_domain=int(os.getenv("CHRONO_SEARCH_MAX_PER_DOMAIN", "2")),
             attempts=int(os.getenv("CHRONO_SEARCH_ATTEMPTS", "3")),
         )
+
+
+def search_available(cfg: SearchConfig | None = None) -> bool:
+    """Is there a backend that can actually run a search?
+
+    Callers use this to tell "we searched and found nothing" apart from "we never
+    searched". Those two look identical in the results and mean opposite things to
+    whoever is reading the timeline.
+    """
+    cfg = cfg or SearchConfig.from_env()
+    if cfg.provider == "brave":
+        return bool(cfg.brave_api_key)
+    if cfg.provider == "searxng":
+        return bool(cfg.searxng_url)
+    return False
 
 
 def _domain(url: str) -> str:
@@ -126,31 +149,29 @@ def _diversify(results: List[SearchResult], cfg: SearchConfig) -> List[SearchRes
 def web_search(query: str, *, cfg: SearchConfig | None = None) -> List[SearchResult]:
     """Run one web search; return up to ``cfg.max_results`` results. Never raises —
     returns [] on failure so the pipeline degrades gracefully.
-
-    Retries with jittered backoff because the keyless DuckDuckGo backend is rate
-    limited, and a trace that loses a round of searches to throttling produces a
-    materially worse timeline than one that waited a second and asked again.
     """
     cfg = cfg or SearchConfig.from_env()
     query = (query or "").strip()
     if not query:
         return []
 
+    if not search_available(cfg):
+        # Not retried, and not silent. There is nothing to retry against.
+        logger.warning(
+            "No web search backend is configured, so %r was not searched. Set "
+            "BRAVE_API_KEY or SEARXNG_URL, or use CHRONO_LLM_PROVIDER=gemini, whose "
+            "model searches natively.",
+            query,
+        )
+        return []
+
     attempts = max(1, cfg.attempts)
     for attempt in range(attempts):
         try:
             with _gate(cfg.provider):
-                if cfg.provider == "brave":
-                    results = _brave(query, cfg)
-                elif cfg.provider == "searxng":
-                    results = _searxng(query, cfg)
-                else:
-                    results = _duckduckgo(query, cfg)
+                results = _brave(query, cfg) if cfg.provider == "brave" else _searxng(query, cfg)
             if results:
                 return _diversify(results, cfg)
-            # An empty result set from a rate-limited backend is indistinguishable
-            # from a genuinely empty one, so treat it as retryable — but only
-            # while attempts remain.
             if attempt == attempts - 1:
                 return []
         except Exception as exc:  # noqa: BLE001 — search is best-effort
@@ -195,22 +216,3 @@ def _searxng(query: str, cfg: SearchConfig) -> List[SearchResult]:
         for r in results
         if r.get("url")
     ][: cfg.max_results]
-
-
-def _duckduckgo(query: str, cfg: SearchConfig) -> List[SearchResult]:
-    try:
-        from ddgs import DDGS  # optional dep; only needed for the keyless default
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "DuckDuckGo search needs the 'ddgs' package (pip install ddgs), or set "
-            "BRAVE_API_KEY / SEARXNG_URL to use a more reliable provider."
-        ) from exc
-    out: List[SearchResult] = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, max_results=cfg.max_results):
-            url = r.get("href") or r.get("url") or ""
-            if url:
-                out.append(
-                    SearchResult(title=r.get("title", ""), url=url, snippet=r.get("body", ""))
-                )
-    return out[: cfg.max_results]

@@ -100,4 +100,3 @@ faiss-cpu>=1.7.4
 transformers==4.51.3
 sentence-transformers>=5.0
 
-ddgs

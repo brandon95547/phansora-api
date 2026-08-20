@@ -5,7 +5,7 @@
 # Every product resolves its model the same way, most specific first:
 #
 #   1. <PRODUCT>_MODEL      — this product only (e.g. BOOK_ALCHEMY_MODEL)
-#   2. OPENAI_MODEL / DEEPSEEK_MODEL — every product on that provider
+#   2. GEMINI_MODEL / OPENAI_MODEL / DEEPSEEK_MODEL — every product on that provider
 #   3. nothing — the call raises MissingModelConfig (there is no built-in name)
 #
 # Judgment calls resolve the same way through the *_REASONING_MODEL variables, falling
@@ -72,10 +72,16 @@ def _is_openai(provider: str) -> bool:
     return provider.strip().lower() == "openai"
 
 
+def _is_gemini(provider: str) -> bool:
+    return provider.strip().lower() in ("gemini", "google")
+
+
 def provider_model(provider: str) -> str:
     """The model every product on ``provider`` uses unless it overrides.
 
     Empty when unset — there is no built-in name to fall back to (see the note above)."""
+    if _is_gemini(provider):
+        return _clean(os.getenv("GEMINI_MODEL"))
     if _is_openai(provider):
         return _clean(os.getenv("OPENAI_MODEL"))
     return (
@@ -100,7 +106,11 @@ def _missing_message(product_var: str | None, provider: str) -> str:
 
     Reasoning callers land here too, and correctly: an unset *_REASONING_MODEL is not an
     error — it means "reason with the chat model" — so the chat variables are what to set."""
-    provider_var = "OPENAI_MODEL" if _is_openai(provider) else "DEEPSEEK_MODEL"
+    provider_var = (
+        "GEMINI_MODEL" if _is_gemini(provider)
+        else "OPENAI_MODEL" if _is_openai(provider)
+        else "DEEPSEEK_MODEL"
+    )
     wanted = " or ".join(n for n in (product_var, provider_var) if n)
     return (
         f"No {provider} model is configured. Set {wanted} in .env and restart. "
@@ -114,7 +124,12 @@ def provider_reasoning_model(provider: str) -> str:
 
     Empty means "no separate reasoning model" — the caller falls back to the chat
     chain rather than to a hardcoded name that a provider may since have retired."""
-    var = "OPENAI_REASONING_MODEL" if provider.strip().lower() == "openai" else "DEEPSEEK_REASONING_MODEL"
+    if _is_gemini(provider):
+        var = "GEMINI_REASONING_MODEL"
+    elif provider.strip().lower() == "openai":
+        var = "OPENAI_REASONING_MODEL"
+    else:
+        var = "DEEPSEEK_REASONING_MODEL"
     return _clean(os.getenv(var))
 
 

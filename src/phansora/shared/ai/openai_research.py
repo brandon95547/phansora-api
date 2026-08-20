@@ -8,7 +8,7 @@ research client):
 Unlike DeepSeek, GPT-5 Nano searches the web itself: ``grounded_search`` runs a
 Responses API call with the native ``web_search`` tool, so the model picks the
 queries, runs them on OpenAI's infrastructure, and returns an answer with URL
-citations — no external Brave/DuckDuckGo step. ``reason_json`` is a plain
+citations — no external search step. ``reason_json`` is a plain
 Responses call in JSON-object mode.
 """
 from __future__ import annotations

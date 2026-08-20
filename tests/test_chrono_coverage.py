@@ -2,10 +2,10 @@
 
 A trace for "Jesus Christ" came back with twelve entries and passed every
 mechanical check the rubric had. It also had no text in it — no gospel, no
-letter, nothing composed by anyone — no calendar, and a name that crossed three
-languages in a single sentence. The rounds had researched all three. Nothing was
-wrong with the research; the report was assembled by a stage that had never been
-told any of it existed.
+letter, nothing composed by anyone — and a name that crossed three languages in a
+single sentence. The rounds had researched all of it. Nothing was wrong with the
+research; the report was assembled by a stage that had never been told any of it
+existed.
 
 Two failures, and both are about a signal being dropped rather than a judgement
 being wrong:
@@ -13,8 +13,8 @@ being wrong:
   The extract stage types every mention it finds, and the loop measures its own
   coverage against those types. The block that carried mentions into synthesis
   sent the date, the title and the tier — and not the type. So the loop could
-  record "text_composition: covered" while the stage that writes the report had
-  no idea a text had ever been found.
+  record "earliest_texts: covered" while the stage that writes the report had no
+  idea a text had ever been found.
 
   Tiers were assertions by a model, and nothing stopped one promoting a lead. A
   Wikipedia file-description page and an AI-generated wiki were both labelled
@@ -37,10 +37,10 @@ class TestResearchReachesTheReport:
 
     def test_carries_the_node_type(self):
         block = orch._format_mentions_block([
-            {"year": 55, "node_type": "text_composition", "source_title": "Pauline letters",
+            {"year": 55, "node_type": "letter", "source_title": "Pauline letters",
              "claim": "Composed in the 50s CE.", "citations": ["https://x"], "precision": "decade"},
         ])
-        assert "type=text_composition" in block
+        assert "type=letter" in block
 
     def test_carries_a_span_rather_than_pinning_a_process_to_one_year(self):
         block = orch._format_mentions_block([
@@ -70,40 +70,45 @@ class TestStrandsSurviveADedupe:
         merged = ev.dedupe_mentions([
             {"source_title": "Gospel of Mark", "year": 70, "citations": ["https://a"]},
             {"source_title": "Gospel of Mark", "year": 70, "citations": ["https://b"],
-             "node_type": "text_composition", "year_end": 80},
+             "node_type": "text", "year_end": 80},
         ])
         assert len(merged) == 1
-        assert merged[0]["node_type"] == "text_composition"
+        assert merged[0]["node_type"] == "text"
         assert merged[0]["year_end"] == 80
         assert merged[0]["citations"] == ["https://a", "https://b"]
 
     def test_a_type_already_established_is_not_overwritten(self):
         merged = ev.dedupe_mentions([
-            {"source_title": "P52", "year": 125, "node_type": "manuscript_witness"},
+            {"source_title": "P52", "year": 125, "node_type": "manuscript"},
             {"source_title": "P52", "year": 125, "node_type": "event"},
         ])
-        assert merged[0]["node_type"] == "manuscript_witness"
+        assert merged[0]["node_type"] == "manuscript"
 
 
 class TestOpenStrandsBuyTheirOwnSearches:
     """A strand nobody searched for is a strand that stays open forever."""
 
     def test_each_open_strand_gets_a_query(self):
-        qs = orch._strand_queries("Jesus Christ", ["dating_framework", "text_composition"], [], limit=5)
+        qs = orch._strand_queries("Jesus Christ", ["archaeology", "earliest_texts"], [], limit=5)
         assert len(qs) == 2
-        assert any("calendar" in q for q in qs)
-        assert any("composition dates" in q for q in qs)
+        assert any("excavation reports" in q for q in qs)
+        assert any("earliest surviving texts" in q for q in qs)
         assert all("Jesus Christ" in q for q in qs)
+
+    def test_every_strand_the_planner_may_name_can_be_searched_for(self):
+        """A strand with no query template can never be closed, so it burns a
+        reserved slot every round and returns nothing for it."""
+        assert set(orch._STRAND_QUERIES) == orch._STRANDS
 
     def test_respects_the_reserved_slot_count(self):
         qs = orch._strand_queries(
-            "X", ["dating_framework", "text_composition", "manuscript_witness"], [], limit=2
+            "X", ["archaeology", "earliest_texts", "manuscripts"], [], limit=2
         )
         assert len(qs) == 2
 
     def test_never_reruns_a_search_already_paid_for(self):
-        first = orch._strand_queries("X", ["dating_framework"], [], limit=1)
-        again = orch._strand_queries("X", ["dating_framework"], first, limit=1)
+        first = orch._strand_queries("X", ["archaeology"], [], limit=1)
+        again = orch._strand_queries("X", ["archaeology"], first, limit=1)
         assert first and again == []
 
     def test_a_covered_strand_asks_nothing(self):
@@ -113,14 +118,14 @@ class TestOpenStrandsBuyTheirOwnSearches:
 class TestSynthesisIsToldWhatWasResearched:
     def test_separates_a_researched_strand_from_an_uncovered_one(self):
         block = orch._format_strands_block(
-            ["text_composition", "dating_framework"], {"text_composition"}
+            ["earliest_texts", "archaeology"], {"earliest_texts"}
         )
-        assert "text_composition: RESEARCHED" in block
-        assert "dating_framework: NOT COVERED" in block
+        assert "earliest_texts: RESEARCHED" in block
+        assert "archaeology: NOT COVERED" in block
 
     def test_a_strand_found_without_being_planned_still_has_to_appear(self):
-        block = orch._format_strands_block(["text_composition"], {"text_composition", "term_history"})
-        assert "term_history: RESEARCHED (unplanned)" in block
+        block = orch._format_strands_block(["earliest_texts"], {"earliest_texts", "manuscripts"})
+        assert "manuscripts: RESEARCHED (unplanned)" in block
 
     def test_says_so_plainly_when_there_was_no_plan(self):
         assert "no strand plan" in orch._format_strands_block([], set())

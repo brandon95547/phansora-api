@@ -7,7 +7,8 @@ Exposes the same surface the orchestrator uses (a drop-in for the OpenAI client)
 DeepSeek has no built-in web search, so ``grounded_search`` does it in three steps,
 mirroring what a hosted web_search tool does internally:
   1. derive 1-2 search queries from the prompt,
-  2. run them via ``search.web_search`` (Brave / SearXNG / DuckDuckGo),
+  2. run them via ``search.web_search`` (Brave or SearXNG — both need configuring;
+     the keyless DuckDuckGo backend is gone, see ``search`` for why),
   3. have DeepSeek write a concise, cited summary from the real results.
 
 ``reason_json`` is a plain DeepSeek chat call in JSON mode, parsed with the same

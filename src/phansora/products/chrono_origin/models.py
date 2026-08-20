@@ -499,7 +499,8 @@ class ExpandResponse(BaseModel):
     # finding nothing in what it was given. Those are opposite problems and looked
     # identical for a long time: an expansion over an empty corpus reports "no evidence
     # found", which sends everyone to check the prompts when the search never ran.
-    # DuckDuckGo is keyless here and answers 202 when it throttles, so this is not rare.
+    # A provider with no working search reaches this state, and it must not be
+    # reported to the user as 'no evidence exists' — the two mean opposite things.
     search_unavailable: bool = Field(
         default=False,
         description="True when the search returned no results at all, so nothing could be extracted.",

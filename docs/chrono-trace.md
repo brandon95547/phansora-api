@@ -4,7 +4,7 @@ Every number here is read from the code as it runs today, not from an older desi
 note. Where a figure is configurable the setting is named, so it can be checked
 rather than trusted.
 
-The short version: **8 model calls, ~14 web searches, 12 page fetches, one JSON
+The short version: **8 model calls, 7 grounded searches, 12 page fetches, one JSON
 generation.** Typical wall time on the production box is 2½–5 minutes.
 
 ---
@@ -59,24 +59,35 @@ filled with the subject:
 There is **no planning call**. The queries are fixed text, so they cost nothing to
 produce. There is also **no round loop** — see [Why it works this way](#why-it-works-this-way).
 
-Each of the seven then runs one `grounded_search`, which is:
+Each of the seven then runs one `grounded_search`. On the default provider that is
+**one model call with Google Search grounding switched on**: Gemini decides what to
+search, runs it, reads the results, and returns prose plus the list of pages it
+actually used. The queries it ran come back in `webSearchQueries` and the pages in
+`groundingChunks`.
 
-1. **Derive up to 2 web queries** — the strand query, plus the subject name as a
-   second angle. No model call; they are read out of the prompt.
-2. **Run them against DuckDuckGo**, concurrently. Up to **10 results each**
-   (`CHRONO_SEARCH_RESULTS`), capped at **2 per domain** so five pages of one
-   publisher can't crowd out corroboration. Retries three times with backoff.
-3. **One model call** summarises those results into grounded prose that cites the
-   exact URLs.
+So the gather stage is **7 model calls, each doing its own searching**. Up to **8
+citations** are kept per answer (`chrono_max_sources_per_stage`).
 
-So the gather stage is **7 model calls and ~14 web searches**, returning up to ~140
-raw results before de-duplication. Up to **8 citations** are kept per answer
-(`chrono_max_sources_per_stage`).
+**Citations come only from the grounding metadata** — never from URLs parsed out of
+the model's prose. A URL the model wrote into a sentence is a URL it may have
+invented, and attributing a claim to a page that never made it is the one failure
+this product cannot survive.
 
-Searches are gated to **4 in flight** against DuckDuckGo (`CHRONO_SEARCH_CONCURRENCY`).
-That gate is deliberate: the keyless backend signals throttling by returning an
-*empty result set*, which is indistinguishable from a genuinely empty search, so too
-much concurrency shows up as a thinner trace rather than an error.
+**An answer with no grounding at all is discarded.** If the response carries neither
+grounding chunks nor search queries, the model did not search — it answered from
+memory, and memory is not evidence. The client returns empty so the caller reports
+*the search did not run* rather than *no evidence exists*. Those two sentences mean
+opposite things and used to be indistinguishable.
+
+> **Removed: DuckDuckGo.** The DeepSeek provider has no hosted search tool, so it
+> fetched results itself and pasted them into a prompt; the keyless backend for that
+> was DuckDuckGo. It answers **202 when it throttles**, which arrives as an empty
+> result list — identical to a search that genuinely found nothing. Throttled traces
+> reported "no evidence found" for subjects with abundant surviving evidence, and
+> days went into rewriting prompts that were never at fault. Nothing keyless replaced
+> it: with no backend configured the code now says so in the log instead of returning
+> quiet emptiness. The `deepseek` provider still works, but requires `BRAVE_API_KEY`
+> or `SEARXNG_URL`.
 
 ## Stage 2 — The corpus
 
@@ -148,20 +159,33 @@ The model proposes; these are enforced regardless of what it returns.
 
 | | Count | Setting |
 |---|---|---|
-| Model calls | **8** (7 summaries + 1 extraction) | — |
-| Web searches | **~14** | 7 strands × up to 2 derived |
-| Results per search | 10 | `CHRONO_SEARCH_RESULTS` |
-| Concurrent searches | 4 | `CHRONO_SEARCH_CONCURRENCY` |
+| Model calls | **8** (7 grounded searches + 1 extraction) | — |
+| Web searches | **7**, plus whatever each grounded call runs internally | one per strand |
 | Citations kept per answer | 8 | `chrono_max_sources_per_stage` |
 | Citations into the prompt | ≤60 | `MAX_CITATIONS_IN_PROMPT` |
 | Pages fetched / read | 12 / 6 | `chrono_read_sources` |
 | Chain steps | ≤14 | prompt |
 | Conclusions / connections | ≤8 / ≤8 | prompt / `chrono_max_connections` |
 
-Provider is chosen by **`CHRONO_LLM_PROVIDER`** (`deepseek` or `openai`); the model
-by `CHRONO_MODEL`, falling back to `DEEPSEEK_MODEL` / `OPENAI_MODEL`. There is no
-built-in default model name — a hardcoded one silently breaks when the provider
-retires it.
+## Providers
+
+Chosen by **`CHRONO_LLM_PROVIDER`**; the model by `CHRONO_MODEL`, falling back to the
+provider-wide variable. There is no built-in default model name — a hardcoded one
+silently breaks when the provider retires it.
+
+| Provider | Searching | Needs |
+|---|---|---|
+| **`gemini`** *(default)* | native Google Search grounding | `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| `openai` | native `web_search` tool | `OPENAI_API_KEY`, `OPENAI_MODEL` |
+| `deepseek` | **none of its own** — external search required | `DEEPSEEK_API_KEY` + `BRAVE_API_KEY` or `SEARXNG_URL` |
+
+DeepSeek's API rejects anything but `type: "function"` in its tools array, so there
+is no hosted search tool to enable — verified against the live API, not inferred.
+
+**On cost.** Grounding is billed per grounded *request*, not per token, with a free
+monthly allowance on the 3.x family. That is why `gemini-3.5-flash-lite` is the
+default despite a higher token price than 2.5: at this product's volume the free
+grounding allowance dominates the bill.
 
 ## Why it works this way
 
@@ -200,3 +224,8 @@ restoring the loop.
 - **A trace started within ~3 minutes of a service restart** competes with vLLM and
   CosyVoice loading onto the GPU in the same process, and will look far slower than
   it is.
+- **`Gemini answered without searching`** in the logs — grounding did not run. Check
+  the key's quota rather than the prompts; the trace has no evidence to work from.
+- **`No web search backend is configured`** — only reachable on the `deepseek`
+  provider, and it means every search was skipped. Set `BRAVE_API_KEY` or switch to
+  `gemini`.

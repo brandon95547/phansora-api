@@ -254,15 +254,51 @@ def test_mentions_keep_their_research_order_within_a_group():
 
 
 # ------------------------------------------------ search concurrency gate
-# The keyless DuckDuckGo backend signals throttling by returning an EMPTY result set,
-# which web_search cannot tell from a genuinely empty search and therefore retries with
-# backoff. So too much concurrency does not surface as an error — it surfaces as a
-# slower trace built on fewer sources.
-def test_the_keyless_backend_is_gated_harder_than_the_paid_ones():
+# The external search stack is only reached by the deepseek provider now; gemini and
+# openai models search for themselves. It is still gated, because the callers multiply:
+# six query workers times their derived queries reaches twelve simultaneous requests.
+def test_no_keyless_backend_survives():
+    """DuckDuckGo is gone, and nothing keyless replaced it.
+
+    It answered 202 when throttled, which arrives as an empty result list — identical
+    to a search that genuinely found nothing. So a throttled trace reported "no evidence
+    found" for subjects with abundant surviving evidence. A backend that fails silently
+    is worse than no backend: with none configured, the caller can at least say so.
+    """
     from phansora.shared.ai import search as S
 
-    assert S._DEFAULT_CONCURRENCY["duckduckgo"] < S._DEFAULT_CONCURRENCY["brave"]
-    assert S._DEFAULT_CONCURRENCY["duckduckgo"] < S._DEFAULT_CONCURRENCY["searxng"]
+    assert "duckduckgo" not in S._DEFAULT_CONCURRENCY
+    assert not hasattr(S, "_duckduckgo")
+    assert set(S._DEFAULT_CONCURRENCY) == {"brave", "searxng"}
+
+
+def test_an_unconfigured_search_is_reported_not_guessed(monkeypatch, caplog):
+    """No backend must be a stated condition, not a quiet empty list."""
+    import logging
+
+    from phansora.shared.ai import search as S
+
+    for var in ("BRAVE_API_KEY", "SEARXNG_URL", "CHRONO_SEARCH_PROVIDER"):
+        monkeypatch.delenv(var, raising=False)
+
+    cfg = S.SearchConfig.from_env()
+    assert cfg.provider == "", "auto-detect invented a backend that cannot run"
+    assert S.search_available(cfg) is False
+
+    with caplog.at_level(logging.WARNING):
+        assert S.web_search("dead sea scrolls dating", cfg=cfg) == []
+    assert any("No web search backend is configured" in r.message for r in caplog.records)
+
+
+def test_a_configured_backend_reads_as_available(monkeypatch):
+    from phansora.shared.ai import search as S
+
+    monkeypatch.delenv("CHRONO_SEARCH_PROVIDER", raising=False)
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    monkeypatch.setenv("BRAVE_API_KEY", "k")
+    cfg = S.SearchConfig.from_env()
+    assert cfg.provider == "brave"
+    assert S.search_available(cfg) is True
 
 
 def test_the_gate_is_shared_per_backend():
@@ -270,8 +306,8 @@ def test_the_gate_is_shared_per_backend():
     from phansora.shared.ai import search as S
 
     S._semaphores.clear()
-    assert S._gate("duckduckgo") is S._gate("duckduckgo")
-    assert S._gate("duckduckgo") is not S._gate("brave")
+    assert S._gate("brave") is S._gate("brave")
+    assert S._gate("brave") is not S._gate("searxng")
 
 
 def test_the_gate_actually_bounds_parallelism():
@@ -281,14 +317,14 @@ def test_the_gate_actually_bounds_parallelism():
     from phansora.shared.ai import search as S
 
     S._semaphores.clear()
-    limit = S._DEFAULT_CONCURRENCY["duckduckgo"]
+    limit = S._DEFAULT_CONCURRENCY["brave"]
     live = 0
     peak = 0
     lock = threading.Lock()
 
     def worker():
         nonlocal live, peak
-        with S._gate("duckduckgo"):
+        with S._gate("brave"):
             with lock:
                 live += 1
                 peak = max(peak, live)
@@ -310,7 +346,7 @@ def test_the_limit_is_overridable_for_a_backend_that_can_take_it(monkeypatch):
 
     S._semaphores.clear()
     monkeypatch.setenv("CHRONO_SEARCH_CONCURRENCY", "1")
-    gate = S._gate("duckduckgo")
+    gate = S._gate("brave")
     assert gate.acquire(blocking=False) is True
     assert gate.acquire(blocking=False) is False, "override was not applied"
     gate.release()
@@ -566,16 +602,22 @@ def test_the_anchor_is_what_the_fallback_angle_picks_up():
 # budget is shorter than the work, the handler returns 504 and the thread keeps
 # running, holding a worker until it finishes. Four of those exhausted the pool and
 # the product went silent: requests arriving, no LLM calls made.
-def test_the_request_budget_exceeds_the_client_worst_case():
+@pytest.mark.parametrize("provider", ["deepseek", "gemini"])
+def test_the_request_budget_exceeds_the_client_worst_case(provider):
+    """Every provider, not just the one that caused this the first time."""
     from phansora.products.chrono_origin.config import get_settings
-    from phansora.shared.ai.deepseek_research import DeepSeekConfig
+
+    if provider == "deepseek":
+        from phansora.shared.ai.deepseek_research import DeepSeekConfig as C
+    else:
+        from phansora.shared.ai.gemini_research import GeminiConfig as C
 
     budget = get_settings().chrono_request_timeout_s
-    # 3 attempts is what tenacity is configured for on the DeepSeek client.
-    worst_case = DeepSeekConfig.timeout_s * 3
+    # 3 attempts is what tenacity is configured for on both clients.
+    worst_case = C.timeout_s * 3
     assert budget > worst_case, (
-        f"budget {budget}s is below the client's {worst_case}s worst case — a slow call "
-        "abandons its thread and leaks an executor worker"
+        f"budget {budget}s is below the {provider} client's {worst_case}s worst case — a "
+        "slow call abandons its thread and leaks an executor worker"
     )
 
 
