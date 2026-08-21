@@ -535,10 +535,11 @@ Connection rules — read these twice:
   its neighbour by default.
 
 General rules:
-- AT MOST 14 STEPS AND 8 CONCLUSIONS. Every distinct object with its own date, its own evidence
-  and its own way of being wrong deserves a step, but a chain longer than this is not a chain a
-  reader follows, and the whole answer is generated in one pass — overrun it and the JSON is cut
-  off mid-object and the trace fails outright. Choose the load-bearing objects.
+- NO LIMIT ON HOW MANY STEPS OR CONCLUSIONS. Every distinct object with its own date, its own
+  evidence and its own way of being wrong is its own step. Merging two of them hides one. Emit
+  as many as the evidence supports: a trace whose research found twenty objects should show
+  twenty, and a short chain should be short because the evidence was thin, never because a
+  longer one felt like too much.
 - Every claim must be backed by at least one citation URL from the provided list.
 - Where the only citations available are tier 4-5, say so in "why" and set the evidence_type to
   what those sources can actually support.
