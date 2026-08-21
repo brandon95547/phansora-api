@@ -120,7 +120,17 @@ def get_cached(title: str, key: str) -> Optional[dict[str, Any]]:
             # cares, and it keeps the cache with no background job to own.
             path.unlink(missing_ok=True)
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not payload.get("timeline"):
+            # Self-healing, for entries written before save_cached learned to refuse
+            # these. An empty trace served from disk is the worst version of the bug:
+            # the guards downstream never run, because a cache hit returns before any
+            # of them, so re-running the trace returns the same emptiness for thirty
+            # days without ever calling the model. Dropped on read, like an expiry.
+            logger.warning("Dropping a cached trace with an empty timeline for %r.", title)
+            path.unlink(missing_ok=True)
+            return None
+        return payload
     except Exception:
         return None
 

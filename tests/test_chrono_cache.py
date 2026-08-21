@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import time
 
+import json
+
 import pytest
 
 from phansora.products.chrono_origin.services import cache as cache_mod
 from phansora.products.chrono_origin.services.cache import (
     delete_cached,
+    _cache_path,
     get_cached,
     normalize_title,
     request_key,
@@ -172,3 +175,19 @@ def test_a_trace_with_no_timeline_is_never_cached():
     k = key_for("Jesus Christ")
     save_cached("Jesus Christ", k, {"timeline": [], "origin": {"summary": "No research material was provided."}})
     assert get_cached("Jesus Christ", k) is None
+
+
+def test_an_already_poisoned_entry_heals_itself_on_read():
+    """Entries written before save_cached learned to refuse them.
+
+    A cache hit returns before every guard in the pipeline, so a stored empty trace is
+    served straight back and re-running cannot clear it. Dropped on read instead, which
+    needs no sweep and no manual invalidation.
+    """
+    k = key_for("Jesus Christ")
+    path = _cache_path("Jesus Christ", k)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"timeline": [], "origin": {"summary": "Nothing to report."}}))
+
+    assert get_cached("Jesus Christ", k) is None
+    assert not path.exists(), "the poisoned entry was served again on the next read"
