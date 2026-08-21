@@ -55,7 +55,11 @@ logger = logging.getLogger(__name__)
 #     answer is parsed onto the timeline directly — so a v6 trace carries claims,
 #     dossiers and connections that a v7 trace does not have and does not want. Serving
 #     one for the other would show a board built by rules that no longer apply.
-SCHEMA_VERSION = "v7"
+# v8: nodes carry the research as labelled details, and `claim` narrowed to the one
+#     field that is a statement about the item. A v7 trace has the same material run
+#     together into one string, which the dialog cannot lay out as rows — the same
+#     research, but not in a shape this pipeline can show.
+SCHEMA_VERSION = "v8"
 
 
 def normalize_title(title: str) -> str:

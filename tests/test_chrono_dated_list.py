@@ -190,22 +190,27 @@ class TestTheJsonArray:
         assert (items[1].year, items[1].year_end, items[1].precision) == (-300, -201, "century")
 
     def test_the_metadata_arrives_labelled_and_in_order(self):
-        """"Mesopotamia" and "clay tablet" mean different things; run together they say
-        neither."""
-        first = parse_dated_list(FENCED)[0].description
-        assert first.splitlines() == [
-            "Origin: Mesopotamia",
-            "Material: Clay tablets; Sumerian",
-            "Authorship: Sumerian scribes",
-            "Significance: Earliest known writing system.",
-        ]
+        """"Mesopotamia" and "clay tablet" answer different questions; run together into
+        one string they answer neither, and nothing downstream can lay them out."""
+        assert parse_dated_list(FENCED)[0].details == (
+            ("Origin", "Mesopotamia"),
+            ("Material", "Clay tablets; Sumerian"),
+            ("Authorship", "Sumerian scribes"),
+            ("Significance", "Earliest known writing system."),
+        )
+
+    def test_a_value_written_across_lines_is_flattened(self):
+        """A line break inside a value breaks every consumer that shows these as rows,
+        and nothing in a field this size needs one."""
+        items = parse_dated_list('[{"title": "A", "date": "1 CE", "origin": "Rome\nand Ostia"}]')
+        assert items[0].details == (("Origin", "Rome and Ostia"),)
 
     def test_an_empty_field_is_left_out_not_shown_as_a_blank(self):
         """The prompt tells the model to leave a field empty rather than guess. Printing
         the gap back would undo the point of asking."""
-        second = parse_dated_list(FENCED)[1].description
-        assert "Authorship" not in second
-        assert second.startswith("Origin: Qumran")
+        labels = [label for label, _ in parse_dated_list(FENCED)[1].details]
+        assert "Authorship" not in labels
+        assert labels[0] == "Origin"
 
     def test_the_keys_are_read_leniently(self):
         """A trace should not fail because the model wrote "name" for "title"."""
@@ -222,7 +227,7 @@ class TestTheJsonArray:
 
     def test_an_item_with_no_metadata_simply_has_none(self):
         items = parse_dated_list('[{"title": "A", "date": "1611 CE"}]')
-        assert items[0].description == ""
+        assert items[0].details == ()
 
 
 class TestTheOlderShapeStillReads:
@@ -263,7 +268,7 @@ class TestATruncatedAnswerKeepsWhatItGot:
 
     def test_a_brace_inside_prose_is_not_mistaken_for_structure(self):
         items = parse_dated_list(self.TRUNCATED)
-        assert items[0].description == "Significance: Contains a } brace, as prose does"
+        assert items[0].details == (("Significance", "Contains a } brace, as prose does"),)
 
     def test_it_says_so_in_the_log(self, caplog):
         """Otherwise a list quietly gets shorter and nothing reports why."""

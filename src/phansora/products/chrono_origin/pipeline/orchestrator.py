@@ -33,6 +33,7 @@ def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
 from ..models import (
     Citation,
+    DetailField,
     Conclusion,
     Connection,
     ConnectionEvidence,
@@ -49,7 +50,7 @@ from phansora.shared.ai import usage
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
 from . import source_policy as sp
-from .dated_list import parse_dated_list
+from .dated_list import SIGNIFICANCE_LABEL, parse_dated_list
 from .prompts import (
     RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
@@ -115,6 +116,28 @@ def _as_year(value: Any) -> Optional[int]:
         if m:
             return int(m.group(0))
     return None
+
+
+def _claim_of(item: Any) -> str:
+    """The item's significance, which is the one detail that is a statement about it.
+
+    Everything else the research returns — where it is from, what it is made of, who
+    made it — is a property, and properties belong in the table. Empty when the research
+    did not say: a node with no claim is telling the truth about what came back.
+    """
+    for label, value in item.details:
+        if label == SIGNIFICANCE_LABEL:
+            return value
+    return ""
+
+
+def _details_of(item: Any) -> List[DetailField]:
+    """Everything else, in the order the research gave it."""
+    return [
+        DetailField(label=label, value=value)
+        for label, value in item.details
+        if label != SIGNIFICANCE_LABEL
+    ]
 
 
 def _sort_key(year: Optional[int], year_end: Optional[int]):
@@ -717,10 +740,8 @@ class TraceOrchestrator:
                 node_type="event",
                 attribution="not_applicable",
                 source_title=item.title,
-                # What the research reported about this item, or nothing when it
-                # reported nothing. An empty claim says we have no description; a
-                # generated one would say we do.
-                claim=item.description,
+                claim=_claim_of(item),
+                details=_details_of(item),
                 citations=[],
                 confidence=0.5,
                 evidence=None,
@@ -745,9 +766,13 @@ class TraceOrchestrator:
             node_type=first.node_type,
             attribution=first.attribution,
             source_title=first.source_title,
-            summary="",
+            # The origin says what the timeline's first item said. It is the same node
+            # promoted, so it carries the same research: `summary` is the origin's name
+            # for `claim`, and the details table is the same table.
+            summary=first.claim,
             citations=[],
             confidence=first.confidence,
+            details=list(first.details),
         )
 
         return TraceResponse(

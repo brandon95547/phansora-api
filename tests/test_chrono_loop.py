@@ -238,10 +238,19 @@ class TestTheMetadataReachesTheNode:
         o, client = pipeline
         client._text = self.JSON_ANSWER
         result = o.run(TraceRequest(title="Jesus Christ"))
-        assert result.timeline[0].claim.splitlines() == [
-            "Origin: England",
-            "Authorship: 47 translators",
+        assert [(d.label, d.value) for d in result.timeline[0].details] == [
+            ("Origin", "England"),
+            ("Authorship", "47 translators"),
         ]
+
+    def test_significance_is_the_claim_and_not_another_row(self, pipeline):
+        """It is the one field that says something ABOUT the item rather than naming a
+        property of it, so it reads as the claim."""
+        o, client = pipeline
+        client._text = self.JSON_ANSWER
+        result = o.run(TraceRequest(title="Jesus Christ"))
+        assert result.origin.summary == "Earliest known writing."
+        assert "Significance" not in [d.label for d in result.origin.details]
 
     def test_an_item_the_research_said_nothing_more_about_claims_nothing_more(self, pipeline):
         """An empty claim says we have no description. A generated one would say we do."""
@@ -249,6 +258,7 @@ class TestTheMetadataReachesTheNode:
         client._text = '[{"title": "A", "date": "1 CE"}, {"title": "B", "date": "2 CE"}]'
         result = o.run(TraceRequest(title="Jesus Christ"))
         assert result.timeline[0].claim == ""
+        assert result.timeline[0].details == []
 
 
 class TestAnUnsourcedAnswerIsStillATrace:

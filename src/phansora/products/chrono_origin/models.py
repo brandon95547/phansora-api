@@ -253,6 +253,24 @@ class EvidenceDossier(BaseModel):
     )
 
 
+class DetailField(BaseModel):
+    """One labelled thing the research reported about an item.
+
+    A list of pairs rather than named columns, because the fields are the RESEARCH
+    PROMPT's to choose: it currently asks for origin, material, authorship and
+    significance, and the next tuning may ask for something else. Named columns would
+    make every such change a schema migration, and a field the model returned but the
+    schema had never heard of would be silently dropped on the way to the screen.
+
+    Labelled in the model's own words and shown in the order it gave them. Nothing here
+    is graded or verified — it is what the research said, and a node carrying it makes
+    no claim beyond that.
+    """
+
+    label: str
+    value: str
+
+
 class TimelineEvent(BaseModel):
     # Stable handle so connections can point at this item. Assigned by the
     # pipeline ("t0", "t1", …; the origin is always "origin") and kept stable
@@ -281,6 +299,9 @@ class TimelineEvent(BaseModel):
     citations: List[Citation] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence: Optional[EvidenceDossier] = None
+    # What the research reported about this item besides its title and date. Empty when
+    # it reported nothing, which is a fact about the answer rather than a gap to fill.
+    details: List[DetailField] = Field(default_factory=list)
 
 
 class OriginResult(BaseModel):
@@ -296,6 +317,7 @@ class OriginResult(BaseModel):
     citations: List[Citation] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence: Optional[EvidenceDossier] = None
+    details: List[DetailField] = Field(default_factory=list)
 
 
 class ConnectionEvidence(BaseModel):

@@ -66,15 +66,21 @@ class DatedItem:
     # Kept verbatim when there is no year to be had ("Bronze Age", "present day"), so
     # the node can still say when it is rather than showing an empty slot.
     era_label: Optional[str] = None
-    # Everything the research reported about the item besides its title and date, in the
-    # model's own words and in the order it gave them. Empty when the answer carried
-    # nothing but a title and a date — which is a fact about the answer, not a field to
-    # be filled in with something plausible.
-    description: str = ""
+    # Everything the research reported about the item besides its title and date, as
+    # (label, value) in the order the prompt asks for them. Pairs rather than named
+    # fields because the fields are the PROMPT's to choose, and it is retuned often —
+    # named ones would drop anything it started asking for that this file had not
+    # heard of. Empty when the answer carried nothing but a title and a date, which is
+    # a fact about the answer rather than a gap to fill.
+    details: Tuple[Tuple[str, str], ...] = ()
 
 
 # The keys the prompt asks for, and the ones models substitute for them. Read leniently:
 # a trace should not fail because the model wrote "name" where the prompt said "title".
+# The one field that is a statement ABOUT the item rather than a property of it, so it
+# reads as the node's claim instead of as another row in the table.
+SIGNIFICANCE_LABEL = "Significance"
+
 _TITLE_KEYS = ("title", "item_title", "item", "name")
 _DATE_KEYS = ("date", "date_range", "dates", "year", "period")
 # Order matters — this is the order the fields are shown in.
@@ -127,7 +133,11 @@ def _parse_json_items(text: str) -> List[DatedItem]:
         if end <= start:
             # No closing bracket at all: the answer stopped before the array did.
             raise json.JSONDecodeError("unterminated array", raw, len(raw))
-        parsed = json.loads(raw[start : end + 1])
+        # strict=False so a literal newline inside a value is read rather than
+        # rejected. Models put line breaks in long prose fields, and json.loads
+        # calls that an invalid control character — which would throw away an
+        # otherwise perfect array over a line break in one significance field.
+        parsed = json.loads(raw[start : end + 1], strict=False)
     except json.JSONDecodeError:
         # A truncated array is the expected failure now that each item carries six
         # fields: the answer runs into GEMINI_SEARCH_MAX_TOKENS and stops mid-object,
@@ -165,7 +175,7 @@ def _parse_json_items(text: str) -> List[DatedItem]:
                 year_end=year_end,
                 precision=precision,
                 era_label=era_label,
-                description=_describe(lowered),
+                details=_details(lowered),
             )
         )
     return items
@@ -200,7 +210,7 @@ def _salvage_objects(raw: str) -> Iterator[dict]:
             depth -= 1
             if depth == 0 and start != -1:
                 try:
-                    obj = json.loads(raw[start : i + 1])
+                    obj = json.loads(raw[start : i + 1], strict=False)
                 except json.JSONDecodeError:
                     pass
                 else:
@@ -219,24 +229,26 @@ def _first_string(entry: dict, keys: tuple) -> str:
     return ""
 
 
-def _describe(entry: dict) -> str:
-    """The metadata fields as one labelled block, in the order the prompt asks for them.
+def _details(entry: dict) -> Tuple[Tuple[str, str], ...]:
+    """The metadata fields as labelled pairs, in the order the prompt asks for them.
 
-    Labelled because "Mesopotamia" and "clay tablet" mean different things and a node
-    showing them run together says neither. Empty fields are dropped rather than shown
-    as blanks: the prompt tells the model to leave a field empty instead of guessing,
-    and honouring that means not printing the gap either.
+    Labelled and kept apart because "Mesopotamia" and "clay tablet" answer different
+    questions, and a node that runs them together answers neither. Empty fields are
+    dropped rather than carried as blanks: the prompt tells the model to leave a field
+    empty instead of guessing, and honouring that means not showing the gap either.
     """
-    parts: List[str] = []
+    out: List[Tuple[str, str]] = []
     used: set = set()
     for key, label in _DETAIL_KEYS:
         if label in used:
             continue
         value = _first_string(entry, (key,))
         if value:
-            parts.append(f"{label}: {value}")
+            # A value spanning lines would break every consumer that shows these as
+            # rows, and nothing in a field this size needs a line break.
+            out.append((label, " ".join(value.split())))
             used.add(label)
-    return "\n".join(parts)
+    return tuple(out)
 
 
 def _parse_line_items(text: str) -> List[DatedItem]:
