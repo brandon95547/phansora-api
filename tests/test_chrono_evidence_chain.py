@@ -571,7 +571,9 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     class Client:
         def grounded_search(self, prompt):
             return GroundedAnswer(
-                text="research findings",
+                # The list the research prompt asks for. Two items, because the trace
+                # needs an origin and a step; this test is about the SOURCES.
+                text="Cuneiform Script - c. 3400 BCE\nKing James Bible - c. 1611 CE",
                 citations=[{"url": f"https://src{i}.example/p", "title": f"S{i}"}
                            for i in range(40)],
                 queries=["q"],
@@ -598,6 +600,8 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     result = o.run(TraceRequest(title="Jesus Christ"))
 
     assert len(result.citations) == 40, "sources were dropped between search and response"
-    # and every one of them is offered to synthesis, since that is where citing happens
+    # Every one of them, not just the first or the strongest. The slice this pins was in
+    # ARRIVAL order, so a source's survival depended on when it happened to come back.
+    urls = {c.url for c in result.citations}
     for i in (0, 8, 39):
-        assert f"https://src{i}.example/p" in client.synth, f"source {i} never reached synthesis"
+        assert f"https://src{i}.example/p" in urls, f"source {i} was dropped"

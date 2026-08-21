@@ -323,42 +323,59 @@ class GeminiResearchClient:
 
     # -------------------------------------------------------------------- search
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:
+        """The model's answer, and the sources it grounded on if it grounded on any.
+
+        An answer that came from recall is still returned. It used to be discarded on
+        the grounds that memory is not evidence — true, and beside the point when the
+        product is a list of what came before what. Dropping it failed the whole trace
+        and refunded the credit while the answer the user asked for sat in the response,
+        complete and in order. What must never happen is a recalled answer arriving with
+        citations attached, and it cannot: citations are read from groundingMetadata,
+        so an ungrounded answer has none to read.
+        """
         usage.stage("search")
-        answer = self._grounded_attempt(prompt, temperature=temperature, system="")
-        if answer is not None:
-            return answer
+        answer, grounded = self._grounded_attempt(prompt, temperature=temperature, system="")
+        if grounded or answer is None:
+            # `answer is None` means the call itself failed. It did not answer from
+            # memory — it did not answer — so there is nothing to ask again about, and
+            # the transport already retried three times.
+            return answer or GroundedAnswer(text="", citations=[], queries=[])
 
-        # The model answered from memory. `google_search` is model-ELECTED: unlike the
-        # retired `google_search_retrieval` it carries no threshold that can force a
-        # lookup, so nothing here can require one and no prompt wording guarantees it.
-        # Asking once more with the obligation in the system channel is the only lever
-        # inside a single call that does not touch the research prompt.
-        #
-        # It is not much of a lever. A tier that declines the tool declines it twice —
-        # measured, not assumed — so when this fires for every trace the answer is
-        # GEMINI_SEARCH_MODEL, not another retry.
+        # `google_search` is model-ELECTED: unlike the retired `google_search_retrieval`
+        # it carries no threshold that can force a lookup, so nothing here can require
+        # one and no prompt wording guarantees it. Asking again with the obligation in
+        # the system channel is the only lever inside a single call that does not touch
+        # the research prompt, which is tuned by hand and must arrive as written.
         logger.warning("Gemini answered without searching; asking again with search made explicit.")
-        answer = self._grounded_attempt(prompt, temperature=temperature, system=_SEARCH_SYSTEM)
-        if answer is not None:
-            return answer
-
-        # Still ungrounded. Memory is not evidence — a timeline step whose source is
-        # "the model recalled it" is the one thing this product cannot ship — so the
-        # answer is dropped and the caller fails the trace rather than reporting that
-        # no evidence exists.
-        logger.warning(
-            "Gemini answered without searching on the retry too; discarding an ungrounded "
-            "answer rather than treating recall as research. If this is every trace rather "
-            "than the odd one, the model tier is the cause: set GEMINI_SEARCH_MODEL."
+        retry, grounded = self._grounded_attempt(
+            prompt, temperature=temperature, system=_SEARCH_SYSTEM
         )
-        return GroundedAnswer(text="", citations=[], queries=[])
+        if grounded and retry is not None:
+            return retry
+
+        # Still ungrounded, so the answer is unsourced and says so by carrying no
+        # citations. It is returned anyway — the caller decides what an unsourced answer
+        # is worth, and for a timeline of titles and dates it is worth the whole trace.
+        logger.warning(
+            "Gemini answered without searching on the retry either; returning an unsourced "
+            "answer. If this is every trace rather than the odd one, the model tier is the "
+            "cause: set GEMINI_SEARCH_MODEL."
+        )
+        return retry if retry is not None and (retry.text or "").strip() else answer
 
     def _grounded_attempt(
         self, prompt: str, *, temperature: float, system: str
-    ) -> Optional[GroundedAnswer]:
-        """One grounded call. None means the model did not search, which is the caller's
-        decision to act on. An empty GroundedAnswer means the call itself failed, which
-        is not worth retrying here — the transport already retried three times."""
+    ) -> tuple[Optional[GroundedAnswer], bool]:
+        """One grounded call, and whether the model actually searched.
+
+        Three outcomes, because the two failures are not the same failure:
+
+            (answer, True)   grounded — the model searched and cited
+            (answer, False)  ungrounded — it answered from memory, and that answer may
+                             still be exactly what was asked for
+            (None, False)    the call did not happen at all; nothing to retry, nothing
+                             to salvage
+        """
         try:
             data = self._generate(
                 model=self._cfg.search_model or self._cfg.model,
@@ -369,46 +386,45 @@ class GeminiResearchClient:
                 system=system,
             )
         except Exception as exc:  # noqa: BLE001 — search is best-effort
+            # Not retried by the caller: it did not "answer from memory", it did not
+            # answer at all, and the transport already retried three times.
             logger.warning("Gemini grounded search failed: %s", exc)
-            return GroundedAnswer(text="", citations=[], queries=[])
+            return None, False
 
         for cand in data.get("candidates") or []:
             if (cand.get("finishReason") or "").upper() == "MAX_TOKENS":
-                # Said out loud, because the corpus is prose and a cut-off answer
-                # looks exactly like a short one. Synthesis then builds a chain from
-                # research that stops mid-sentence, with nothing anywhere reporting
-                # that the second half was never delivered. Raise
+                # Said out loud, because the list is prose and a cut-off answer looks
+                # exactly like a short one: the timeline simply stops early, with
+                # nothing anywhere reporting that the rest was never delivered. Raise
                 # GEMINI_SEARCH_MAX_TOKENS if this appears — it is a cap, not a charge.
                 logger.warning(
-                    "Grounded answer was cut off at %d tokens; the corpus is incomplete. "
+                    "Grounded answer was cut off at %d tokens; the list is incomplete. "
                     "Raise GEMINI_SEARCH_MAX_TOKENS.", _SEARCH_MAX_TOKENS,
                 )
             break
 
+        text = self._text_of(data)
         citations = self._citations_of(data)
         queries = self._queries_of(data)
+        answer = GroundedAnswer(text=text, citations=citations, queries=queries)
 
         if not citations and not queries:
-            # Nothing in the response says a search happened. Log what came back
-            # instead, because a fluent answer with no groundingMetadata is exactly
-            # what recall looks like, and it is otherwise indistinguishable from a
-            # thin one in the logs.
+            # Nothing in the response says a search happened. Logged with the size of
+            # what came back, because a fluent answer with no groundingMetadata is
+            # exactly what recall looks like and is otherwise indistinguishable in the
+            # logs from a thin one.
             logger.warning(
-                "%s returned no groundingMetadata (%d chars of ungrounded text). "
-                "Whether to search is the model's own decision; set GEMINI_SEARCH_MODEL "
-                "to a tier that reliably takes the tool.",
-                self._cfg.search_model or self._cfg.model,
-                len(self._text_of(data)),
+                "%s returned no groundingMetadata (%d chars of unsourced text).",
+                self._cfg.search_model or self._cfg.model, len(text),
             )
-            return None
+            return answer, False
 
         if not citations:
-            # It searched but cited nothing back. The text may still be usable, so it
-            # is kept — but the gap is stated, because everything downstream assumes
-            # a claim can be traced to a source.
+            # It searched but cited nothing back. The text is still usable — the gap is
+            # stated because anything downstream that wants a source will not find one.
             logger.warning("Gemini searched (%s) but returned no sources.", ", ".join(queries))
 
-        return GroundedAnswer(text=self._text_of(data), citations=citations, queries=queries)
+        return answer, True
 
     # ------------------------------------------------------------------ reasoning
     def reason_json(

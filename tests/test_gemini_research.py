@@ -120,21 +120,23 @@ def test_the_queries_the_model_actually_ran_are_reported(monkeypatch):
     ]
 
 
-def test_an_answer_from_memory_is_discarded_not_used(monkeypatch, caplog):
+def test_an_answer_from_memory_is_returned_but_carries_no_sources(monkeypatch, caplog):
     """No chunks and no queries means the model never searched.
 
-    Keeping that text would put a timeline step on the board whose only source is
-    the model's recall, indistinguishable on screen from one backed by a manuscript.
-    Empty instead, so it lands in the caller's "search unavailable" path and the user
-    is told their search did not run — rather than that no evidence exists.
+    That text used to be thrown away, on the grounds that recall is not evidence. True,
+    and beside the point: it failed the whole trace while the list the caller asked for
+    sat in the answer, complete. What must never happen is recall arriving dressed as
+    research, and it cannot — citations are read from groundingMetadata, so an answer
+    that was never grounded has none to give.
     """
     import logging
 
     c, _ = client(monkeypatch, grounded_body(text="I recall that...", chunks=[], queries=[]))
     with caplog.at_level(logging.WARNING):
         answer = c.grounded_search("q")
-    assert answer.text == ""
+    assert answer.text == "I recall that..."
     assert answer.citations == []
+    assert answer.queries == []
     assert any("without searching" in r.message for r in caplog.records)
 
 
@@ -382,8 +384,8 @@ def test_an_ungrounded_answer_is_retried_with_search_made_explicit(monkeypatch):
     assert [x["url"] for x in out.citations] == ["https://a.example/x"]
 
 
-def test_an_answer_ungrounded_twice_is_discarded(monkeypatch):
-    """Memory is not evidence, however many times it is offered."""
+def test_an_answer_ungrounded_twice_is_kept_and_still_unsourced(monkeypatch):
+    """Asked twice, answered from memory twice. The answer is still the answer."""
     c = G.GeminiResearchClient(cfg())
     calls = []
 
@@ -394,8 +396,9 @@ def test_an_answer_ungrounded_twice_is_discarded(monkeypatch):
     monkeypatch.setattr(c, "_generate", fake)
     out = c.grounded_search("p")
 
-    assert len(calls) == 2, "one retry, then give up — not an unbounded loop"
-    assert out.text == "" and out.citations == [] and out.queries == []
+    assert len(calls) == 2, "one retry, then stop — not an unbounded loop"
+    assert out.text == "I recall..."
+    assert out.citations == [] and out.queries == []
 
 
 def test_a_transport_failure_is_not_mistaken_for_an_ungrounded_answer(monkeypatch):
@@ -413,6 +416,8 @@ def test_a_transport_failure_is_not_mistaken_for_an_ungrounded_answer(monkeypatc
 
     assert len(calls) == 1, "a failed call must not be retried as if it were ungrounded"
     assert out.text == "" and out.citations == []
+    # And the difference that matters downstream: a call that never returned leaves
+    # nothing to put on a timeline, where one that answered from memory does.
 
 
 # ------------------------------------------------------- searching is its own job

@@ -49,6 +49,7 @@ from phansora.shared.ai import usage
 from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
 from . import source_policy as sp
+from .dated_list import parse_dated_list
 from .prompts import (
     RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
@@ -475,10 +476,8 @@ class TraceOrchestrator:
             return TraceResponse(**cached)
 
 
-        all_mentions: List[Dict[str, Any]] = []
         all_citations: Dict[str, Dict[str, str]] = {}
         queries_run: List[str] = []
-        gaps: List[str] = []
         iterations = 0
 
         # Stage 1 - Gather. ONE grounded call; the model runs its own searches.
@@ -512,97 +511,48 @@ class TraceOrchestrator:
             queries_run.extend(answer.queries or [])
         iterations = 1
 
-        # Every source, not the first eight. This was a plain slice in ARRIVAL order,
-        # taken before anything had been tiered, so which sources survived was luck:
-        # one trace kept the Israel Museum's Dead Sea Scrolls collection because it
-        # happened to land seventh, and would have dropped it at ninth, leaving the
-        # trace resting on a blog, a Medium post and a Quora thread. A research call
-        # returns 15-33 citations; discarding two thirds of them unread is not a
-        # budget, it is a coin toss over the evidence.
+        # Citations if the model grounded, kept at the TOP LEVEL only. Nothing on this
+        # path reads them — a node is a title and a date — but throwing away sources a
+        # search already paid for would turn "add sources back" into a research problem
+        # instead of a display one.
         for answer in answers:
             for c in (answer.citations or []):
                 url = c.get("url") if isinstance(c, dict) else None
                 if url and url not in all_citations:
                     all_citations[url] = c
 
-        def _block(answer: Any) -> str:
-            # The summary AND the raw result snippets. The snippets are already
-            # fetched and already paid for, and a summariser writing a few hundred
-            # words about a page necessarily drops most of what it said — which is
-            # exactly the detail synthesis downstream is looking for.
-            parts = []
-            text = (answer.text or "").strip()
-            if text:
-                parts.append(text)
-            for c in (answer.citations or []):
-                if not isinstance(c, dict):
-                    continue
-                snippet = (c.get("snippet") or "").strip()
-                if snippet:
-                    parts.append(f"- {c.get('title') or c.get('url')}: {snippet}")
-            return "\n".join(parts)
-
-        corpus = "\n\n".join(b for b in (_block(a) for a in answers) if b)
-        if not corpus.strip():
-            # No corpus means the search did not run, and synthesis handed an empty
-            # corpus does NOT fail — it writes a well-formed account of having nothing
-            # to say ("No research material was provided for X"), which reads to the
-            # user as "no evidence exists" rather than "your search did not happen".
-            # Raising sends this down the failure path that already refunds, and keeps
-            # the empty result out of the cache, where it would be served for 30 days.
+        text = "\n\n".join(a.text.strip() for a in answers if (a.text or "").strip())
+        if not text.strip():
             raise RuntimeError(
-                "The research search returned nothing, so there was no material to build "
-                "a timeline from. This is a failed search, not an absence of evidence; "
-                "the credit has been refunded. Please try again in a moment."
+                "The research call came back empty, so there was no list to read. The "
+                "credit has been refunded. Please try again in a moment."
             )
 
-        # No extract stage means no per-URL tier claims; the resolver falls back to
-        # its host heuristic, which is what it did for un-mentioned URLs anyway.
-        def pre_tier(url: str) -> str:
-            return sp.resolve_tier(None, url)
-
-
-        # Stage 4 - Read the strongest sources properly, before judging them.
-        citation_list = list(all_citations.values())
-
-        progress(82, "Reading source pages")
-        want_reads = self.settings.chrono_read_sources
-        # Rank more candidates than we intend to read: the strongest sources are
-        # also the ones most likely to refuse a server-side fetch, and a blocked
-        # page should cost us the next-best source, not the read itself.
-        to_read = ev.select_for_reading(
-            citation_list, all_mentions, pre_tier, limit=want_reads * 2
-        )
-        reads = read_best(to_read, want=want_reads, max_chars=self.settings.chrono_read_chars)
-        read_ok = [r for r in reads if r.ok]
-        logger.info("Read %d source pages (from %d candidates)", len(read_ok), len(to_read))
-
-        # Stage 5 - Synthesize
-        progress(88, "Synthesizing timeline")
-        usage.stage("synthesize")
-        final = self._synthesize(
-            title=req.title,
-            corpus=corpus,
-            citations=citation_list,
-            reads=reads,
-            # What the research set out to cover, and what it actually found.
-            # Synthesis used to be handed a flat list of items with no idea that
-            # any of them belonged to a strand, so a strand researched across
-            # four rounds could be collapsed into one line or dropped, and
-            # nothing downstream could tell the difference between "the evidence
-            # was not there" and "the report did not mention it".
-        )
+        # Stage 2 - Read the list. NOT a model call.
+        #
+        # The research prompt asks for `Title - Date`, one per line, oldest first, and
+        # that is already the timeline. Sending it to a second model to be turned into
+        # JSON was the single most expensive and least reliable step in the trace: it
+        # overran its 32000-token budget four times in three days, each time failing a
+        # trace whose research had already succeeded, and being a model it could also
+        # shorten a list it found long or drop an item it found odd. A parser does none
+        # of that. See dated_list.
+        progress(80, "Reading the list")
+        items = parse_dated_list(text)
+        if len(items) < 2:
+            raise RuntimeError(
+                "The research answer did not contain a readable list of dated items, so "
+                "there is no timeline to show. The credit has been refunded. Please try "
+                "again in a moment."
+            )
 
         progress(97, "Building response")
-        response = self._build_response(
+        response = self._build_list_response(
             req=req,
             normalized=normalized,
-            final=final,
-            citations=citation_list,
-            mentions=all_mentions,
-            reads=reads,
+            items=items,
+            citations=list(all_citations.values()),
             queries_run=queries_run,
-            open_questions=gaps,
             iterations=iterations,
             duration=time.time() - started,
         )
@@ -684,6 +634,17 @@ class TraceOrchestrator:
             usage.absorb(snap)
         return [answer for answer, _ in results]
 
+    # ------------------------------------------------------- PARKED: the synthesis path
+    # Nothing below reaches _synthesize, _build_response, _mention_tiers or
+    # _build_connections any more. A trace is one model call and a parser; these turned
+    # a corpus into claims, dossiers, tiers and evaluated connections, and they are kept
+    # because that is the direction the product is going back in, one piece at a time —
+    # descriptions first, then sources.
+    #
+    # They are NOT dead-but-harmless: re-enabling any of them means paying for the
+    # second model call again, with the token ceiling that failed four traces in three
+    # days. Bring one back deliberately, with the budget it needs, not by wiring it
+    # into run() because it happens to be here.
     def _synthesize(
         self,
         *,
@@ -708,6 +669,80 @@ class TraceOrchestrator:
         return self.client.reason_json(prompt, use_reasoning_model=True)
 
     # --------------------------------------------------------------- response
+    def _build_list_response(
+        self,
+        *,
+        req: TraceRequest,
+        normalized: str,
+        items: List[Any],
+        citations: List[Dict[str, str]],
+        queries_run: List[str],
+        iterations: int,
+        duration: float,
+    ) -> TraceResponse:
+        """A timeline of titles and dates, and nothing else.
+
+        Every other field keeps its default rather than being filled with something
+        invented. An empty `claim` says we have no description of this item, which is
+        true; a generated one would say we do. The fields are still there, so adding
+        descriptions or sources later is a matter of filling them in — see _synthesize
+        and _build_response, which stay for exactly that and are not on this path.
+        """
+        events = [
+            TimelineEvent(
+                id=f"t{i + 1}",
+                year=item.year,
+                year_end=item.year_end,
+                era_label=item.era_label,
+                precision=item.precision,
+                node_type="event",
+                attribution="not_applicable",
+                source_title=item.title,
+                claim="",
+                citations=[],
+                confidence=0.5,
+                evidence=None,
+            )
+            for i, item in enumerate(items)
+        ]
+        # The model is asked for oldest-first and gives it, but a list that came back a
+        # little out of order should be shown in order rather than shown wrong. Ids were
+        # assigned before this, so they survive the sort.
+        events.sort(key=lambda e: _sort_key(e.year, e.year_end))
+
+        # The oldest item IS the origin — that is what the trace set out to find. It
+        # moves out of the timeline rather than being copied, so the board does not show
+        # the same item twice.
+        first = events[0]
+        origin = OriginResult(
+            id="origin",
+            year=first.year,
+            year_end=first.year_end,
+            era_label=first.era_label,
+            precision=first.precision,
+            node_type=first.node_type,
+            attribution=first.attribution,
+            source_title=first.source_title,
+            summary="",
+            citations=[],
+            confidence=first.confidence,
+        )
+
+        return TraceResponse(
+            title=req.title,
+            normalized_title=normalized,
+            origin=origin,
+            timeline=events[1:],
+            connections=[],
+            reasoning="",
+            confidence=0.5,
+            queries_run=queries_run,
+            citations=[Citation(**c) for c in citations if c.get("url")],
+            usage=TokenUsage(**usage.snapshot(), pages_read=0),
+            iterations=iterations,
+            duration_seconds=duration,
+        )
+
     def _build_response(
         self,
         *,

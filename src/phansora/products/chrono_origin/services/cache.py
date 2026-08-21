@@ -51,7 +51,11 @@ logger = logging.getLogger(__name__)
 #     library scored alike, low-authority pages were never skipped, and page reads
 #     were ranked arbitrarily. Those traces rest on sources nothing ever weighed,
 #     which is not a display difference — it is different research.
-SCHEMA_VERSION = "v6"
+# v7: a node is a title and a date. The synthesis call is gone — the research
+#     answer is parsed onto the timeline directly — so a v6 trace carries claims,
+#     dossiers and connections that a v7 trace does not have and does not want. Serving
+#     one for the other would show a board built by rules that no longer apply.
+SCHEMA_VERSION = "v7"
 
 
 def normalize_title(title: str) -> str:
