@@ -1,0 +1,24 @@
+[Unit]
+# Catches the recurring provider-side network blackouts in the act and emails
+# the diagnostic capture once connectivity returns. See scripts/net-watchdog.sh.
+Description=Phansora network blackout watchdog
+Documentation=file:/usr/local/bin/net-watchdog
+After=network-online.target sshd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/net-watchdog
+Restart=always
+RestartSec=10
+# The watchdog is the alarm; it must never be the thing that falls over.
+# It is also deliberately tiny — a few pings and a counter read per cycle.
+Nice=5
+StandardOutput=null
+StandardError=journal
+
+# Environment=SAMPLE_SECS=15
+# Environment=SILENCE_SECS=180
+
+[Install]
+WantedBy=multi-user.target
