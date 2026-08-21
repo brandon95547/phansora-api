@@ -430,10 +430,26 @@ def build_research_prompt(title: str, context: Optional[str]) -> str:
     context given the prompt is byte-identical to the template; the check against `prompt`
     keeps this from doubling up if `{context_clause}` is ever put back.
     """
-    prompt = RESEARCH_PROMPT.format(
-        title=title,
-        context_clause=f" ({context})" if context else "",
+    # Substitution, not str.format(). The prompt now contains a JSON example, and every
+    # brace in it is a format field as far as format() is concerned — the whole template
+    # died on `KeyError: '\n    "title"'` the moment the output shape became an array.
+    # Escaping them would work until the next retune pasted an unescaped one back in,
+    # and this file is edited by hand far more often than that would survive.
+    prompt = RESEARCH_PROMPT.replace("{title}", title).replace(
+        "{context_clause}", f" ({context})" if context else ""
     )
+    # str.format() ignores a keyword the template does not use, so a template that has
+    # lost `{title}` raises nothing and simply researches whatever subject is written
+    # into it — every trace, for every user, silently. That has now happened twice: to
+    # `{context_clause}`, which quietly stopped the context box reaching the model, and
+    # to `{title}` itself, hardcoded to one subject while a prompt was being tuned.
+    # The prompt is edited far more often than this code is, so the check lives here.
+    if title not in prompt:
+        raise RuntimeError(
+            f"RESEARCH_PROMPT never mentions {title!r}, so the trace would research "
+            "whatever subject the template names instead. Put {title} back in "
+            "prompts.py where the subject belongs."
+        )
     if context and context not in prompt:
         prompt = (
             f"{prompt.rstrip()}\n\n"
@@ -682,11 +698,14 @@ class TraceOrchestrator:
     ) -> TraceResponse:
         """A timeline of titles and dates, and nothing else.
 
-        Every other field keeps its default rather than being filled with something
-        invented. An empty `claim` says we have no description of this item, which is
-        true; a generated one would say we do. The fields are still there, so adding
-        descriptions or sources later is a matter of filling them in — see _synthesize
-        and _build_response, which stay for exactly that and are not on this path.
+        The claim carries whatever metadata the research returned with the item —
+        origin, material, authorship, significance — labelled and in the model's own
+        words. It is not judged, graded or rewritten on the way through: no second model
+        call runs on this path, so what the research said is what the node says.
+
+        Everything else keeps its default rather than being filled with something
+        invented. Citations stay empty and evidence stays None until sources are the
+        step being added — see _synthesize and _build_response, parked below.
         """
         events = [
             TimelineEvent(
@@ -698,7 +717,10 @@ class TraceOrchestrator:
                 node_type="event",
                 attribution="not_applicable",
                 source_title=item.title,
-                claim="",
+                # What the research reported about this item, or nothing when it
+                # reported nothing. An empty claim says we have no description; a
+                # generated one would say we do.
+                claim=item.description,
                 citations=[],
                 confidence=0.5,
                 evidence=None,

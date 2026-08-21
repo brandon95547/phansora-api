@@ -213,6 +213,44 @@ class TestAnAnswerWithNoListIsAFailedTrace:
         assert saved == [], "an empty trace was written to the cache"
 
 
+class TestTheMetadataReachesTheNode:
+    """The prompt now asks for origin, material, authorship and significance per item.
+
+    No model call runs after the research one, so whatever the research reported is
+    what the node says — not a graded, rewritten or shortened version of it.
+    """
+
+    JSON_ANSWER = (
+        '[{"title": "Cuneiform Script", "date": "c. 3400 BCE", "origin": "Mesopotamia",'
+        ' "material": "Clay tablets", "significance": "Earliest known writing."},'
+        ' {"title": "King James Bible", "date": "1611 CE", "origin": "England",'
+        ' "authorship": "47 translators"}]'
+    )
+
+    def test_a_json_answer_becomes_a_timeline(self, pipeline):
+        o, client = pipeline
+        client._text = self.JSON_ANSWER
+        result = o.run(TraceRequest(title="Jesus Christ"))
+        assert result.origin.source_title == "Cuneiform Script"
+        assert [e.source_title for e in result.timeline] == ["King James Bible"]
+
+    def test_the_metadata_arrives_verbatim_on_the_node(self, pipeline):
+        o, client = pipeline
+        client._text = self.JSON_ANSWER
+        result = o.run(TraceRequest(title="Jesus Christ"))
+        assert result.timeline[0].claim.splitlines() == [
+            "Origin: England",
+            "Authorship: 47 translators",
+        ]
+
+    def test_an_item_the_research_said_nothing_more_about_claims_nothing_more(self, pipeline):
+        """An empty claim says we have no description. A generated one would say we do."""
+        o, client = pipeline
+        client._text = '[{"title": "A", "date": "1 CE"}, {"title": "B", "date": "2 CE"}]'
+        result = o.run(TraceRequest(title="Jesus Christ"))
+        assert result.timeline[0].claim == ""
+
+
 class TestAnUnsourcedAnswerIsStillATrace:
     """The other half of that incident, and the correction to how it was first fixed.
 

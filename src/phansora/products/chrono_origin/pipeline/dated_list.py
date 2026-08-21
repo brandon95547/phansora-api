@@ -12,15 +12,29 @@ invent an item, cannot quietly drop one, cannot decide the list would read bette
 shorter, costs nothing, and cannot overrun a token budget — which the synthesis call
 did four times in three days, each time failing a trace that had already been researched.
 
+RESEARCH_PROMPT asks for a JSON array, so that is read first. It is asked for in the
+PROMPT rather than enforced with `responseMimeType`, because the API refuses a forced
+JSON mime type alongside the search tool — a grounded call cannot be put in JSON mode,
+which is the whole reason a second model call existed. Asking works; a model that
+fences its JSON, or writes a sentence before it, is handled here rather than being
+failed for it.
+
+The older `Title - Date` line format is still read when there is no array, because the
+prompt is retuned often and a trace should not die because its output shape moved.
+
 What this deliberately does NOT do is judge. Anything shaped like an item is kept.
 Deciding what deserves to be on the timeline is the research call's job, and putting a
 second opinion in the way is how a trace lost material it had already found.
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Split on a dash with spaces around it. Titles carry their own hyphens — Proto-Sinaitic,
 # Al-Andalus, Sub-Saharan — and splitting on a bare "-" cuts those in half. The LAST
@@ -52,14 +66,181 @@ class DatedItem:
     # Kept verbatim when there is no year to be had ("Bronze Age", "present day"), so
     # the node can still say when it is rather than showing an empty slot.
     era_label: Optional[str] = None
+    # Everything the research reported about the item besides its title and date, in the
+    # model's own words and in the order it gave them. Empty when the answer carried
+    # nothing but a title and a date — which is a fact about the answer, not a field to
+    # be filled in with something plausible.
+    description: str = ""
+
+
+# The keys the prompt asks for, and the ones models substitute for them. Read leniently:
+# a trace should not fail because the model wrote "name" where the prompt said "title".
+_TITLE_KEYS = ("title", "item_title", "item", "name")
+_DATE_KEYS = ("date", "date_range", "dates", "year", "period")
+# Order matters — this is the order the fields are shown in.
+_DETAIL_KEYS = (
+    ("origin", "Origin"),
+    ("geographic_origin", "Origin"),
+    ("provenance", "Provenance"),
+    ("material", "Material"),
+    ("medium", "Medium"),
+    ("language", "Language"),
+    ("authorship", "Authorship"),
+    ("author", "Authorship"),
+    ("source_community", "Source community"),
+    ("significance", "Significance"),
+    ("function", "Function"),
+    ("description", "Description"),
+    ("notes", "Notes"),
+)
 
 
 def parse_dated_list(text: str) -> List[DatedItem]:
-    """Every ``Title - Date`` line in ``text``, in the order the model gave them.
+    """Every item in ``text``, in the order the model gave them.
 
-    Lines that are not items — a stray heading, a sentence the model added despite
-    being told not to — have no separator and are skipped rather than guessed at.
+    A JSON array if there is one, falling back to ``Title - Date`` lines. Anything that
+    is neither — a stray heading, a sentence added despite being told not to — is
+    skipped rather than guessed at.
     """
+    items = _parse_json_items(text)
+    if items:
+        return items
+    return _parse_line_items(text)
+
+
+def _parse_json_items(text: str) -> List[DatedItem]:
+    """The array the prompt asks for, however it arrived.
+
+    Fenced, prefaced with a sentence, or followed by one: all three happen, none of them
+    means the research failed, and all three are cheaper to read past than to re-run.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    start = raw.find("[")
+    if start == -1:
+        return []
+
+    end = raw.rfind("]")
+    try:
+        if end <= start:
+            # No closing bracket at all: the answer stopped before the array did.
+            raise json.JSONDecodeError("unterminated array", raw, len(raw))
+        parsed = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        # A truncated array is the expected failure now that each item carries six
+        # fields: the answer runs into GEMINI_SEARCH_MAX_TOKENS and stops mid-object,
+        # taking every complete item before it down with it. Thirty researched items
+        # should not be lost to the thirty-first being cut in half.
+        parsed = list(_salvage_objects(raw[start:]))
+        if parsed:
+            logger.warning(
+                "The research answer was not valid JSON — recovered %d complete items "
+                "from it. If this repeats, the answer is being cut off: raise "
+                "GEMINI_SEARCH_MAX_TOKENS.", len(parsed),
+            )
+    if not isinstance(parsed, list):
+        return []
+
+    items: List[DatedItem] = []
+    seen: set = set()
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        lowered = {str(k).strip().lower().replace(" ", "_"): v for k, v in entry.items()}
+        title = _first_string(lowered, _TITLE_KEYS)
+        if not title:
+            continue
+        key = title.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        year, year_end, precision, era_label = parse_date(_first_string(lowered, _DATE_KEYS))
+        items.append(
+            DatedItem(
+                title=title,
+                year=year,
+                year_end=year_end,
+                precision=precision,
+                era_label=era_label,
+                description=_describe(lowered),
+            )
+        )
+    return items
+
+
+def _salvage_objects(raw: str) -> Iterator[dict]:
+    """Every complete ``{...}`` in ``raw``, ignoring anything left half-written.
+
+    Counts braces rather than reaching for a regex, because a brace inside a string —
+    which the significance field will contain sooner or later — is not structure.
+    """
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(raw):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                try:
+                    obj = json.loads(raw[start : i + 1])
+                except json.JSONDecodeError:
+                    pass
+                else:
+                    if isinstance(obj, dict):
+                        yield obj
+                start = -1
+            elif depth < 0:
+                return
+
+
+def _first_string(entry: dict, keys: tuple) -> str:
+    for key in keys:
+        value = entry.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _describe(entry: dict) -> str:
+    """The metadata fields as one labelled block, in the order the prompt asks for them.
+
+    Labelled because "Mesopotamia" and "clay tablet" mean different things and a node
+    showing them run together says neither. Empty fields are dropped rather than shown
+    as blanks: the prompt tells the model to leave a field empty instead of guessing,
+    and honouring that means not printing the gap either.
+    """
+    parts: List[str] = []
+    used: set = set()
+    for key, label in _DETAIL_KEYS:
+        if label in used:
+            continue
+        value = _first_string(entry, (key,))
+        if value:
+            parts.append(f"{label}: {value}")
+            used.add(label)
+    return "\n".join(parts)
+
+
+def _parse_line_items(text: str) -> List[DatedItem]:
+    """Every ``Title - Date`` line in ``text``, in the order the model gave them."""
     items: List[DatedItem] = []
     seen: set = set()
 

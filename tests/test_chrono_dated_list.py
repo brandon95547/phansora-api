@@ -113,3 +113,162 @@ class TestDates:
         items = parse_dated_list("Modern critical editions - present day")
         assert items[0].title == "Modern critical editions"
         assert items[0].year is None and items[0].era_label == "present day"
+
+
+# --------------------------------------------------------- the subject reaches the model
+def test_a_prompt_that_lost_its_title_placeholder_fails_loudly():
+    """The failure this prevents is silent, which is what makes it expensive.
+
+    `str.format()` ignores a keyword the template does not use. A RESEARCH_PROMPT with
+    the subject hardcoded — easily done while tuning against one subject — therefore
+    raises nothing, and every trace of every subject researches that one subject with
+    nothing anywhere reporting it.
+    """
+    import pytest
+
+    from phansora.products.chrono_origin.pipeline import orchestrator as orch
+
+    original = orch.RESEARCH_PROMPT
+    orch.RESEARCH_PROMPT = 'Trace the lineage of "Jesus Christ" from the beginning.'
+    try:
+        with pytest.raises(RuntimeError, match="never mentions"):
+            orch.build_research_prompt("Mount Everest", "")
+    finally:
+        orch.RESEARCH_PROMPT = original
+
+
+def test_the_shipped_prompt_carries_the_subject():
+    from phansora.products.chrono_origin.pipeline.orchestrator import build_research_prompt
+
+    assert "Mount Everest" in build_research_prompt("Mount Everest", "")
+
+
+def test_a_prompt_containing_json_braces_still_renders():
+    """The output shape moved to a JSON array, and every brace in the example read as a
+    format field: the template died on `KeyError: '\\n    "title"'` before it reached the
+    model. Substitution has no opinion about braces."""
+    from phansora.products.chrono_origin.pipeline import orchestrator as orch
+
+    original = orch.RESEARCH_PROMPT
+    orch.RESEARCH_PROMPT = 'Trace "{title}". Return [{"title": "x", "date": "y"}] and nothing else.'
+    try:
+        out = orch.build_research_prompt("Mount Everest", "")
+        assert "Mount Everest" in out
+        assert '[{"title": "x", "date": "y"}]' in out
+    finally:
+        orch.RESEARCH_PROMPT = original
+
+
+# ------------------------------------------------------------------ the JSON array
+# What the prompt asks for now. It is asked for in the PROMPT, not enforced with
+# responseMimeType, because the API refuses a forced JSON mime type alongside the search
+# tool — so the answer arrives however the model felt like sending it, and reading past
+# a fence or a stray sentence is cheaper than failing a trace that was researched fine.
+FENCED = """Here is the chronological list you asked for.
+
+```json
+[
+  {"title": "Cuneiform Script", "date": "c. 3400 BCE", "origin": "Mesopotamia",
+   "material": "Clay tablets; Sumerian", "authorship": "Sumerian scribes",
+   "significance": "Earliest known writing system."},
+  {"title": "Dead Sea Scrolls", "date": "3rd century BCE", "origin": "Qumran",
+   "material": "Parchment; Hebrew", "authorship": "", "significance": "Oldest witnesses."}
+]
+```
+
+Let me know if you would like more detail."""
+
+
+class TestTheJsonArray:
+    def test_a_fenced_array_wrapped_in_prose_is_read(self):
+        items = parse_dated_list(FENCED)
+        assert [i.title for i in items] == ["Cuneiform Script", "Dead Sea Scrolls"]
+
+    def test_dates_are_parsed_the_same_way_as_ever(self):
+        items = parse_dated_list(FENCED)
+        assert items[0].year == -3400
+        assert (items[1].year, items[1].year_end, items[1].precision) == (-300, -201, "century")
+
+    def test_the_metadata_arrives_labelled_and_in_order(self):
+        """"Mesopotamia" and "clay tablet" mean different things; run together they say
+        neither."""
+        first = parse_dated_list(FENCED)[0].description
+        assert first.splitlines() == [
+            "Origin: Mesopotamia",
+            "Material: Clay tablets; Sumerian",
+            "Authorship: Sumerian scribes",
+            "Significance: Earliest known writing system.",
+        ]
+
+    def test_an_empty_field_is_left_out_not_shown_as_a_blank(self):
+        """The prompt tells the model to leave a field empty rather than guess. Printing
+        the gap back would undo the point of asking."""
+        second = parse_dated_list(FENCED)[1].description
+        assert "Authorship" not in second
+        assert second.startswith("Origin: Qumran")
+
+    def test_the_keys_are_read_leniently(self):
+        """A trace should not fail because the model wrote "name" for "title"."""
+        items = parse_dated_list('[{"name": "King James Bible", "date_range": "1611 CE"}]')
+        assert items[0].title == "King James Bible" and items[0].year == 1611
+
+    def test_an_object_with_no_title_is_skipped(self):
+        items = parse_dated_list('[{"date": "1611 CE"}, {"title": "Real", "date": "1612 CE"}]')
+        assert [i.title for i in items] == ["Real"]
+
+    def test_the_same_title_twice_is_kept_once(self):
+        items = parse_dated_list('[{"title": "A", "date": "1 CE"}, {"title": "a", "date": "1 CE"}]')
+        assert len(items) == 1
+
+    def test_an_item_with_no_metadata_simply_has_none(self):
+        items = parse_dated_list('[{"title": "A", "date": "1611 CE"}]')
+        assert items[0].description == ""
+
+
+class TestTheOlderShapeStillReads:
+    """The prompt is retuned by hand and often. A trace should not die because the output
+    shape moved back."""
+
+    def test_lines_are_read_when_there_is_no_array(self):
+        items = parse_dated_list("Cuneiform Script - c. 3400 BCE\nMesha Stele - c. 840 BCE")
+        assert [i.title for i in items] == ["Cuneiform Script", "Mesha Stele"]
+
+    def test_malformed_json_falls_back_to_lines_rather_than_failing(self):
+        text = "[{'title': not json at all\nCuneiform Script - c. 3400 BCE"
+        assert [i.title for i in parse_dated_list(text)] == ["Cuneiform Script"]
+
+    def test_an_array_of_strings_is_not_mistaken_for_items(self):
+        assert parse_dated_list('["Cuneiform Script", "Mesha Stele"]') == []
+
+
+class TestATruncatedAnswerKeepsWhatItGot:
+    """Six fields per item makes running out of output budget the expected failure, and
+    an array cut off mid-object is not valid JSON. Losing thirty researched items
+    because the thirty-first was cut in half is a bug, not a safeguard."""
+
+    TRUNCATED = (
+        '[\n'
+        '  {"title": "Cuneiform Script", "date": "c. 3400 BCE",'
+        '   "significance": "Contains a } brace, as prose does"},\n'
+        '  {"title": "Mesha Stele", "date": "c. 840 BCE"},\n'
+        '  {"title": "King James Bib'
+    )
+
+    def test_the_complete_items_survive(self):
+        items = parse_dated_list(self.TRUNCATED)
+        assert [i.title for i in items] == ["Cuneiform Script", "Mesha Stele"]
+
+    def test_the_half_written_item_is_dropped_not_guessed_at(self):
+        assert "King James" not in [i.title for i in parse_dated_list(self.TRUNCATED)]
+
+    def test_a_brace_inside_prose_is_not_mistaken_for_structure(self):
+        items = parse_dated_list(self.TRUNCATED)
+        assert items[0].description == "Significance: Contains a } brace, as prose does"
+
+    def test_it_says_so_in_the_log(self, caplog):
+        """Otherwise a list quietly gets shorter and nothing reports why."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            parse_dated_list(self.TRUNCATED)
+        assert any("GEMINI_SEARCH_MAX_TOKENS" in r.message for r in caplog.records)

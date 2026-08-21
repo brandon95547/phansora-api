@@ -75,7 +75,7 @@ Search broadly and repeatedly for the historical sources, predecessor works, lar
 
 Search backward beyond the first appearance of "{title}". When you discover an earlier source, work, tradition, concept, technology, material, or predecessor, search for it too.
 
-The goal is to produce a large, complete chronological list, not a summary.
+The goal is to produce a large, complete chronological list with rich metadata, not a brief summary.
 
 Include every relevant historical item found in the research.
 
@@ -109,31 +109,31 @@ Include important:
 * present-day form
 
 Do not summarize several different historical items into one entry.
-
 Do not omit a larger source, collection, tradition, technology, or parent development because you already listed something contained within it.
-
 Do not omit an important individual item because you already listed the larger source, collection, tradition, or development containing it.
-
 Do not replace an original with a translation, adaptation, manuscript, fragment, surviving example, reproduction, or later version.
-
 Do not include speculative connections merely because two things are similar. Include items supported by the web research as historically relevant to the development or transmission of "{title}".
 
 After researching, combine all valid items you found, remove only true duplicates, and sort the entire list by date from oldest to newest.
 
-Return as many valid items as the research supports. Do not shorten or summarize the list.
+Return the result as a JSON array and nothing else. One object per item, in date order, oldest first:
 
-Output only:
+[
+  {
+    "title": "Item title",
+    "date": "Date or date range as the research supports it, e.g. c. 3400 BCE, 3rd century BCE, 1400-1200 BCE, 1611 CE, present day",
+    "origin": "Geographic origin and provenance",
+    "material": "Physical material, medium, and language",
+    "authorship": "Authorship or source community",
+    "significance": "Historical significance and function"
+  }
+]
 
-Title - Date
+Every object must have "title" and "date". Leave any other field as an empty string when the research does not support it. Do not guess a value to fill a field.
 
-No descriptions.
-No explanations.
-No introduction.
-No conclusion.
-No categories.
-No numbered list.
+Return as many valid items as the research supports. Do not shorten the list.
 
-Just one complete chronological list from the oldest foundation to the present day.
+No prose before or after the array. No code fences.
 
 """
 SYNTHESIZE_PROMPT = """\

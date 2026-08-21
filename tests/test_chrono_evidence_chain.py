@@ -255,10 +255,12 @@ def test_a_search_can_still_be_disambiguated():
     assert "the planet" in out, "the context box never reached the model"
 
     # And nothing is bolted on when the box was left empty: with no context the model
-    # gets the tuned template and not one word more.
+    # gets the tuned template and not one word more. Compared against a substitution,
+    # not against str.format() — the template now carries a JSON example, and format()
+    # reads every brace in it as a field.
     from phansora.products.chrono_origin.pipeline import prompts as P
-    assert orch.build_research_prompt("Mercury", None) == P.RESEARCH_PROMPT.format(
-        title="Mercury", context_clause=""
+    assert orch.build_research_prompt("Mercury", None) == (
+        P.RESEARCH_PROMPT.replace("{title}", "Mercury").replace("{context_clause}", "")
     )
 
 
