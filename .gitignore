@@ -81,3 +81,6 @@ data/chrono_origin/cache/*
 
 # systemd unit files are environment-specific
 *.service
+
+# prompt_lab scratch file — an experiment in progress, not source
+chrono-prompt.txt
