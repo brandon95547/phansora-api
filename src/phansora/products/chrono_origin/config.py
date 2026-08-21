@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     # ceiling that occasionally gets reached at seven calls a time.
     chrono_max_depth: int = 3
     chrono_min_depth: int = 2
-    chrono_max_sources_per_stage: int = 8
     chrono_max_queries_per_stage: int = 6
     # MUST exceed the LLM client's worst case, or every slow call leaks a thread.
     #

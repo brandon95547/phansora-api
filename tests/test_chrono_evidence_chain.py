@@ -165,20 +165,32 @@ def test_the_strand_fan_out_is_gone():
 
 
 # ------------------------------------------------- prompt size is bounded
-# The synthesis call is the only reasoning-model call in the pipeline and carries
-# 16-22k input tokens. Both blocks feeding it used to be unbounded, so a long trace
-# paid for its own thoroughness twice: once to gather, once to re-read.
-def test_the_citation_list_handed_to_synthesis_is_capped():
+# Nothing the research call finds is discarded on its way to synthesis.
+#
+# Two ceilings used to stand here, both written for a pipeline that ran three rounds
+# of six searches and could arrive with ~144 URLs. There are no rounds and no fan-out;
+# one research call returns a bounded 15-33 sources. Meanwhile the gather stage was
+# keeping only the first EIGHT in arrival order, before anything had been tiered — so
+# whether a trace rested on a museum catalogue or on a Quora thread came down to where
+# each happened to land in the list.
+def test_every_gathered_source_reaches_synthesis():
+    """Synthesis is told to cite from this list. Anything missing is a source no
+    claim in the trace can be attributed to."""
     cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
     block = orch._format_citations_block(cites)
     listed = [ln for ln in block.split("\n") if ln.startswith("[")]
-    assert len(listed) == orch.MAX_CITATIONS_IN_PROMPT
+    assert len(listed) == 300
+    assert "https://e.org/299" in block
 
 
-def test_a_trimmed_citation_list_says_it_was_trimmed():
-    """Synthesis is told to cite from this list; it should know the list is partial."""
+def test_the_citation_list_is_never_silently_trimmed():
     cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
-    assert "further sources gathered" in orch._format_citations_block(cites)
+    assert "further sources gathered" not in orch._format_citations_block(cites)
+
+
+def test_no_ceiling_survives_on_the_citation_list():
+    """A leftover constant would be a second place that quietly drops evidence."""
+    assert not hasattr(orch, "MAX_CITATIONS_IN_PROMPT")
 
 
 def test_a_short_citation_list_is_untouched():
@@ -765,3 +777,46 @@ def test_the_shape_is_still_taught_as_roles():
     assert "records from outside that circle" in body
     # And it must say the roles are optional, or a subject without one invents it.
     assert "drop the ones it does not" in body
+
+
+def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
+    """Forty sources found, forty on the trace.
+
+    The gather stage sliced this list to the first eight in ARRIVAL order, before any
+    tiering ran, so two thirds of what a search found was discarded unread and which
+    third survived was luck. A live trace kept the Israel Museum's Dead Sea Scrolls
+    collection only because it happened to arrive seventh.
+    """
+    from phansora.products.chrono_origin.models import TraceRequest
+    from phansora.shared.ai.research import GroundedAnswer
+
+    class Client:
+        def grounded_search(self, prompt):
+            return GroundedAnswer(
+                text="research findings",
+                citations=[{"url": f"https://src{i}.example/p", "title": f"S{i}"}
+                           for i in range(40)],
+                queries=["q"],
+            )
+
+        def reason_json(self, prompt, use_reasoning_model=False):
+            self.synth = prompt
+            return {"origin": {"year": -400, "source_title": "O", "summary": "s",
+                               "citations": [], "confidence": 0.6,
+                               "evidence": {"claim": "c"}},
+                    "timeline": [], "connections": [], "reasoning": "r", "confidence": 0.6}
+
+    monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "read_best", lambda *a, **k: [])
+    monkeypatch.setattr(orch, "mine_references", lambda *a, **k: [])
+
+    client = Client()
+    o = orch.TraceOrchestrator(client=client)
+    o.settings = o.settings.model_copy(update={"chrono_chase_enabled": False})
+    result = o.run(TraceRequest(title="Jesus Christ"))
+
+    assert len(result.citations) == 40, "sources were dropped between search and response"
+    # and every one of them is offered to synthesis, since that is where citing happens
+    for i in (0, 8, 39):
+        assert f"https://src{i}.example/p" in client.synth, f"source {i} never reached synthesis"

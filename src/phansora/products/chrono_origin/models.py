@@ -156,7 +156,6 @@ class TraceRequest(BaseModel):
         description="Optional disambiguating context, e.g. 'biblical figure' or 'New Mexico, 1947'.",
     )
     max_depth: Optional[int] = Field(default=None, ge=1, le=8)
-    max_sources_per_stage: Optional[int] = Field(default=None, ge=1, le=20)
     language: str = Field(default="en")
 
 

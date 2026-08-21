@@ -7,7 +7,7 @@ multiply that bill to tell two people the same thing.
 
 What it must NOT do is answer a different question with a stored one. The key used to
 be the title alone, while a request also carries `context`, `max_depth`,
-`max_sources_per_stage` and `language` — every one of which changes the result. So
+`language` — every one of which changes the result. So
 "Moses" with context "biblical figure" at depth 6 and "Moses" with context "Egyptian
 mythology" at depth 2 collided, and whichever ran first answered both. That is not a
 cross-user problem: one person re-tracing with the controls moved got their old answer
@@ -63,7 +63,6 @@ def request_key(
     *,
     context: Optional[str] = None,
     max_depth: Optional[int] = None,
-    max_sources_per_stage: Optional[int] = None,
     language: Optional[str] = None,
 ) -> str:
     """Everything about a request that changes its answer, as one string.
@@ -76,7 +75,6 @@ def request_key(
         normalize_title(title),
         normalize_title(context or ""),
         str(max_depth or ""),
-        str(max_sources_per_stage or ""),
         (language or "en").strip().lower(),
     ]
     return "\x1f".join(parts)

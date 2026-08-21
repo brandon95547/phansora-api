@@ -56,7 +56,6 @@ def test_title_alone_no_longer_decides():
 
 @pytest.mark.parametrize("kw", [
     {"max_depth": 6},
-    {"max_sources_per_stage": 12},
     {"language": "fr"},
     {"context": "New Mexico, 1947"},
 ])

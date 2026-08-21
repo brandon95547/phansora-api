@@ -457,14 +457,6 @@ def _describe_earliest(earliest: Optional[Dict[str, Any]]) -> str:
     return f"{when} — {earliest.get('source_title', '?')}: {earliest.get('claim', '')}"[:300]
 
 
-# A ceiling on the URL list handed to synthesis.
-#
-# Every round keeps up to chrono_max_sources_per_stage citations from each of its
-# searches, so three rounds of six queries can arrive here with ~144 URLs and six
-# rounds with ~288 — tens of thousands of characters of prompt on the one reasoning
-# call in the pipeline. The model can only cite a handful, and a list that long makes
-# the ones worth citing harder to find, not easier.
-MAX_CITATIONS_IN_PROMPT = 60
 
 # A ceiling on the item list handed to synthesis. This block was unbounded: nothing in
 # the extract prompt limits how many mentions a round may return, and every round's
@@ -474,17 +466,20 @@ MAX_MENTIONS_IN_PROMPT = 120
 
 
 def _format_citations_block(citations: List[Dict[str, str]]) -> str:
+    """Every source gathered, in full.
+
+    This used to stop at 60 and say how many it had swallowed. The ceiling was written
+    for a pipeline that ran three rounds of six searches and could arrive here with
+    ~144 URLs; there are no rounds and no fan-out now, and one research call returns a
+    bounded 15-33. Synthesis is told to cite from this list, so anything missing from
+    it is a source the trace cannot attribute a claim to.
+    """
     if not citations:
         return "(none)"
-    lines = []
-    for i, c in enumerate(citations[:MAX_CITATIONS_IN_PROMPT], 1):
-        lines.append(f"[{i}] {c.get('title') or c.get('url')} -> {c.get('url')}")
-    dropped = len(citations) - MAX_CITATIONS_IN_PROMPT
-    if dropped > 0:
-        # Said out loud rather than trimmed silently: synthesis is instructed to cite
-        # from this list, and it should know the list is not the whole harvest.
-        lines.append(f"(+{dropped} further sources gathered, not listed here)")
-    return "\n".join(lines)
+    return "\n".join(
+        f"[{i}] {c.get('title') or c.get('url')} -> {c.get('url')}"
+        for i, c in enumerate(citations, 1)
+    )
 
 
 def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
@@ -608,7 +603,6 @@ class TraceOrchestrator:
             req.title,
             context=req.context,
             max_depth=req.max_depth,
-            max_sources_per_stage=req.max_sources_per_stage,
             language=req.language,
         )
 
@@ -619,7 +613,6 @@ class TraceOrchestrator:
             progress(100, "Loaded from cache")
             return TraceResponse(**cached)
 
-        max_sources = req.max_sources_per_stage or self.settings.chrono_max_sources_per_stage
 
         all_mentions: List[Dict[str, Any]] = []
         all_citations: Dict[str, Dict[str, str]] = {}
@@ -661,8 +654,15 @@ class TraceOrchestrator:
             queries_run.extend(answer.queries or [])
         iterations = 1
 
+        # Every source, not the first eight. This was a plain slice in ARRIVAL order,
+        # taken before anything had been tiered, so which sources survived was luck:
+        # one trace kept the Israel Museum's Dead Sea Scrolls collection because it
+        # happened to land seventh, and would have dropped it at ninth, leaving the
+        # trace resting on a blog, a Medium post and a Quora thread. A research call
+        # returns 15-33 citations; discarding two thirds of them unread is not a
+        # budget, it is a coin toss over the evidence.
         for answer in answers:
-            for c in (answer.citations or [])[:max_sources]:
+            for c in (answer.citations or []):
                 url = c.get("url") if isinstance(c, dict) else None
                 if url and url not in all_citations:
                     all_citations[url] = c
@@ -856,7 +856,6 @@ class TraceOrchestrator:
         citations: List[Dict[str, Any]],
         tier_for: Callable[[str], str],
         queries_run: List[str],
-        max_sources: int,
     ) -> Dict[str, Any]:
         """Find what the weakly-sourced claims actually rest on.
 
@@ -920,7 +919,7 @@ class TraceOrchestrator:
         for answer in answers:
             if answer.text:
                 notes.append(answer.text)
-            for c in answer.citations[:max_sources]:
+            for c in answer.citations:
                 url = c.get("url") or ""
                 if url and url not in found_citations:
                     found_citations[url] = c
