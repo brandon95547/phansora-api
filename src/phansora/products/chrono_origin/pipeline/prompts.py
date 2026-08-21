@@ -88,174 +88,78 @@ metadata · 4 institutional write-ups (university, museum, agency pages ABOUT so
 Tiers 4-5 are leads, never the basis of a claim. When a mention rests only on them, say so and
 name what THEY cite so it can be chased. Never fill an unknown with a plausible guess.
 """
-
-
 # ---------------------------------------------------------------------------
-# The research pass. One call, and the model does its own searching.
+# The research pass. One grounded call; the model runs its own searches.
 #
-# There used to be seven, one per evidence "strand", each a fixed template fired
-# blind. That existed because the model could not search: the queries had to be
-# guessed in advance, and one per category was the only way to guarantee coverage.
-# It also broke the chain — six of the seven asked what survives ABOUT the subject
-# and one asked what its evidence DESCENDS FROM, so the half that decides where a
-# chain STARTS was outvoted six to one. A trace of Jesus opened at the Dead Sea
-# Scrolls and lost the four centuries of scripture the Scrolls are copies of.
+# Two things in here were measured rather than reasoned about, and both matter
+# more than they look.
 #
-# This prompt is the user's own text, kept verbatim. It replaces the prescribed
-# evidence categories with a rule that the SUBJECT decides which kinds of evidence
-# are relevant — a fixed list is the same mistake the fan-out made, one level down.
-# `{context_clause}` rides along with the term so a search can still be
-# disambiguated ("Mercury" the planet from "Mercury" the god); nothing else was
-# added, and the SEARCH_DOCTRINE block that used to sit here is gone with it.
+# The quoted QUESTION. Asked as an instruction ("trace backward from the earliest
+# evidence"), the model reached the material a subject descends from in 2 runs of
+# 15. Asked as a question it can search verbatim, 13 of 13. In a grounded call the
+# model's whole job is turning intent into queries, and a question is already
+# query-shaped where a described goal is not.
+#
+# The sentence about copies. Without it the model traces a text's OWN transmission
+# — this manuscript from that archetype from a lost autograph — which looks like
+# going backward and is not. "Copy" and "translate" both read as scribal descent,
+# so the different-older-work reading has to be said explicitly.
+#
+# The enumerated list drives search COUNT: queries track the number of separately
+# findable things asked for, so six named categories buy roughly six searches where
+# one sweeping request buys two. "At least eight" moves it further; "multiple" is
+# unfalsifiable and gets satisfied with three.
+#
+# `{context_clause}` carries the dashboard's context box, so "Mercury" the planet
+# stays distinct from "Mercury" the god.
+#
+# To iterate on this, do not edit here and deploy. Use the lab:
+#   python -m phansora.products.chrono_origin.prompt_lab "Jesus Christ" -n 5 --shipped
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Research the identifiable historical evidence for "{title}"{context_clause} using live web search.
+Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from
+memory. Every item must come from a search you actually ran.
 
-Web search is required. Do not answer this task from model knowledge alone.
+Work backward first, then present forward.
 
-Before constructing the timeline, perform multiple web searches using different queries and consult multiple independent sources. Follow relevant results to their underlying repositories, manuscript catalogs, museums, archives, academic publications, critical editions, excavation reports, or other primary documentation whenever available.
+Find the earliest surviving evidence directly about "{title}". Then answer this by searching:
 
-Do not construct the final timeline until the web research is complete.
+  "What older, already-existing thing does that evidence draw on — quoting it, citing it,
+   translating it, copying its text, depicting it, or being built from it?"
 
-BEGIN BY ANSWERING THIS QUESTION, BY SEARCHING. Do this before anything else.
+Find the oldest surviving evidence of THAT older thing: what it is, its date, and the
+institution holding it. Then ask the same question of what you just found, and again, until
+a search genuinely returns nothing older.
 
-"What older, already-existing thing does the earliest evidence about "{title}" draw on —
-quoting it, citing it, translating it, depicting it, building on it, or deriving from it?"
+Drawing on a different, older thing is a step back. A later copy, edition or reissue of the
+SAME thing is not — a work and its copies are one lineage, and the work is the older entry.
 
-Search for that. Then search for the oldest surviving evidence of THAT older thing — what it
-is, its date, and the institution holding or publishing it. Then ask the same question again
-of what you just found, and keep going while the evidence supports another step.
+Run at least eight separate searches with different queries. Cover each of these, and say so
+when one is empty:
 
-Drawing on a different, older thing is a step backward. A later copy, reprint, reissue or
-reproduction of the SAME thing is not — that is one item, however many copies exist.
+- the earliest surviving texts or records about the subject, with composition dates
+- the physical objects carrying them: shelfmark, repository, date
+- the older works those texts quote, translate, or are built from
+- the oldest surviving witnesses of those older works
+- sources from outside the subject's own tradition
+- inscriptions, artifacts, excavated finds, instruments, registers
 
-
-Build a chronological evidence trace showing both the evidence directly concerning "{title}" and the earlier identifiable evidence that later sources demonstrably use.
-
-Earlier evidence may be included even when it does not mention "{title}".
-
-An earlier item belongs in the origin chain when a later piece of evidence demonstrably:
-
-quotes it
-
-cites it
-
-copies it
-
-translates it
-
-uses its text
-
-preserves the same work
-
-incorporates material from it
-
-or has another direct source-to-source relationship with it.
-
-Do not include earlier evidence merely because it confirms a person, ruler, place, dynasty, culture, event, or historical setting mentioned by later sources.
-
-Historical corroboration is valuable, but it is different from origin evidence.
-
-Treat written evidence as evidence. Manuscripts, scrolls, papyri, codices, letters, translations, fragments, inscriptions, books, records, objects, archaeological finds, and other identifiable historical materials can qualify.
-
-For written works, distinguish between:
-
-the estimated date the work was originally composed
-
-the date of the earliest surviving witness
-
-the specific surviving manuscript or artifact when known
-
-Follow direct source-to-source relationships as far as the evidence supports them.
-
-If a source uses an earlier translation, investigate that translation using web search.
-
-If that translation derives from an earlier textual work, investigate surviving evidence for that work using web search.
-
-Continue following the documented source chain until the evidence no longer supports another connection.
-
-Then include direct and independent evidence concerning "{title}" and later surviving witnesses that materially strengthen the evidence chain.
-
-Do not create nodes from beliefs, expectations, traditions, theories, general cultural context, or historical assumptions.
-
-Do not create a connection merely because two things are historically related or chronologically close.
-
-Every connection must explain exactly how one piece of evidence connects to another.
-
-Every node must add new evidence to the timeline.
-
-Do not repeat the same evidence in different forms.
-
-Do not fill gaps with assumptions.
-
-If a connection cannot be established, say so.
-
-WEB RESEARCH REQUIREMENTS
-
-Perform multiple separate web searches using different search queries.
-
-Consult multiple independent web sources.
-
-Do not consider the research complete after finding one source or one search result.
-
-Open and evaluate the underlying sources rather than relying only on search-result summaries.
-
-Prefer the institution that holds, catalogs, published, excavated, or directly documents the evidence whenever possible.
-
-Prefer primary sources, manuscript repositories, museums, libraries, archives, archaeological publications, critical editions, peer-reviewed research, and other authoritative sources.
-
-Do not rely on Wikipedia, blogs, forums, social media, general reference sites, or AI-generated summaries when stronger underlying sources are available.
-
-When one website cites another source for an important claim, follow that citation and investigate the underlying source whenever possible.
-
-When multiple websites repeat information originating from the same underlying source, treat them as one source rather than independent confirmation.
-
-Where possible, verify important claims using more than one independent source.
-
-For every timeline node, provide the web source or sources actually consulted to establish it.
-
-If reliable sources disagree, state the disagreement.
-
-Do not claim that something was verified unless the supporting web source was actually opened and consulted during this research.
-
-After completing the web research, arrange all qualifying evidence chronologically from oldest to newest.
-
-The timeline should begin with the oldest identifiable evidence reached through the documented source chain, not simply the earliest evidence that directly mentions "{title}".
-
-For each node provide:
+Then present everything forward in date order. For each item:
 
 Date
+Evidence — what it is
+Source — where our knowledge of it comes from
+Original vs surviving — composition date and oldest surviving witness, when different
+Connection — what evidence links this item to the next
+Establishes — what it actually shows
+Uncertain — what is estimated, disputed, or unknown
+Consulted — the pages you actually opened
 
-Evidence
+Keep interpretation out of the chain. Ideas, traditions, influences and developments are not
+items — put them in a NOTES section after the chain and say which items they rest on.
 
-What it is
-
-Original composition or creation date when applicable
-
-Earliest surviving evidence when different
-
-Connection to the trace
-
-What it establishes
-
-What remains uncertain or disputed
-
-Sources actually consulted
-
-At the end, provide a WEB RESEARCH SUMMARY stating:
-
-How many separate web searches were performed
-
-Which major repositories, institutions, primary sources, or academic sources were actually consulted
-
-Which claims were supported by multiple independent sources
-
-Which claims could not be independently verified
-
-The goal is to produce the strongest documented evidence chain leading into the earliest evidence concerning "{title}", followed by the evidence concerning "{title}" itself and its later surviving witnesses.
-
-The final timeline must be based on the web research performed for this task, not solely on existing model knowledge.
+Where the evidence stops, say so. Never fill a gap.
 """
 
 
