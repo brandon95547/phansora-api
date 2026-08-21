@@ -55,10 +55,6 @@ class Settings(BaseSettings):
     # costs no tokens, so it stays on. The search half only fires for claims that
     # are still resting on a lead after the rounds finish, which on a
     # well-sourced subject is none of them.
-    chrono_chase_enabled: bool = True
-    chrono_chase_mine_pages: int = 2
-    chrono_chase_max_targets: int = 3
-    chrono_chase_max_queries: int = 3
 
     # Ceiling on evaluated edges. Well past what a readable timeline needs — it
     # exists to stop a model emitting an edge for every pair of events.

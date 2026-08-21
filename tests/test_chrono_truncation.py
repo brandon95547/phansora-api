@@ -14,7 +14,6 @@ import json
 import pytest
 
 from phansora.shared.ai import deepseek_research as dr
-from phansora.products.chrono_origin.pipeline.orchestrator import _as_queries
 
 
 # ── the parser ──────────────────────────────────────────────────────────────
@@ -93,32 +92,7 @@ def test_the_escalation_has_a_ceiling():
 
 # ── the query shapes ────────────────────────────────────────────────────────
 
-def test_plain_strings_pass_through():
-    assert _as_queries(["earliest manuscript", "provenance"]) == ["earliest manuscript", "provenance"]
 
 
-def test_tiered_objects_are_accepted():
-    """The shape that killed a trace at 97%, 'Building response'.
-
-    The decompose prompt asks for queries allocated across the source hierarchy, and the
-    model sometimes answers with {tier, query} objects. Both are fair readings, so both
-    are accepted — TraceResponse.queries_run is List[str] and used to reject the second.
-    """
-    got = _as_queries([
-        {"tier": 1, "query": "Codex Sinaiticus provenance dating"},
-        {"tier": 2, "query": "academic consensus disagreement"},
-    ])
-    assert got == ["Codex Sinaiticus provenance dating", "academic consensus disagreement"]
 
 
-def test_mixed_shapes_in_one_list():
-    assert _as_queries(["plain", {"tier": 3, "query": "tiered"}]) == ["plain", "tiered"]
-
-
-def test_unusable_entries_are_dropped_not_searched():
-    assert _as_queries([{"tier": 1}, "", "  ", None, 42, {"query": "  keep  "}]) == ["keep"]
-
-
-def test_missing_or_empty_input():
-    assert _as_queries(None) == []
-    assert _as_queries([]) == []

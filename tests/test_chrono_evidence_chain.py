@@ -87,7 +87,6 @@ def test_model_conclusions_are_kept_with_their_support():
                 "dissent": "None identified",
             }
         ],
-        [],
         valid_ids={"origin", "t4"},
     )
     assert len(out) == 1
@@ -99,7 +98,6 @@ def test_support_pointing_at_a_step_that_does_not_exist_is_dropped():
     """A conclusion citing a step that was never emitted reads as supported when it is not."""
     out = orch._build_conclusions(
         [{"statement": "A claim.", "rests_on": ["t9", "origin"]}],
-        [],
         valid_ids={"origin", "t1"},
     )
     assert out[0].rests_on == ["origin"]
@@ -108,79 +106,20 @@ def test_support_pointing_at_a_step_that_does_not_exist_is_dropped():
 def test_a_conclusion_resting_on_nothing_survives_rather_than_being_dropped():
     """Unsupported is a finding, not a reason to hide it — that is the product's whole job."""
     out = orch._build_conclusions(
-        [{"statement": "Widely held, unevidenced here."}], [], valid_ids={"origin"}
+        [{"statement": "Widely held, unevidenced here."}], valid_ids={"origin"}
     )
     assert len(out) == 1
     assert out[0].rests_on == []
 
 
-def test_a_demoted_step_becomes_a_conclusion_not_a_deletion():
-    """The brief's example: an interpretation offered as a step.
-
-    It must survive the demotion — silently dropping it would hide a claim the model
-    actually made — and it must land marked as resting on nothing.
-    """
-    out = orch._build_conclusions(
-        None,
-        [
-            {
-                "node_type": "context",
-                "claim": "Messianic expectation was widespread in first-century Judaea.",
-                "source_title": "Messianic expectation",
-            }
-        ],
-        valid_ids={"origin"},
-    )
-    assert len(out) == 1
-    assert "Messianic expectation was widespread" in out[0].statement
-    assert out[0].rests_on == []
-    assert out[0].confidence_label == "speculative"
-    assert "not a surviving object" in out[0].reasoning
-
-
-def test_demoted_steps_follow_the_models_own_conclusions():
-    out = orch._build_conclusions(
-        [{"statement": "A stated conclusion."}],
-        [{"node_type": "event", "claim": "An inferred happening."}],
-        valid_ids={"origin"},
-    )
-    assert [c.statement for c in out] == ["A stated conclusion.", "An inferred happening."]
 
 
 def test_junk_conclusions_are_skipped():
     out = orch._build_conclusions(
-        ["not a dict", {"statement": "   "}, {"no_statement": 1}], [], valid_ids=set()
+        ["not a dict", {"statement": "   "}, {"no_statement": 1}], valid_ids=set()
     )
     assert out == []
 
-
-def test_a_demoted_step_with_no_words_is_skipped():
-    out = orch._build_conclusions(None, [{"node_type": "context"}], valid_ids=set())
-    assert out == []
-def test_the_strand_fan_out_is_gone():
-    """A leftover table would be a second, silent place that decides coverage."""
-    for name in ("_STRANDS", "_STRAND_QUERIES", "_NODE_TYPE_STRAND", "_strand_queries",
-                 "_as_strands", "_strands_covered", "_open_strands", "_format_strands_block"):
-        assert not hasattr(orch, name), f"{name} survived the fan-out removal"
-
-
-# ------------------------------------------------- prompt size is bounded
-# Nothing the research call finds is discarded on its way to synthesis.
-#
-# Two ceilings used to stand here, both written for a pipeline that ran three rounds
-# of six searches and could arrive with ~144 URLs. There are no rounds and no fan-out;
-# one research call returns a bounded 15-33 sources. Meanwhile the gather stage was
-# keeping only the first EIGHT in arrival order, before anything had been tiered — so
-# whether a trace rested on a museum catalogue or on a Quora thread came down to where
-# each happened to land in the list.
-def test_every_gathered_source_reaches_synthesis():
-    """Synthesis is told to cite from this list. Anything missing is a source no
-    claim in the trace can be attributed to."""
-    cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
-    block = orch._format_citations_block(cites)
-    listed = [ln for ln in block.split("\n") if ln.startswith("[")]
-    assert len(listed) == 300
-    assert "https://e.org/299" in block
 
 
 def test_the_citation_list_is_never_silently_trimmed():
@@ -200,66 +139,8 @@ def test_a_short_citation_list_is_untouched():
     assert "https://e.org/1" in block
 
 
-def test_mentions_are_capped_too():
-    mentions = [{"node_type": "text", "source_title": f"T{i}", "claim": "c"} for i in range(400)]
-    lines = [ln for ln in orch._format_mentions_block(mentions).split("\n") if ln.startswith("- ")]
-    assert len(lines) == orch.MAX_MENTIONS_IN_PROMPT
 
 
-def test_evidence_survives_the_cut_before_interpretation_does():
-    """The cut must not drop a manuscript to make room for an inferred development.
-
-    Only surviving objects can become chain steps, so when the block is trimmed the
-    mentions still eligible to be steps are the ones that have to survive.
-    """
-    filler = [
-        {"node_type": "context", "source_title": f"Interpretation {i}", "claim": "c"}
-        for i in range(orch.MAX_MENTIONS_IN_PROMPT + 50)
-    ]
-    real = {"node_type": "manuscript", "source_title": "Codex Sinaiticus", "claim": "c"}
-    # Arrives last, and would fall off the end of an arrival-ordered trim.
-    block = orch._format_mentions_block(filler + [real])
-    assert "Codex Sinaiticus" in block
-
-
-def test_the_extractors_is_evidence_flag_also_counts_as_evidence():
-    filler = [
-        {"node_type": "context", "source_title": f"X{i}", "claim": "c"}
-        for i in range(orch.MAX_MENTIONS_IN_PROMPT + 10)
-    ]
-    flagged = {"node_type": "unrecognised", "is_evidence": True,
-               "source_title": "An excavation report", "claim": "c"}
-    assert "An excavation report" in orch._format_mentions_block(filler + [flagged])
-
-
-def test_mentions_keep_their_research_order_within_a_group():
-    """Stable sort: prioritising evidence must not shuffle the rounds' own ordering."""
-    mentions = [
-        {"node_type": "text", "source_title": "First", "claim": "c"},
-        {"node_type": "text", "source_title": "Second", "claim": "c"},
-        {"node_type": "text", "source_title": "Third", "claim": "c"},
-    ]
-    block = orch._format_mentions_block(mentions)
-    assert block.index("First") < block.index("Second") < block.index("Third")
-
-
-# ------------------------------------------------ search concurrency gate
-# The external search stack is only reached by the deepseek provider now; gemini and
-# openai models search for themselves. It is still gated, because the callers multiply:
-# six query workers times their derived queries reaches twelve simultaneous requests.
-def test_no_keyless_backend_survives():
-    """DuckDuckGo is gone, and nothing keyless replaced it.
-
-    It answered 202 when throttled, which arrives as an empty result list — identical
-    to a search that genuinely found nothing. So a throttled trace reported "no evidence
-    found" for subjects with abundant surviving evidence. A backend that fails silently
-    is worse than no backend: with none configured, the caller can at least say so.
-    """
-    from phansora.shared.ai import search as S
-
-    assert "duckduckgo" not in S._DEFAULT_CONCURRENCY
-    assert not hasattr(S, "_duckduckgo")
-    assert set(S._DEFAULT_CONCURRENCY) == {"brave", "searxng"}
 
 
 def test_an_unconfigured_search_is_reported_not_guessed(monkeypatch, caplog):
@@ -343,16 +224,6 @@ def test_the_limit_is_overridable_for_a_backend_that_can_take_it(monkeypatch):
     S._semaphores.clear()
 
 
-# ------------------------------------------------- the prompt states the rule
-def test_the_prompt_says_where_a_chain_starts():
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    s = P.SYNTHESIZE_PROMPT
-    assert "WHERE THE CHAIN STARTS" in s
-    # The distinction that failed: descent, not aboutness.
-    assert "does NOT start at the earliest evidence ABOUT the subject" in s
-    assert "DOCUMENTARY, not thematic" in s
-
 
 def test_the_research_prompt_does_not_call_descent_background_only():
     """That phrase belonged to the deleted `context` node type.
@@ -377,33 +248,6 @@ def test_a_search_can_still_be_disambiguated():
     assert '"Mercury" (the planet)' in out
 
 
-# --------------------------------------------- provenance is not admissibility
-# A real trace opened at the Testimonium Flavianum (c. 93 CE), skipping Paul
-# (~50-60) and Mark (~70) — both surviving texts, both earlier. One instinct
-# explains all of it: the model silently answered "earliest attestation from
-# OUTSIDE the movement". That is a legitimate question and not the one asked, and
-# nothing in the prompt had ruled it out.
-def test_the_prompt_says_an_insider_source_is_still_a_step():
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    s = P.SYNTHESIZE_PROMPT
-    assert "WHO WROTE IT DOES NOT DECIDE WHETHER IT IS A STEP" in s
-    # Independence is recorded, never used to exclude.
-    assert "never used to keep a document out of the" in s
-    # The failure named explicitly, so it cannot be re-derived as a good idea.
-    assert "outside the movement" in s.lower()
-
-
-def test_the_prompt_refuses_to_let_a_disputed_passage_outrank_an_earlier_sound_one():
-    """The trace picked the interpolated Josephus passage over earlier, sounder texts."""
-    import re
-
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    # Whitespace-normalised: the prompt is hard-wrapped, so any sentence long enough
-    # to be worth pinning is guaranteed to straddle a line break.
-    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
-    assert "never a reason to promote a compromised source above an earlier sound one" in flat
 
 
 def test_independence_stays_a_dossier_field_not_a_gate():
@@ -416,58 +260,8 @@ def test_independence_stays_a_dossier_field_not_a_gate():
     )
 
 
-# ------------------------------------------------------ every step is dated
-# A live trace put the Hebrew scriptures at the head of the chain with year=null,
-# so the first step a reader could see a date on was 50 CE and the trace looked
-# like it began five centuries late. A chain is an order; an undated object has no
-# position in one.
-def test_an_undated_step_is_not_a_step():
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    s = P.SYNTHESIZE_PROMPT
-    assert "EVERY STEP CARRIES A DATE" in s
-    assert "an undated object has" in s
 
 
-def test_the_prompt_refuses_to_let_works_be_lumped():
-    """"New Testament writings (Gospels, Epistles), 50-100" is two steps in one label."""
-    import re
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
-    assert "ONE WORK PER STEP WHEN THE DATES DIFFER" in flat
-    assert "Group only what was genuinely produced and dated as a unit" in flat
-
-
-def test_the_descent_test_covers_the_real_but_unrelated_find():
-    """A 4th-century church is real evidence, and nothing in the chain descends from it."""
-    import re
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
-    assert "NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM" in flat
-
-
-# --------------------------------------- the witness implies what it witnesses
-# A live chain listed the Dead Sea Scrolls but not the scriptures they preserve —
-# the witness kept, the witnessed dropped, which is the older half and the half the
-# later steps quote.
-def test_a_surviving_copy_implies_the_work_it_copies():
-    import re
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
-    assert "A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS" in flat
-    assert "the work at its composition date, the copy at the date of the object" in flat
-
-
-def test_there_are_exactly_two_ways_into_the_chain():
-    """Evidence that only helps DATE something is chronology, not descent."""
-    import re
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    flat = re.sub(r"\s+", " ", P.SYNTHESIZE_PROMPT)
-    assert "A STEP IS EITHER ABOUT THE SUBJECT OR DESCENDED FROM" in flat
 
 
 def test_the_reasoning_budget_starts_where_the_work_lands():
@@ -672,20 +466,6 @@ def test_a_boolean_is_not_read_as_a_year():
     assert orch._as_year(False) is None
 
 
-def test_an_undated_step_is_not_told_it_is_not_an_object():
-    """The two demotions have different causes and need different words.
-
-    Telling a reader a manuscript "is not a surviving object" because its year field
-    was missing is a false statement about the evidence itself.
-    """
-    out = orch._build_conclusions(
-        [], [], valid_ids=set(),
-        undated=[{"source_title": "Hebrew scriptures", "claim": "A corpus reaching its form by c. 400 BC."}],
-    )
-    assert len(out) == 1
-    assert "not a surviving object" not in out[0].reasoning
-    assert "no date" in out[0].reasoning
-
 
 def test_a_chain_that_starts_at_a_copy_says_so(caplog):
     """The rule is in the prompt and nothing checked it.
@@ -762,22 +542,6 @@ def test_no_prompt_is_written_around_one_subject():
     assert not offenders, "a subject leaked into the prompts:\n  " + "\n  ".join(offenders)
 
 
-def test_the_shape_is_still_taught_as_roles():
-    """Removing the example must not remove the lesson.
-
-    The ordering it demonstrated — what the sources are made of, then the copies
-    carrying it, then the earliest record of the subject, then independent records —
-    is the whole reason a chain starts where it does.
-    """
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    body = P.SYNTHESIZE_PROMPT
-    assert "The SHAPE of a chain, schematically" in body
-    assert "the older body of work the subject's own sources are made out of" in body
-    assert "records from outside that circle" in body
-    # And it must say the roles are optional, or a subject without one invents it.
-    assert "drop the ones it does not" in body
-
 
 def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     """Forty sources found, forty on the trace.
@@ -809,11 +573,9 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "read_best", lambda *a, **k: [])
-    monkeypatch.setattr(orch, "mine_references", lambda *a, **k: [])
 
     client = Client()
     o = orch.TraceOrchestrator(client=client)
-    o.settings = o.settings.model_copy(update={"chrono_chase_enabled": False})
     result = o.run(TraceRequest(title="Jesus Christ"))
 
     assert len(result.citations) == 40, "sources were dropped between search and response"

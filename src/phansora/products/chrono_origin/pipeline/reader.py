@@ -178,41 +178,6 @@ def parse_references(html: str) -> List[Dict[str, str]]:
     return out
 
 
-def mine_references(urls: List[str], *, max_workers: int = 2) -> List[Dict[str, str]]:
-    """Fetch lead pages and return the union of their reference links.
-
-    Never raises, never returns page prose, and costs no tokens — the whole pass
-    is two HTTP fetches and a regex.
-    """
-    targets = [u for u in dict.fromkeys(urls or []) if u]
-    if not targets:
-        return []
-
-    def one(url: str) -> List[Dict[str, str]]:
-        try:
-            html = fetch_text(url, timeout=FETCH_TIMEOUT_S, max_bytes=MAX_BYTES)
-        except Exception as exc:  # noqa: BLE001 - a lead we cannot open is just a dead lead
-            logger.debug("Reference mining failed on %s: %s", url, exc)
-            return []
-        refs = parse_references(html)
-        for r in refs:
-            r["found_on"] = url
-        return refs
-
-    workers = max(1, min(max_workers, len(targets)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        harvested = list(pool.map(one, targets))
-
-    out: List[Dict[str, str]] = []
-    seen: set = set()
-    for group in harvested:
-        for r in group:
-            if r["url"] in seen:
-                continue
-            seen.add(r["url"])
-            out.append(r)
-    return out
-
 
 def read_pages(
     urls: List[str],

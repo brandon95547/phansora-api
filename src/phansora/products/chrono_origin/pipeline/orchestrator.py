@@ -52,17 +52,14 @@ from . import source_policy as sp
 from .prompts import (
     RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
+    EXTRACT_DOCTRINE,
     EXPAND_SEARCH_PROMPT,
     expand_mode,
     format_existing_block,
-    CHASE_SEARCH_PROMPT,
-    EXTRACT_DOCTRINE,
-    EXTRACT_PROMPT,
     SEARCH_DOCTRINE,
-    SOURCE_HIERARCHY,
     SYNTHESIZE_PROMPT,
 )
-from .reader import PageRead, format_reads_block, mine_references, read_best
+from .reader import PageRead, format_reads_block, read_best
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +128,16 @@ def _sort_key(year: Optional[int], year_end: Optional[int]):
     return (start is None, start if start is not None else 0)
 
 
+def is_node_kind(value: Any) -> bool:
+    """Is this one of the labels TimelineEvent.node_type will accept?
+
+    A label for display, not a test an item has to pass. It matters only because
+    node_type is a pydantic Literal: an unrecognised string raises, and one odd label
+    would take a whole trace down rather than costing one entry its icon.
+    """
+    return value in _EVIDENCE_KINDS or value == "event"
+
+
 def is_evidence_kind(value: Any) -> bool:
     """Is this step a surviving object, i.e. allowed in the chain at all?
 
@@ -188,28 +195,13 @@ def _warn_if_copy_without_work(origin: Any, timeline: List[Any]) -> None:
     )
 
 
-def _build_conclusions(
-    raw: Any,
-    demoted: List[Dict[str, Any]],
-    *,
-    valid_ids: set,
-    undated: Optional[List[Dict[str, Any]]] = None,
-) -> List[Conclusion]:
+def _build_conclusions(raw: Any, *, valid_ids: set) -> List[Conclusion]:
     """The readings of the evidence, stated after it.
 
-    Two sources feed this. The model's own "conclusions", and any step it offered that
-    was not a surviving object — those are demoted here rather than deleted, because a
-    silent drop would hide a claim the model actually made, and the whole point of this
-    product is that a reader can see what rests on what.
-
-    A demoted step keeps its own words as the statement and declares that nothing in the
-    chain supports it, which is the honest reading: it was offered as evidence, and it
-    was not evidence.
-
-    ``undated`` is the other way a step falls out, and it needs its own wording. Those
-    ARE surviving objects; they simply arrived without a date, and a chain is an order.
-    Telling a reader that a manuscript "is not a surviving object" because its year was
-    missing is a false statement about the evidence.
+    Only the model's own conclusions now. Steps used to be demoted in here — anything
+    that was not a "surviving object", and anything undated — which was the code half
+    of a judgement the synthesis prompt was also making in prose. Both are gone; what
+    research finds goes on the timeline.
     """
     out: List[Conclusion] = []
 
@@ -230,46 +222,6 @@ def _build_conclusions(
                 confidence_label=label if label in _VALID_CONFIDENCE else "moderate",
                 reasoning=str(item.get("reasoning") or "").strip(),
                 dissent=str(item.get("dissent") or "").strip() or "None identified",
-            )
-        )
-
-    for entry in demoted:
-        statement = str(entry.get("claim") or entry.get("source_title") or "").strip()
-        if not statement:
-            continue
-        kind = str(entry.get("node_type") or "unspecified")
-        out.append(
-            Conclusion(
-                statement=statement,
-                rests_on=[],
-                confidence_label="speculative",
-                reasoning=(
-                    f"Offered as a step in the chain (as \"{kind}\"), but it is not a surviving "
-                    "object that can be examined, so it is recorded here as a reading of the "
-                    "evidence rather than as evidence."
-                ),
-                dissent="None identified",
-            )
-        )
-
-    for entry in (undated or []):
-        statement = str(entry.get("claim") or entry.get("source_title") or "").strip()
-        if not statement:
-            continue
-        title = str(entry.get("source_title") or "").strip()
-        named = f" ({title})" if title and title not in statement else ""
-        out.append(
-            Conclusion(
-                statement=statement,
-                rests_on=[],
-                confidence_label="low",
-                reasoning=(
-                    f"Offered as a step in the chain{named} and it may well be a surviving "
-                    "object, but it arrived with no date the chain could place it by. A chain "
-                    "is an order, so it is recorded here rather than given a position it has "
-                    "not earned."
-                ),
-                dissent="None identified",
             )
         )
 
@@ -442,28 +394,6 @@ def _coerce_connection_evidence(
     )
 
 
-def _earliest_year(mentions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    dated = [m for m in mentions if isinstance(m.get("year"), int)]
-    if not dated:
-        return mentions[0] if mentions else None
-    return min(dated, key=lambda m: m["year"])
-
-
-def _describe_earliest(earliest: Optional[Dict[str, Any]]) -> str:
-    if not earliest:
-        return "(nothing established yet)"
-    year = earliest.get("year")
-    when = f"{year}" if isinstance(year, int) else (earliest.get("era_label") or "unknown")
-    return f"{when} — {earliest.get('source_title', '?')}: {earliest.get('claim', '')}"[:300]
-
-
-
-# A ceiling on the item list handed to synthesis. This block was unbounded: nothing in
-# the extract prompt limits how many mentions a round may return, and every round's
-# survive into the single reasoning call that carries 16-22k input tokens before any of
-# them are counted. 120 is well above what any real chain uses as steps.
-MAX_MENTIONS_IN_PROMPT = 120
-
 
 def _format_citations_block(citations: List[Dict[str, str]]) -> str:
     """Every source gathered, in full.
@@ -482,102 +412,6 @@ def _format_citations_block(citations: List[Dict[str, str]]) -> str:
     )
 
 
-def _format_mentions_block(mentions: List[Dict[str, Any]]) -> str:
-    """Everything the research rounds established about an item, for synthesis.
-
-    The extract stage types every mention — this is a text being composed, this
-    is a surviving copy of one, this is the calendar the dates were converted
-    into — and the loop measures its own coverage against those types. None of
-    it used to reach synthesis: this block sent the date, the title, the claim
-    and the tier, and dropped the type, the span and the provenance signals on
-    the floor.
-
-    The result was a trace that believed it had researched a subject's texts and
-    then published a report with no text in it. Coverage was measured on the
-    mentions and breadth was decided by a stage that had never been told what
-    kind of thing any of them were, so the loop would exit satisfied while the
-    report it produced was missing whole strands. Everything the extractor
-    established travels now.
-    """
-    if not mentions:
-        return "(none)"
-
-    # Evidence first, then everything else, then cut.
-    #
-    # Under the chain rule only surviving objects can become steps; anything else is
-    # demoted to a conclusion at build time. So when this block has to be trimmed, the
-    # mentions that can still become chain steps must be the ones that survive the cut —
-    # trimming in arrival order would drop a manuscript to make room for an inferred
-    # development that was never eligible to be a step.
-    #
-    # Sorting is stable, so within each group the research order is preserved.
-    ordered = sorted(
-        mentions,
-        key=lambda m: not (m.get("is_evidence") is True or is_evidence_kind(m.get("node_type"))),
-    )
-    shown = ordered[:MAX_MENTIONS_IN_PROMPT]
-    dropped = len(ordered) - len(shown)
-
-    lines = []
-    for m in shown:
-        year = m.get("year")
-        era = m.get("era_label")
-        when = f"{year}" if isinstance(year, int) else (era or "unknown")
-        end = m.get("year_end")
-        if isinstance(end, int) and end != year:
-            when = f"{when}..{end}"
-        line = (
-            f"- when={when} | precision={m.get('precision', 'unknown')} | "
-            f"type={m.get('node_type') or 'event'} | "
-            f"source={m.get('source_title', '?')} | claim={m.get('claim', '')} | "
-            f"cites={m.get('citations', [])} | tier={m.get('source_tier', 'unknown')}"
-        )
-        # Carry the evidence signals the extract stage picked up into synthesis, so
-        # the dossier is built from what was actually read rather than re-guessed.
-        if m.get("published"):
-            line += f" | source_published={m['published']}"
-        if m.get("surviving_copy"):
-            line += f" | earliest_surviving_copy={m['surviving_copy']}"
-        if m.get("discovery_only"):
-            line += " | LEAD_ONLY=this appears only on a tier 4-5 page"
-        if m.get("cites"):
-            line += f" | that_page_cites={m['cites']}"
-        if m.get("chain"):
-            line += f" | REPEATS={m['chain']}"
-        lines.append(line)
-    if dropped > 0:
-        lines.append(f"(+{dropped} further items gathered, the least evidence-like, not listed)")
-    return "\n".join(lines)
-
-
-
-
-def _as_queries(raw: Any) -> List[str]:
-    """A model's query list, however it chose to shape it.
-
-    The decompose prompt asks for queries "allocated across the hierarchy", and the model
-    answers that instruction two ways: sometimes a list of strings, sometimes a list of
-    {"tier": n, "query": "..."} objects. TraceResponse.queries_run is List[str], so the
-    object form failed Pydantic validation at the very END of a trace — after every search
-    and every model call had been paid for. Runs died at 97%, "Building response", with a
-    string_type error naming a dict.
-
-    Both shapes are legitimate readings of the prompt, so this accepts both rather than
-    trying to make the model more obedient. Anything with no usable query text is dropped:
-    a blank search is a wasted round, not a query.
-    """
-    out: List[str] = []
-    for item in raw or []:
-        if isinstance(item, str):
-            text = item.strip()
-        elif isinstance(item, dict):
-            # "query" is what the prompt names it; the others are what models reach for.
-            text = str(item.get("query") or item.get("q") or item.get("text") or "").strip()
-        else:
-            continue
-        if text:
-            out.append(text)
-    return out
 
 
 class TraceOrchestrator:
@@ -807,140 +641,6 @@ class TraceOrchestrator:
             usage.absorb(snap)
         return [answer for answer, _ in results]
 
-    def _extract(
-        self,
-        *,
-        title: str,
-        notes: str,
-        citations: List[Dict[str, str]],
-        earliest_known: str,
-        prior_queries: List[str],
-        max_queries: int,
-        pages_block: str = "",
-        open_strands: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        prompt = EXTRACT_PROMPT.format(
-            title=title,
-            notes=notes,
-            pages_block=pages_block,
-            citations_block=_format_citations_block(citations),
-            earliest_known=earliest_known,
-            max_queries=max_queries,
-            extract_doctrine=EXTRACT_DOCTRINE,
-            open_strands=", ".join(open_strands or []) or "(none — all planned strands covered)",
-            prior_queries="\n".join(f"- {q}" for q in prior_queries[-20:]) or "- (none yet)",
-        )
-        try:
-            # Use the light (non-reasoning) path: extracting dated mentions from the
-            # provided material is mechanical, not a reasoning task. Critically, on a
-            # reasoning model the heavy path burns its whole output-token budget on
-            # reasoning for large note prompts and returns EMPTY json ({} -> no
-            # mentions), which collapses the whole trace to "unknown". Low effort leaves
-            # room for the JSON output. (Verified: 15k-char prompt -> 0 mentions with
-            # reasoning, 7 with the light path.)
-            data = self.client.reason_json(prompt, use_reasoning_model=False)
-        except Exception as exc:
-            logger.warning("Extraction failed: %s", exc)
-            return {"mentions": [], "next_queries": [], "gaps": []}
-        return {
-            "mentions": data.get("mentions") or [],
-            "next_queries": data.get("next_queries") or [],
-            "gaps": data.get("gaps") or [],
-        }
-
-    def _chase(
-        self,
-        req: TraceRequest,
-        *,
-        mentions: List[Dict[str, Any]],
-        citations: List[Dict[str, Any]],
-        tier_for: Callable[[str], str],
-        queries_run: List[str],
-    ) -> Dict[str, Any]:
-        """Find what the weakly-sourced claims actually rest on.
-
-        Two passes, cheapest first, and the cheap one usually does the work.
-
-        Mining costs no tokens at all: open the lead pages the trace is leaning
-        on, take their reference lists, and hand the URLs to the ranker. A wiki's
-        footnotes are mostly JSTOR, DOIs, archives and university presses, so the
-        page that could never be evidence becomes the thing it was always
-        supposed to be — a way of finding evidence.
-
-        Only then, and only for claims still standing on nothing arguable, spend
-        a search naming the underlying work. Returns whatever it found; finding
-        nothing is a valid outcome and costs the trace nothing but the attempt.
-        """
-        found_citations: Dict[str, Dict[str, str]] = {}
-
-        # --- free pass: harvest the leads' own reference lists
-        lead_pages = ev.select_for_reference_mining(
-            citations, tier_for, limit=self.settings.chrono_chase_mine_pages
-        )
-        harvested = mine_references(lead_pages) if lead_pages else []
-        for ref in harvested:
-            url = ref.get("url") or ""
-            if url and url not in found_citations:
-                found_citations[url] = {"url": url, "title": ref.get("text") or ""}
-        if harvested:
-            logger.info(
-                "Mined %d references from %d lead pages", len(harvested), len(lead_pages)
-            )
-
-        # --- paid pass: ask what the weakest claims are actually built on
-        targets = ev.chase_targets(
-            mentions, tier_for, limit=self.settings.chrono_chase_max_targets
-        )
-        if not targets:
-            logger.info("No claims resting on leads; chase search skipped.")
-            return {"citations": found_citations, "mentions": []}
-
-        refs_block = "; ".join(
-            f"{r.get('text') or ''} <{r.get('url')}>" for r in harvested[:12]
-        ) or "(none harvested)"
-
-        prompts: List[str] = []
-        for m in targets[: self.settings.chrono_chase_max_queries]:
-            weak = next((u for u in (m.get("citations") or []) if u), "(unknown)")
-            prompts.append(
-                CHASE_SEARCH_PROMPT.format(
-                    title=req.title,
-                    claim=str(m.get("claim") or m.get("source_title") or "")[:300],
-                    weak_source=weak,
-                    cites=str(m.get("cites") or "(not stated)")[:200],
-                    references=refs_block[:1200],
-                    search_doctrine=SEARCH_DOCTRINE,
-                )
-            )
-
-        answers = self._search_prompts(prompts)
-        notes: List[str] = []
-        round_urls: List[str] = []
-        for answer in answers:
-            if answer.text:
-                notes.append(answer.text)
-            for c in answer.citations:
-                url = c.get("url") or ""
-                if url and url not in found_citations:
-                    found_citations[url] = c
-                if url:
-                    round_urls.append(url)
-
-        if not notes:
-            return {"citations": found_citations, "mentions": []}
-
-        usage.stage("extract")
-        extracted = self._extract(
-            title=req.title,
-            notes="\n\n".join(notes),
-            citations=[found_citations[u] for u in dict.fromkeys(round_urls) if u in found_citations],
-            earliest_known=_describe_earliest(_earliest_year(mentions)),
-            prior_queries=queries_run,
-            max_queries=0,  # the chase is the last word; it does not plan another round
-            open_strands=[],
-        )
-        return {"citations": found_citations, "mentions": extracted.get("mentions", [])}
-
     def _synthesize(
         self,
         *,
@@ -960,7 +660,6 @@ class TraceOrchestrator:
             mentions_block=corpus,
             citations_block=_format_citations_block(citations),
             pages_block=pages_block,
-            source_hierarchy=SOURCE_HIERARCHY,
             max_connections=self.settings.chrono_max_connections,
         )
         return self.client.reason_json(prompt, use_reasoning_model=True)
@@ -1073,7 +772,7 @@ class TraceOrchestrator:
             # typed as something non-surviving is defaulted to "text" rather than dropped,
             # because a trace with no origin has nothing to hang the chain from; the gate
             # below is what keeps the chain itself clean.
-            node_type=(origin_data.get("node_type") if is_evidence_kind(origin_data.get("node_type")) else "text"),
+            node_type=(origin_data.get("node_type") if is_node_kind(origin_data.get("node_type")) else "event"),
             attribution=_attribution(origin_data.get("attribution")),
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
@@ -1090,29 +789,19 @@ class TraceOrchestrator:
         )
 
         timeline: List[TimelineEvent] = []
-        # Steps the model offered that are not surviving objects. They are not thrown
-        # away — they become conclusions, stated after the chain, which is where a
-        # reading of the evidence belongs. Dropping them would hide that the model
-        # believes something the evidence does not show.
-        demoted: List[Dict[str, Any]] = []
-        undated: List[Dict[str, Any]] = []
+        # Nothing is demoted. Two gates used to stand here — one rejecting anything that
+        # was not one of nine "surviving object" kinds, one rejecting anything undated —
+        # and between them they enforced, in code, the same judgement the synthesis
+        # prompt was making in prose. Two stages adjudicating with differently worded
+        # rules meant they disagreed, and the code always won: research named the Hebrew
+        # scriptures in six runs out of six and no trace ever showed them, because a work
+        # is not an object you can name a shelfmark for.
+        #
+        # The judgement happens once now, in the research prompt, where the searching is.
+        # What comes back goes on the board.
         used_ids = {"origin"}
         for i, entry in enumerate(final.get("timeline") or []):
-            if not is_evidence_kind(entry.get("node_type")):
-                logger.info(
-                    "Demoted %r to a conclusion: %r is not a surviving object.",
-                    entry.get("source_title"), entry.get("node_type"),
-                )
-                demoted.append(entry)
-                continue
             year, year_end = _as_year(entry.get("year")), _as_year(entry.get("year_end"))
-            if year is None and year_end is None:
-                # A chain is an order. An object with no date has no place in one, and
-                # letting it in is what put an undated step at the head of the chain
-                # while the first thing a reader could see a date on was centuries later.
-                logger.info("Demoted %r to a conclusion: no usable date.", entry.get("source_title"))
-                undated.append(entry)
-                continue
             conf = float(entry.get("confidence", 0.5) or 0.5)
             # Ids come from the model so connections can reference them, but must
             # be unique and present — a duplicate id would silently reroute edges.
@@ -1134,7 +823,10 @@ class TraceOrchestrator:
                     era_label=entry.get("era_label"),
                     precision=entry.get("precision", "unknown"),
                     year_end=year_end,
-                    node_type=entry.get("node_type"),
+                    # A label, not a test. An unknown one becomes "event" rather than
+                    # raising — node_type is a Literal, so an odd label would otherwise
+                    # take the entire trace down with it.
+                    node_type=(entry.get("node_type") if is_node_kind(entry.get("node_type")) else "event"),
                     attribution=_attribution(entry.get("attribution")),
                     source_title=entry.get("source_title", "Unknown"),
                     claim=entry.get("claim", ""),
@@ -1169,7 +861,7 @@ class TraceOrchestrator:
         _warn_if_copy_without_work(origin, timeline)
 
         conclusions = _build_conclusions(
-            final.get("conclusions"), demoted, valid_ids=used_ids, undated=undated
+            final.get("conclusions"), valid_ids=used_ids
         )
 
 

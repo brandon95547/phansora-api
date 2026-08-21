@@ -74,12 +74,10 @@ def pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "read_best", lambda *a, **k: [])
-    monkeypatch.setattr(orch, "mine_references", lambda *a, **k: [])
     assert cache_mod.SCHEMA_VERSION  # imported for the same reason it is patched
 
     client = ScriptedClient()
     o = orch.TraceOrchestrator(client=client)
-    o.settings = o.settings.model_copy(update={"chrono_chase_enabled": False})
     return o, client
 
 
@@ -118,7 +116,7 @@ class TestTheExpensiveCallHappensOnce:
     def test_that_call_is_the_synthesis(self, pipeline):
         o, client = pipeline
         o.run(TraceRequest(title="Jesus Christ"))
-        assert client.json_calls[0].startswith("You are assembling the chain of evidence")
+        assert "Turn it into the JSON structure" in client.json_calls[0]
 
 
 class TestSynthesisIsHandedTheResearch:

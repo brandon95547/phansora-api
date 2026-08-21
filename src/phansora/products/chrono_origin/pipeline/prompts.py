@@ -136,276 +136,66 @@ items — put them in a NOTES section after the chain and say which items they r
 
 Where the evidence stops, say so. Never fill a gap.
 """
-
-EXTRACT_PROMPT = """\
-From the research material below, extract every distinct historical item relating to "{title}".
-
-An item does NOT have to be a dated event. A language shifting over four centuries, a title
-gradually acquiring a new meaning, a canon forming — these are items too, and dropping them
-because they lack a year is how a trace ends up a thin list of dates instead of a history. Give
-those a "year_end" and an era label instead of pretending they happened in one year.
-
-{extract_doctrine}
-
-Research notes:
----
-{notes}
----
-{pages_block}
-Available citations (use these URLs verbatim):
-{citations_block}
-
-Earliest mention established so far: {earliest_known}
-Strands still uncovered: {open_strands}
-
-Return JSON. AT MOST 12 MENTIONS — the best ones, not everything you can find. This is one
-round of several, and an unbounded list here overruns the output budget, gets cut off mid-JSON
-and is regenerated from scratch, which costs more time than the searches that produced it.
-
-{{
-  "mentions": [
-    {{
-      "year": <signed integer or null>,        // negative = BCE; the COMPOSITION date
-      "year_end": <signed integer or null>,    // set only when this SPANS a period
-      "era_label": <string or null>,           // use when year unknown
-      "precision": "exact|year|decade|century|millennium|era|unknown",
-      "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
-                    archaeological_find",   // what kind of SURVIVING thing this is
-      "is_evidence": <true only if this is a surviving object someone could go and examine;
-                      false for readings, developments, movements, expectations, inferred events>,
-      "source_title": <string>,                // manuscript / book / event / process name
-      "claim": <one sentence>,
-      "citations": [<url>, ...],
-      "confidence": <0..1>,
-      "source_tier": "primary|repository|academic|reference_index|institutional|press|
-                      low_authority|unknown",
-      "published": <string or null>,           // when THIS source was published, if stated
-      "discovery_only": <true when this appears only on a tier 4-5 page>,
-      "cites": <string or null>,               // what that page cites for it, if it says
-      "surviving_copy": <string or null>,      // oldest EXISTING copy + its date, if stated
-      "chain": <string or null>                // name the upstream source if this just repeats one
-    }}
-  ],
-  "next_queries": [<string>, ...],   // up to {max_queries}
-  "gaps": [<string>, ...]            // up to 3: what evidence is still missing
-}}
-
-Rules for "mentions":
-- Only include mentions actually supported by the material; never infer a source that is not there.
-- "year" is when the source was COMPOSED, or when the item is attested — never when the events a
-  text describes are said to have happened. If only a surviving copy's date is given, put that in
-  "surviving_copy" and leave "year" null unless composition is separately stated.
-- EXTRACT SURVIVING THINGS. A mention is worth recording when it names something that still
-  exists and can be examined: a text, a copy, an object, a find, a record. Set "is_evidence" true
-  for those. Where the material asserts something that is NOT a surviving object — a movement, an
-  expectation, a development, an event inferred rather than recorded — you may still record it,
-  but set "is_evidence" false. The report keeps those separate from the chain, so mislabelling
-  one as evidence is the most damaging error you can make here.
-- A text and its surviving copies are TWO mentions: the work as "text", the physical copy as
-  "manuscript" or "scroll" with its repository. Do not merge them, and never give the work the
-  copy's date.
-- NAME THE OBJECT SO IT CAN BE FOUND. Where the material gives a shelfmark, repository,
-  excavation report or critical edition, keep it — that is what makes the mention usable.
-- Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
-- Keep "surviving_copy", "cites" and "chain" under 15 words each.
-
-Rules for "next_queries" — what to search NEXT:
-- Cover the UNCOVERED STRANDS listed above first. A trace is finished when its strands are
-  covered, not when nothing older turns up.
-- Where a mention is marked "discovery_only", write a query hunting the source it cites, naming
-  that source as specifically as the material allows.
-- Also push backward: older predecessors, parallel traditions, source materials and oral
-  antecedents that predate the earliest mention above.
-- Favour queries likely to surface primary documents, named manuscripts with their holding
-  repositories, excavation reports and critical editions over general write-ups.
-- Include at least one aimed at INDEPENDENT corroboration from a different information chain,
-  and one aimed at scholarship DISPUTING the dating above.
-- Return an empty list if the evidence looks exhausted; do not pad it.
-- Never repeat any of these already-tried queries:
-{prior_queries}
-
-Return ONLY JSON.
-"""
-
-
 SYNTHESIZE_PROMPT = """\
-You are assembling the chain of evidence for "{title}".
+Below is research already gathered about "{title}". Turn it into the JSON structure at the
+end of this message.
 
-Items gathered across all research rounds (already deduplicated):
+Research material:
 {mentions_block}
 
 Available citations:
 {citations_block}
 {pages_block}
-{source_hierarchy}
+YOUR JOB IS TO FORMAT, NOT TO JUDGE.
 
-THE ONE RULE. A trace is a chain of SURVIVING EVIDENCE, in the order it was produced. Every
-step is a thing that still exists and can be examined: a text, a manuscript, a scroll, a letter,
-an inscription, a document, a record, an object, an excavated find. At each step you are
-answering exactly one question:
+- ONE ENTRY PER ITEM the research reports. If it lists fifteen items, return fifteen.
+- Do NOT merge two items into one entry, even where they are usually named together.
+- Do NOT drop an item because it seems minor, uncertain, duplicated or hard to place.
+- Do NOT add an item the research did not report.
+- Keep its dates, its wording, its sources. Where it gives a composition date and a
+  separate surviving-copy date, keep both: the composition date goes in "year", the
+  copy goes in the dossier.
+- The oldest item becomes "origin". Everything after it goes in "timeline", oldest first.
+- Anything the research put under NOTES — ideas, traditions, influences, developments —
+  becomes a "conclusions" entry rather than a timeline entry.
+- Where the research says something is unknown, disputed or absent, carry that through
+  rather than resolving it.
 
-    WHAT IS THE NEXT SURVIVING PIECE OF EVIDENCE?
+"node_type" is a LABEL for display, not a test an item has to pass. Pick the closest:
 
-Nothing else is a step. Not a movement, not a mood, not an expectation, not a development, not a
-period, not a reconstruction, not an event you infer from a text rather than read in one. Those
-are readings OF evidence, and a reading placed in the chain inherits the authority of an
-artefact it has not earned. A reader who meets "a growing public appetite for reform" sitting
-between two dated objects has been shown a conclusion dressed as a find. Put it in "conclusions" instead, where it belongs
-and where it is still fully visible.
-
-The test for every step, applied without mercy: CAN SOMEONE GO AND LOOK AT IT? Name the holding
-institution, the shelfmark, the excavation report or the critical edition that publishes it. If
-you cannot name where the thing is or what publishes it, it is not a step in the chain.
-
-WHAT COUNTS AS A STEP — pick the "node_type" that says what kind of surviving thing it is:
-
-  "text"                — a work surviving through copies: a history, a treatise, a report
+  "text"                — a work known through copies: a history, a treatise, a report
   "manuscript"          — a specific physical copy: codex, papyrus, parchment leaf
-  "scroll"              — a rolled manuscript, where the find is dated and reported as such
-  "letter"              — correspondence, surviving as a text or as an object
-  "inscription"         — cut, carved, painted or stamped onto a durable surface
-  "document"            — a charter, deed, contract, decree or administrative instrument
+  "scroll"              — a rolled manuscript
+  "letter"              — correspondence
+  "inscription"         — cut or written on a durable surface
+  "document"            — an issued instrument: decree, charter, patent, filing
   "record"              — a register kept as a series: census, court, tax, parish
   "artifact"            — an object carrying evidence: coin, seal, ostracon, tablet
-  "archaeological_find" — an excavated site, structure or assemblage, as reported
+  "archaeological_find" — an excavated site, structure or assemblage
+  "event"               — anything the labels above do not fit
 
-The SHAPE of a chain, schematically — roles, not a particular subject, because the objects
-that fill these roles are completely different for a manuscript tradition, an aircraft, a
-patent, a disease, a company or a piece of software. Fill the roles this subject actually
-has and drop the ones it does not:
+Use "event" rather than dropping an item. Nothing is excluded for being the wrong shape.
 
-  the older body of work the subject's own sources are made out of        [earliest]
-      what the later steps quote, translate, continue, implement or are built on
-  the surviving copies or records that carry that older material
-      physical witnesses, usually much later than the thing they carry — and a
-      separate step from it, at the date of the OBJECT
-  the earliest surviving record of the subject itself
-      a step even when produced from inside the movement, company, agency or
-      institution it concerns; that is a fact for its dossier, not a disqualification
-  records from outside that circle
-      independent of whoever had an interest in the account
-  later material evidence
-      objects, inscriptions, instruments, registers, filings, excavated finds,
-      recordings — whatever this particular subject actually left behind    [latest]
+Every entry carries an "evidence" dossier — what actually backs it, as the research
+reported it. "None identified" is a legitimate answer and always better than inventing one.
 
-Note where that BEGINS. Not at the subject, and not at the earliest record ABOUT it: it begins
-with the material its own sources are made out of, which is frequently much earlier — centuries
-earlier for an ancient subject, decades for a modern one. The opening steps earn their place by
-descent, not by being about the subject: each is something the later steps quote, translate,
-implement or physically witness. A chain that opens at the subject's own moment has dropped
-everything before it, and that is the single most common way this goes wrong.
-
-Note what must be ABSENT. No expectations, no "rise of" a movement, no period of oral
-transmission, no climate of opinion, and none of the events the sources narrate — no birth, no
-disaster, no discovery, no founding — as steps. Some of those may well be true; none of them is
-a surviving object. What the chain shows is which evidence exists and when. What it means comes
-afterwards.
-
-DATING A STEP. "year" and "year_end" date the EVIDENCE ITSELF — when the text was composed, when
-the object was made, when the record was kept. Never the date of the events it describes. Where
-composition and the earliest surviving physical copy differ, and they are frequently centuries
-apart, the composition dates the step and the surviving copy is named in the dossier's
-"earliest_surviving_copy" and "provenance". A step whose composition date is genuinely a
-scholarly reconstruction stays a step — it is still a surviving object — but the dossier's "why"
-must carry the argument for the date, and the confidence must reflect that it is reconstructed.
-
-ORDER. Strictly chronological by the date of the evidence, earliest first.
-
-WHERE THE CHAIN STARTS — and this is the rule most often got wrong.
-
-The chain does NOT start at the earliest evidence ABOUT the subject. It starts at the earliest
-surviving evidence the subject's own evidence DESCENDS FROM: the corpus its texts quote, the
-tradition they are composed inside, the text they translate. A trace of a first-century figure
-that opens in the first century has skipped the entire written tradition its sources are writing
-within, and has silently answered a much smaller question than the one asked.
-
-The test for reaching back one more step is DOCUMENTARY, not thematic: does a later item in the
-chain quote, translate, continue, or sit inside this earlier one? If yes, it is a step. If the
-only link is shared theme, shared culture, or a mood of the period, STOP — that is background,
-and background is not a step and not a conclusion either; it is simply out of scope.
-
-That test is also what stops the chain regressing forever. It reaches back while documents point
-at documents, and halts where they stop pointing.
-
-A SURVIVING COPY IMPLIES THE WORK IT COPIES, AND BOTH ARE STEPS. If the chain contains a
-manuscript, a scroll or a fragment, then the work it carries is itself a step, dated by its
-COMPOSITION and placed earlier. A chain that lists surviving copies but not the work they carry
-has recorded the witness and dropped what it witnesses — which is the older half, and the half
-the later steps quote. Emit both: the work at its composition date, the copy at the date of the
-object.
-
-A STEP IS EITHER ABOUT THE SUBJECT OR DESCENDED FROM. Those are the only two ways in. Evidence
-that merely dates the period, fixes a background fact, or establishes the setting is neither,
-however genuine the object — a dated register that only helps pin down WHEN something happened
-is doing chronology, not descent, and belongs in "conclusions" with the dating argument it
-supports.
-
-EVERY STEP CARRIES A DATE. "year", or "year"+"year_end" for something produced over a period.
-This is the one field a step cannot do without: a chain is an order, and an undated object has
-no position in it. Where the date is a scholarly estimate or a wide range, give the range and say
-so in the dossier — a range is a date, "unknown" is not. An object you genuinely cannot date is
-not a step; put what it shows in "conclusions" instead.
-
-Anything produced over a period gets a range: a body of work composed across centuries, a design
-revised over decades, a series of filings. Take the span of its production, not the date of one
-member inside it, and not nothing.
-
-ONE WORK PER STEP WHEN THE DATES DIFFER. A single label spanning works produced a generation
-apart is several steps wearing one name. Where the members have different authors, different
-dates and different evidence, and either can be wrong without the other, split them. Group only
-what was genuinely produced and dated as a unit.
-
-NOTHING ENTERS THE CHAIN THAT NOTHING DESCENDS FROM. A later church, a site, an object from the
-right region and the wrong century may be perfectly real evidence of something else. The test is
-still the one above: does a later step quote, translate, continue or physically witness it? If
-you find yourself writing that a step does not bear on the subject, you have written a
-conclusion, and it belongs in "conclusions".
-
-WHO WROTE IT DOES NOT DECIDE WHETHER IT IS A STEP.
-
-A text written from inside the tradition, by a believer, a partisan, a follower or an
-interested party, is still a surviving object and still a step. Its provenance changes what it
-can be used to CONCLUDE, not whether it exists. Independence belongs in the dossier's
-"independent_corroboration" — it is recorded there, never used to keep a document out of the
-chain.
-
-Getting this wrong produces a specific and confident-looking failure: the chain silently becomes
-"earliest attestation from OUTSIDE the movement", skipping the earlier writings by people within
-it, and opening decades late on a source that happens to be disinterested. That is a legitimate
-question, and it is not this one. The earliest surviving text is the earliest surviving text
-whoever wrote it.
-
-The same applies to a work containing a disputed or interpolated passage. Suspected editing is a
-matter for "contradictory_evidence" and "scholarly_dispute" and a lower confidence — never a
-reason to promote a compromised source above an earlier sound one, and never a reason to drop it.
-
-A TEXT IS NOT EVIDENCE FOR WHAT IT NARRATES. It is evidence that the text existed by a date and
-that someone wrote what it says. Any claim about a narrated event is a conclusion, not a step,
-and if the only support for it is the narrative itself, say so plainly in the conclusion.
-
-Every step carries an "evidence" dossier — a plain, arguable statement of what actually backs it.
-"None identified" is a legitimate and valuable answer, always better than a plausible invention.
-
-The evidence dossier shape (same for the origin and every step):
+The evidence dossier shape (same for the origin and every entry):
 {{
-  "claim": <what this evidence establishes, as ONE testable proposition about the OBJECT,
-            e.g. "A translation of this work into another language existed by a given date">,
+  "claim": <what this establishes, as ONE testable proposition>,
   "earliest_supporting_source": <named source + what kind of thing it is, or "None identified">,
   "estimated_source_date": <when it was COMPOSED or made; a range is fine, or "Unknown">,
   "earliest_surviving_copy": <oldest physically existing copy + its date + repository if known,
                               or "None identified">,
-  "provenance": <who holds the object, under what shelfmark, and how it reached them, or
+  "provenance": <who holds it, under what shelfmark, and how it reached them, or
                  "None identified">,
   "contemporary_evidence": <evidence created at the time, or "None identified">,
-  "independent_corroboration": <support NOT descending from the same chain, or "None identified";
-                                if many sources trace to one report, say so>,
+  "independent_corroboration": <support NOT descending from the same chain, or "None identified">,
   "contradictory_evidence": <evidence that contradicts it, or "None identified">,
-  "scholarly_dispute": <live disagreement AMONG SCHOLARS — a different thing from evidence
-                        against it — or "None identified">,
+  "scholarly_dispute": <live disagreement among scholars, or "None identified">,
   "evidence_type": "primary_document|archaeological|contemporary_record|near_contemporary_account|
                     later_historical_account|scholarly_inference|tradition|disputed|absent",
   "confidence_label": "high|moderate|low|speculative",
-  "why": <1-2 sentences of plain language explaining the assessment>,
+  "why": <1-2 sentences of plain language>,
   "missing_piece": <the single absent piece of evidence that most limits this>
 }}
 
@@ -416,92 +206,48 @@ Produce a JSON object:
     "year_end": <signed int or null>,
     "era_label": <string or null>,
     "precision": "exact|year|decade|century|millennium|era|unknown",
-    "node_type": <one of the nine kinds above>,
+    "node_type": <one of the labels above>,
     "attribution": "established|attributed|disputed|anonymous|not_applicable",
-    "source_title": <the evidence, named as a reader would look for it>,
-    "summary": <2-4 sentences: what this object is, and why it is the earliest surviving
-                evidence relevant to the subject>,
+    "source_title": <named as a reader would look for it>,
+    "summary": <2-4 sentences: what this is, as the research described it>,
     "citations": [<url>, ...],
     "confidence": <0..1>,
     "evidence": {{ ...dossier... }}
   }},
   "timeline": [
-    // chronological, oldest first, evidence only
+    // oldest first; one entry per remaining item in the research
     {{
       "id": "t1",
       "year": <signed int or null>,
-      "year_end": <signed int or null>,        // set when composition SPANS a period
+      "year_end": <signed int or null>,        // set when production SPANS a period
       "era_label": <string or null>,
       "precision": "...",
-      "node_type": <one of the nine kinds above>,
+      "node_type": <one of the labels above>,
       "attribution": "established|attributed|disputed|anonymous|not_applicable",
-      "source_title": <the evidence, named as a reader would look for it>,
-      "claim": <one sentence stating what this surviving object establishes>,
+      "source_title": <named as a reader would look for it>,
+      "claim": <one sentence stating what this establishes>,
       "citations": [<url>, ...],
       "confidence": <0..1>,
       "evidence": {{ ...dossier... }}
     }}
   ],
   "conclusions": [
-    // What the evidence above is taken to show. AFTER the chain, never inside it.
-    // This is where everything that is not a surviving object goes: developments,
-    // expectations, movements, influences, reconstructed events, what a text implies.
+    // whatever the research put under NOTES
     {{
       "statement": <one plain proposition>,
-      "rests_on": [<ids of the steps this rests on: "origin", "t1", ...>],
+      "rests_on": [<ids this rests on: "origin", "t1", ...>],
       "confidence_label": "high|moderate|low|speculative",
       "reasoning": <how the named evidence gets you to the statement>,
-      "dissent": <serious scholarly disagreement with this reading, or "None identified">
+      "dissent": <serious disagreement with this reading, or "None identified">
     }}
   ],
-  "connections": [ ...see CONNECTIONS below... ],
+  "connections": [ ...see below... ],
   "reasoning": <short paragraph on the shape of the chain and where it is thin>,
   "confidence": <0..1>
 }}
 
-RULES FOR THE CHAIN:
-
-- EVIDENCE ONLY, NO EXCEPTIONS. If a candidate step is not a surviving object, it is a
-  conclusion. This holds however central it feels to the story, and however confident the
-  scholarship is. A trace of seven documents and eight conclusions is a good trace. A trace of
-  fifteen steps where six are inferred developments is a broken one.
-- A STEP MUST BE LOCATABLE. Name the repository, shelfmark, excavation report or critical
-  edition in "provenance". A step you cannot locate anywhere is a step you should not emit.
-- ONE OBJECT, ONE STEP; A CORPUS MAY BE ONE STEP. Where a group was produced together and is
-  dated and published as a group — an excavated assemblage, one archive deposit, a set of
-  volumes issued together — one step for the group is correct, with the range in
-  "year"/"year_end". Where members carry genuinely different
-  dates and evidence and one can fail without the other, they are separate steps.
-- COMPOSITION AND SURVIVING COPY ARE NOT THE SAME FACT. The step is dated by composition; the
-  physical copy goes in "earliest_surviving_copy" and "provenance". Where a specific manuscript
-  is itself the point — because it is the earliest witness, or was found in an excavation — it
-  earns its own "manuscript" or "scroll" step, dated to the object.
-- SAY WHAT IS MISSING. Where there is no contemporary documentation, that absence is one of the
-  most valuable findings here: name what does not exist, in "missing_piece" and in
-  "contemporary_evidence", and put the significance of the silence in "conclusions".
-- NOTHING RESEARCHED IS SILENTLY DROPPED. Material that is a surviving object becomes a step;
-  material that is not becomes a conclusion. Dropping it altogether tells the reader the evidence
-  was not there.
-- THE RESEARCH HAS TWO PARTS AND SO DOES THE CHAIN. Part 1 of the material is what the subject's
-  evidence descends from; it supplies the EARLIEST steps and cannot be discharged as a conclusion.
-  A chain whose first step comes from Part 2 has thrown away the half that decides where it starts.
-
-RULES FOR CONCLUSIONS:
-
-- EVERY CONCLUSION NAMES ITS EVIDENCE in "rests_on". A conclusion resting on no step is allowed
-  and is sometimes the most important line in the report — but say so in "reasoning": that this
-  is widely held and the chain above does not contain anything that establishes it.
-- CONCLUSIONS ARE NOT DATED and are not ordered in time. They are readings, not moments.
-- DO NOT LAUNDER A CONCLUSION INTO A STEP by attaching a date to it. That is the exact failure
-  this structure exists to prevent.
-
-CONNECTIONS — the most important and most easily faked part of this report.
-
-A chain implies that each item leads to the next. That implication is a CLAIM, and usually the
-weakest one on the page: "A, then B, therefore A caused B" is the error this report exists to
-expose. Two documents being consecutive in time says nothing about descent.
-
-Emit up to {max_connections} connections:
+CONNECTIONS. The research reports, per item, what links it to the next. Carry those across —
+do not invent links it did not state. Up to {max_connections}:
 {{
   "from_id": <id of the earlier item; the origin's id is "origin">,
   "to_id": <id of the later item>,
@@ -509,13 +255,13 @@ Emit up to {max_connections} connections:
                provides_context|no_established_link",
   "citations": [<url>, ...],
   "evidence": {{
-    "mechanism": <ONE sentence: HOW does the earlier item lead to the later one? Name the route —
-                  a translator, a manuscript family, a named borrowing, a documented quotation>,
-    "supporting_evidence": <what actually evidences this link, or "None identified">,
+    "mechanism": <ONE sentence: HOW does the earlier item lead to the later one, as the
+                  research stated it — a translator, a manuscript family, a quotation>,
+    "supporting_evidence": <what evidences this link, or "None identified">,
     "contradictory_evidence": <evidence against the link, or "None identified">,
-    "independent_corroboration": <support from a different information chain, or "None identified">,
-    "scholarly_dispute": <disagreement among scholars about the link, or "None identified">,
-    "evidence_type": <same vocabulary as the dossier, applied to the LINK not the objects>,
+    "independent_corroboration": <support from a different chain, or "None identified">,
+    "scholarly_dispute": <disagreement about the link, or "None identified">,
+    "evidence_type": <same vocabulary as the dossier, applied to the LINK>,
     "confidence": <0..1>,
     "confidence_label": "high|moderate|low|speculative",
     "why": <1-2 sentences on how strong this link really is>,
@@ -523,32 +269,19 @@ Emit up to {max_connections} connections:
   }}
 }}
 
-Connection rules — read these twice:
-- Two items being consecutive is NOT a connection. If you cannot state a concrete mechanism and
-  name evidence for it, use "no_established_link" and say in "why" that the order is
-  chronological only. That is a correct and valuable answer, not a failure.
-- A later text quoting or translating an earlier one IS a mechanism, and one you can usually
-  evidence: name the passage. Shared themes are not descent, and similarity is not transmission.
-- Scholarly consensus that A influenced B is "scholarly_inference", NOT "primary_document",
-  no matter how widely the influence is repeated.
-- Prefer few well-evidenced connections to many speculative ones, and do not chain every item to
-  its neighbour by default.
+Where the research did not state a link between two consecutive items, use
+"no_established_link" and say in "why" that the order is chronological only. That is a
+correct answer, not a failure.
 
-General rules:
-- NO LIMIT ON HOW MANY STEPS OR CONCLUSIONS. Every distinct object with its own date, its own
-  evidence and its own way of being wrong is its own step. Merging two of them hides one. Emit
-  as many as the evidence supports: a trace whose research found twenty objects should show
-  twenty, and a short chain should be short because the evidence was thin, never because a
-  longer one felt like too much.
-- Every claim must be backed by at least one citation URL from the provided list.
-- Where the only citations available are tier 4-5, say so in "why" and set the evidence_type to
-  what those sources can actually support.
-- Where a SOURCE PAGE was read, prefer what it actually says over any summary of it.
-- Sources that repeat one upstream report count as ONE. Do not describe them as corroboration.
-- "confidence_label" must be consistent with the numeric "confidence" (high >= 0.75,
-  moderate 0.5-0.75, low 0.3-0.5, speculative < 0.3).
+OUTPUT:
+- Every entry needs at least one citation URL from the list above where the research gave one.
+- Dates: "year" is a signed integer, negative for BC/BCE. Use "year_end" for a span.
+- Set "confidence" from the numeric scale (high >= 0.75, moderate 0.5-0.75, low 0.3-0.5,
+  speculative < 0.3).
 - Return ONLY JSON.
 """
+
+
 
 
 # What each expansion mode goes looking for.
@@ -827,31 +560,4 @@ Rules:
   examine, it does not belong here.
 - Order events chronologically, oldest first.
 - Return ONLY JSON.
-"""
-
-
-# The chase. A claim resting on a wiki or a news write-up is a claim whose real
-# evidence, if it has any, is one hop away — named in that page's own references.
-# This asks for that hop specifically, because a general re-search returns the
-# same summaries the first search already found.
-CHASE_SEARCH_PROMPT = """\
-A claim in a historical trace of "{title}" currently rests only on a general-web or
-institutional source, which is a lead rather than evidence. Find what it rests ON.
-
-Claim: {claim}
-Currently cited: {weak_source}
-That source appears to cite: {cites}
-Harvested references from that page: {references}
-
-{search_doctrine}
-
-Search for the UNDERLYING source: the manuscript, inscription, excavation report, archival
-record, critical edition or peer-reviewed study that this claim ultimately depends on. Name it
-as specifically as the evidence allows — author, work, book and section, repository, shelfmark,
-DOI, catalogue number.
-
-Do NOT summarise the general-web source. If the claim turns out to rest on nothing more than
-that source repeating itself, say exactly that: it is the most useful finding you can return.
-
-Write <= 250 words.
 """

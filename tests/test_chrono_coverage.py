@@ -32,36 +32,6 @@ from phansora.products.chrono_origin.pipeline import orchestrator as orch
 from phansora.products.chrono_origin.pipeline import source_policy as sp
 
 
-class TestResearchReachesTheReport:
-    """The mentions block is the only channel between the rounds and the report."""
-
-    def test_carries_the_node_type(self):
-        block = orch._format_mentions_block([
-            {"year": 55, "node_type": "letter", "source_title": "Pauline letters",
-             "claim": "Composed in the 50s CE.", "citations": ["https://x"], "precision": "decade"},
-        ])
-        assert "type=letter" in block
-
-    def test_carries_a_span_rather_than_pinning_a_process_to_one_year(self):
-        block = orch._format_mentions_block([
-            {"year": -200, "year_end": 70, "node_type": "context",
-             "source_title": "Second Temple Judaism", "claim": "…"},
-        ])
-        assert "when=-200..70" in block
-
-    def test_carries_the_signals_that_say_a_claim_is_still_on_a_lead(self):
-        block = orch._format_mentions_block([
-            {"year": 30, "source_title": "X", "claim": "…",
-             "discovery_only": True, "cites": "Ehrman 2012", "published": "2019"},
-        ])
-        assert "LEAD_ONLY" in block
-        assert "that_page_cites=Ehrman 2012" in block
-        assert "source_published=2019" in block
-
-    def test_an_untyped_mention_still_reads_as_an_event(self):
-        block = orch._format_mentions_block([{"year": 1, "source_title": "X", "claim": "…"}])
-        assert "type=event" in block
-
 
 class TestStrandsSurviveADedupe:
     """Rounds overlap; the merge must keep the better reading, not the first one."""
