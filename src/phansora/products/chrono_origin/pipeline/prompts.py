@@ -118,9 +118,9 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from memory. Every item must come from a search you actually ran. Follow every subsequent layer—from those root materials through intermediate adaptations, translations, or lost documents, down into later codified practices. Show how each stage built upon or derived its concepts from the preceding material, and present the complete trace chronologically from the oldest roots forward to its 1st-century or later historical expressions.
+Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from memory. Every item must come from a search you actually ran. Follow every subsequent layer—from those root materials through intermediate adaptations, translations, or lost documents, down into later codified practices. Show how each stage built upon or derived its concepts from the preceding material, and present the complete trace chronologically from the oldest roots forward to its 1st-century or later historical expressions. Before finalizing the trace, walk backward through each item found and ask: “What earlier identifiable evidence did this derive from or build upon?” If an earlier supported source exists, research and include it, then repeat until no earlier supported connection can be found.
 
-Then present everything forward in date order. For each item:
+Then present everything forward in date order, oldest to new. For each item:
 
 Date
 Evidence — what it is
