@@ -69,23 +69,72 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from memory. Every item must come from a search you actually ran. If an item comes from a larger source work, corpus, collection, or predecessor, include that source as its own item rather than replacing it with one example, translation, or surviving copy. Each translation and original must be its own item. The goal is a complete timeline all the way back to BCE to present day.
+Using live web search, trace the complete historical lineage of "{title}" from the earliest known foundations to the present day.
 
-Then present everything forward in date order, oldest to new. For each item:
+Search broadly and repeatedly for the historical sources, predecessor works, larger source collections, writings, concepts, names, words, traditions, artifacts, inscriptions, materials, technologies, manuscripts, translations, and later developments connected to "{title}".
 
-Date
-Evidence — what it is
-Source — where our knowledge of it comes from
-Original vs surviving — composition date and oldest surviving witness, when different
-Connection — what evidence links this item to the next
-Establishes — what it actually shows
-Uncertain — what is estimated, disputed, or unknown
-Consulted — the pages you actually opened
+Search backward beyond the first appearance of "{title}". When you discover an earlier source, work, tradition, concept, technology, material, or predecessor, search for it too.
 
-Keep interpretation out of the chain. Ideas, traditions, influences and developments are not
-items — put them in a NOTES section after the chain and say which items they rest on.
+The goal is to produce a large, complete chronological list, not a summary.
 
-Where the evidence stops, say so. Never fill a gap.
+Include every relevant historical item found in the research.
+
+If you find an individual item that belongs to a larger source, collection, corpus, tradition, technological system, or historical development, include that larger source or parent as a separate item too.
+
+If you find an original work and a translation, adaptation, version, copy, reproduction, manuscript, fragment, or later form, include them separately.
+
+If you find a larger corpus, collection, tradition, technology, or historical movement and an important individual item within it, include both separately.
+
+Include important:
+
+* archaeological and material foundations
+* raw materials
+* inscriptions and early physical evidence
+* names and linguistic predecessors
+* cultural and historical traditions
+* predecessor works and source materials
+* individual important works or examples
+* larger collections, corpora, or parent traditions
+* early concepts and practices
+* important technologies and techniques
+* primitive or early forms
+* major intermediate developments
+* surviving artifacts, copies, manuscripts, or specimens
+* translations and adaptations
+* regional or cultural transmission
+* major later versions and forms
+* important people or groups directly involved in its development
+* major historical developments
+* important modern developments
+* present-day form
+
+Do not summarize several different historical items into one entry.
+
+Do not omit a larger source, collection, tradition, technology, or parent development because you already listed something contained within it.
+
+Do not omit an important individual item because you already listed the larger source, collection, tradition, or development containing it.
+
+Do not replace an original with a translation, adaptation, manuscript, fragment, surviving example, reproduction, or later version.
+
+Do not include speculative connections merely because two things are similar. Include items supported by the web research as historically relevant to the development or transmission of "{title}".
+
+After researching, combine all valid items you found, remove only true duplicates, and sort the entire list by date from oldest to newest.
+
+Return as many valid items as the research supports. Do not shorten or summarize the list.
+
+Output only:
+
+Title - Date
+
+No descriptions.
+No explanations.
+No introduction.
+No conclusion.
+No categories.
+No numbered list.
+
+Just one complete chronological list from the oldest foundation to the present day.
+
 """
 SYNTHESIZE_PROMPT = """\
 Below is research already gathered about "{title}". Turn it into the JSON structure at the
