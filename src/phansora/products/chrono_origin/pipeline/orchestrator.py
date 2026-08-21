@@ -414,6 +414,33 @@ def _format_citations_block(citations: List[Dict[str, str]]) -> str:
 
 
 
+def build_research_prompt(title: str, context: Optional[str]) -> str:
+    """The exact text handed to the research call.
+
+    RESEARCH_PROMPT is tuned by hand against the live model, so this assembles AROUND it
+    rather than editing it. `{context_clause}` was dropped from the template during one
+    of those retunes, and str.format() ignores a keyword the template does not use — so
+    no error was raised anywhere and the context box on the dashboard simply stopped
+    reaching the model. A trace of "Mercury" then researched whichever Mercury the model
+    felt like, while the context still partitioned the cache key, so the two readings got
+    two cache entries of the same wrong answer.
+
+    Appending restores the field without editing prose somebody tuned on purpose. With no
+    context given the prompt is byte-identical to the template; the check against `prompt`
+    keeps this from doubling up if `{context_clause}` is ever put back.
+    """
+    prompt = RESEARCH_PROMPT.format(
+        title=title,
+        context_clause=f" ({context})" if context else "",
+    )
+    if context and context not in prompt:
+        prompt = (
+            f"{prompt.rstrip()}\n\n"
+            f'For this trace, "{title}" means: {context}. Research that subject and no other.'
+        )
+    return prompt
+
+
 class TraceOrchestrator:
     def __init__(self, client: Optional[object] = None) -> None:
         # Provider chosen by CHRONO_LLM_PROVIDER.
@@ -477,10 +504,7 @@ class TraceOrchestrator:
         # to allocate badly. RESEARCH_PROMPT asks for descent first and evidence about
         # the subject second, in one answer.
         progress(15, "Searching")
-        research_prompt = RESEARCH_PROMPT.format(
-            title=req.title,
-            context_clause=f" ({req.context})" if req.context else "",
-        )
+        research_prompt = build_research_prompt(req.title, req.context)
         answers = self._search_prompts([research_prompt])
         # What the model actually searched for, reported back so the user sees the
         # real queries rather than a template we wrote.
@@ -518,7 +542,19 @@ class TraceOrchestrator:
                     parts.append(f"- {c.get('title') or c.get('url')}: {snippet}")
             return "\n".join(parts)
 
-        corpus = "\n\n".join(b for b in (_block(a) for a in answers) if b) or "(no search results)"
+        corpus = "\n\n".join(b for b in (_block(a) for a in answers) if b)
+        if not corpus.strip():
+            # No corpus means the search did not run, and synthesis handed an empty
+            # corpus does NOT fail — it writes a well-formed account of having nothing
+            # to say ("No research material was provided for X"), which reads to the
+            # user as "no evidence exists" rather than "your search did not happen".
+            # Raising sends this down the failure path that already refunds, and keeps
+            # the empty result out of the cache, where it would be served for 30 days.
+            raise RuntimeError(
+                "The research search returned nothing, so there was no material to build "
+                "a timeline from. This is a failed search, not an absence of evidence; "
+                "the credit has been refunded. Please try again in a moment."
+            )
 
         # No extract stage means no per-URL tier claims; the resolver falls back to
         # its host heuristic, which is what it did for un-mentioned URLs anyway.
@@ -577,10 +613,17 @@ class TraceOrchestrator:
         # result looked complete: origin with no year, no summary, no citations, and an
         # empty timeline, marked done, with the user's credit spent. Raising here sends
         # it down the failure path that already exists, which refunds.
-        if not response.timeline and response.origin.year is None and not response.origin.summary:
+        #
+        # Gated on the timeline ALONE. The three-way `and` this replaces required an
+        # empty timeline AND a null year AND an empty summary — but a model with nothing
+        # to report does not leave the summary empty, it writes "No research material was
+        # provided", which is prose, which is truthy. So a trace with zero events was
+        # cached and charged as a success. The timeline IS the product: if it is empty
+        # the trace failed, whatever the origin block manages to say about it.
+        if not response.timeline:
             raise RuntimeError(
-                "The trace produced no timeline and no origin. This usually means the "
-                "model's answer could not be read; the credit has been refunded."
+                "The trace produced an empty timeline. This usually means the model's "
+                "answer could not be read; the credit has been refunded."
             )
 
         try:

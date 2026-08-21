@@ -350,3 +350,66 @@ def test_resolution_failure_does_not_kill_the_search(monkeypatch):
 
     monkeypatch.setattr(httpx, "Client", boom)
     assert G._resolve_proxy(PROXY) == PROXY
+
+
+def test_an_ungrounded_answer_is_retried_with_search_made_explicit(monkeypatch):
+    """`google_search` is model-ELECTED.
+
+    Unlike the retired `google_search_retrieval` it carries no threshold that can force
+    a lookup, so there is no config switch that guarantees the model searches. When it
+    answers from memory the only lever left is to ask again and say so — and to say it
+    in the SYSTEM channel, because the research prompt is tuned by hand against the live
+    model and has to arrive exactly as written.
+    """
+    c = G.GeminiResearchClient(cfg())
+    calls = []
+    grounded = grounded_body(text="What the search found.",
+                             chunks=[("https://a.example/x", "A")], queries=["q"])
+
+    def fake(**kw):
+        calls.append(kw)
+        return grounded_body(text="I recall...", chunks=[], queries=[]) if len(calls) == 1 else grounded
+
+    monkeypatch.setattr(c, "_generate", fake)
+    out = c.grounded_search("MY TUNED PROMPT")
+
+    assert len(calls) == 2, "an ungrounded answer was not retried"
+    assert calls[0]["system"] == "", "the first attempt should carry the prompt alone"
+    assert "Google Search" in calls[1]["system"], "the retry never stated the obligation"
+    assert calls[0]["prompt"] == calls[1]["prompt"] == "MY TUNED PROMPT", \
+        "the research prompt must reach the model unchanged, both times"
+    assert out.text == "What the search found."
+    assert [x["url"] for x in out.citations] == ["https://a.example/x"]
+
+
+def test_an_answer_ungrounded_twice_is_discarded(monkeypatch):
+    """Memory is not evidence, however many times it is offered."""
+    c = G.GeminiResearchClient(cfg())
+    calls = []
+
+    def fake(**kw):
+        calls.append(kw)
+        return grounded_body(text="I recall...", chunks=[], queries=[])
+
+    monkeypatch.setattr(c, "_generate", fake)
+    out = c.grounded_search("p")
+
+    assert len(calls) == 2, "one retry, then give up — not an unbounded loop"
+    assert out.text == "" and out.citations == [] and out.queries == []
+
+
+def test_a_transport_failure_is_not_mistaken_for_an_ungrounded_answer(monkeypatch):
+    """A call that never returned did not 'answer from memory'. Retrying it here would
+    stack a second retry on top of the three the transport already does."""
+    c = G.GeminiResearchClient(cfg())
+    calls = []
+
+    def boom(**kw):
+        calls.append(kw)
+        raise RuntimeError("Gemini 503: upstream")
+
+    monkeypatch.setattr(c, "_generate", boom)
+    out = c.grounded_search("p")
+
+    assert len(calls) == 1, "a failed call must not be retried as if it were ungrounded"
+    assert out.text == "" and out.citations == []

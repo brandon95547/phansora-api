@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 from ..config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 # Bump whenever the trace SHAPE changes — new fields, new stages, reworked
@@ -125,6 +128,15 @@ def get_cached(title: str, key: str) -> Optional[dict[str, Any]]:
 def save_cached(title: str, key: str, payload: dict[str, Any]) -> None:
     path = _cache_path(title, key)
     if path is None:
+        return
+    # Never persist a trace with no timeline. The orchestrator already refuses to return
+    # one, so arriving here with an empty timeline means a guard upstream was missed --
+    # and a CACHED empty trace is far worse than an empty response, because every later
+    # request for that title is then served from disk without calling the model at all,
+    # for the whole 30-day TTL. One bad run would otherwise poison a subject silently
+    # until somebody noticed and invalidated it by hand. Belt and braces, on purpose.
+    if not payload.get("timeline"):
+        logger.warning("Refusing to cache a trace with an empty timeline for %r.", title)
         return
     # Written via a temp file and moved into place: a reader must never catch a
     # half-written trace, and a crash mid-write must not leave one behind.

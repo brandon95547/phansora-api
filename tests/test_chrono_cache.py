@@ -37,10 +37,21 @@ def key_for(title, **kw):
     return request_key(title, **kw)
 
 
+def _trace(**kw):
+    """A payload the cache will accept.
+
+    Every fixture here carries a timeline, because save_cached now refuses to persist a
+    trace without one — an empty timeline is a failed trace, and a failed trace served
+    from disk for thirty days is how one bad run silently poisons a subject. These tests
+    are about KEYING, so the timeline is the smallest thing that clears that bar.
+    """
+    return {"timeline": [{"id": "t1", "source_title": "A step"}], **kw}
+
+
 def test_same_request_hits():
     k = key_for("Moses")
-    save_cached("Moses", k, {"title": "moses"})
-    assert get_cached("Moses", k) == {"title": "moses"}
+    save_cached("Moses", k, _trace(title="moses"))
+    assert get_cached("Moses", k) == _trace(title="moses")
 
 
 def test_title_alone_no_longer_decides():
@@ -49,9 +60,9 @@ def test_title_alone_no_longer_decides():
     egyptian = key_for("Moses", context="Egyptian mythology")
     assert biblical != egyptian
 
-    save_cached("Moses", biblical, {"which": "biblical"})
+    save_cached("Moses", biblical, _trace(which="biblical"))
     assert get_cached("Moses", egyptian) is None
-    assert get_cached("Moses", biblical) == {"which": "biblical"}
+    assert get_cached("Moses", biblical) == _trace(which="biblical")
 
 
 @pytest.mark.parametrize("kw", [
@@ -74,17 +85,17 @@ def test_delete_removes_every_variant_of_a_title():
     # Invalidation is by TITLE, because that is all the caller (the Node app, deleting a
     # user's trace) knows — so it has to clear the whole family, not one exact key.
     for kw in ({}, {"context": "biblical figure"}, {"max_depth": 6}):
-        save_cached("Moses", key_for("Moses", **kw), {"k": str(kw)})
+        save_cached("Moses", key_for("Moses", **kw), _trace(k=str(kw)))
     assert delete_cached("Moses") == 3
     for kw in ({}, {"context": "biblical figure"}, {"max_depth": 6}):
         assert get_cached("Moses", key_for("Moses", **kw)) is None
 
 
 def test_delete_leaves_other_titles_alone():
-    save_cached("Moses", key_for("Moses"), {"a": 1})
-    save_cached("Pizzagate", key_for("Pizzagate"), {"b": 2})
+    save_cached("Moses", key_for("Moses"), _trace(a=1))
+    save_cached("Pizzagate", key_for("Pizzagate"), _trace(b=2))
     delete_cached("Moses")
-    assert get_cached("Pizzagate", key_for("Pizzagate")) == {"b": 2}
+    assert get_cached("Pizzagate", key_for("Pizzagate")) == _trace(b=2)
 
 
 def test_delete_is_idempotent():
@@ -93,7 +104,7 @@ def test_delete_is_idempotent():
 
 def test_expired_entries_are_not_served(cache_dir, monkeypatch):
     k = key_for("Moses")
-    save_cached("Moses", k, {"title": "moses"})
+    save_cached("Moses", k, _trace(title="moses"))
     # Age the file past the TTL rather than waiting 30 days.
     path = next(cache_dir.glob("*-moses-*.json"))
     old = time.time() - (31 * 86400)
@@ -109,19 +120,19 @@ def test_ttl_of_zero_disables_expiry(cache_dir, monkeypatch):
         chrono_cache_ttl_days = 0
 
     k = key_for("Moses")
-    save_cached("Moses", k, {"title": "moses"})
+    save_cached("Moses", k, _trace(title="moses"))
     monkeypatch.setattr(cache_mod, "get_settings", lambda: _S())
     path = next(cache_dir.glob("*-moses-*.json"))
     old = time.time() - (365 * 86400)
     import os
     os.utime(path, (old, old))
-    assert get_cached("Moses", k) == {"title": "moses"}
+    assert get_cached("Moses", k) == _trace(title="moses")
 
 
 def test_a_half_written_file_is_never_served(cache_dir):
     # save_cached writes to a temp file and moves it into place, so a reader cannot
     # observe a partial trace.
-    save_cached("Moses", key_for("Moses"), {"title": "moses"})
+    save_cached("Moses", key_for("Moses"), _trace(title="moses"))
     assert list(cache_dir.glob("*.tmp")) == []
 
 
@@ -131,12 +142,12 @@ def test_delete_does_not_take_a_longer_title_with_it():
     The filenames are `{version}-{slug}-{digest}.json`, so a glob of `*-moses-*.json`
     matches BOTH — which is why deletion parses the slug out and compares it exactly.
     """
-    save_cached("Moses", key_for("Moses"), {"a": 1})
-    save_cached("Moses parting the Red Sea", key_for("Moses parting the Red Sea"), {"b": 2})
+    save_cached("Moses", key_for("Moses"), _trace(a=1))
+    save_cached("Moses parting the Red Sea", key_for("Moses parting the Red Sea"), _trace(b=2))
 
     assert delete_cached("Moses") == 1
     assert get_cached("Moses", key_for("Moses")) is None
-    assert get_cached("Moses parting the Red Sea", key_for("Moses parting the Red Sea")) == {"b": 2}
+    assert get_cached("Moses parting the Red Sea", key_for("Moses parting the Red Sea")) == _trace(b=2)
 
 
 def test_schema_version_partitions_the_cache(cache_dir, monkeypatch):
@@ -146,8 +157,18 @@ def test_schema_version_partitions_the_cache(cache_dir, monkeypatch):
     newer pipeline produces — it partitions rather than deletes, so a rollback still
     finds its own entries.
     """
-    save_cached("Moses", key_for("Moses"), {"shape": "old"})
-    assert get_cached("Moses", key_for("Moses")) == {"shape": "old"}
+    save_cached("Moses", key_for("Moses"), _trace(shape="old"))
+    assert get_cached("Moses", key_for("Moses")) == _trace(shape="old")
 
     monkeypatch.setattr(cache_mod, "SCHEMA_VERSION", "v99")
     assert get_cached("Moses", key_for("Moses")) is None
+
+
+def test_a_trace_with_no_timeline_is_never_cached():
+    """The failure that made this necessary: a trace whose search returned nothing was
+    synthesized into a well-formed "No research material was provided", stored as a
+    success, and then served from cache for every later request of that title — so
+    re-running the trace could not clear it. Nothing empty gets persisted now."""
+    k = key_for("Jesus Christ")
+    save_cached("Jesus Christ", k, {"timeline": [], "origin": {"summary": "No research material was provided."}})
+    assert get_cached("Jesus Christ", k) is None

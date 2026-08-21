@@ -241,11 +241,25 @@ def test_a_search_can_still_be_disambiguated():
 
     The context box is a real field on the dashboard form, so the term the model is
     handed has to carry it or the trace silently researches the wrong subject.
-    """
-    from phansora.products.chrono_origin.pipeline import prompts as P
 
-    out = P.RESEARCH_PROMPT.format(title="Mercury", context_clause=" (the planet)")
-    assert '"Mercury" (the planet)' in out
+    Asserted against the ASSEMBLED prompt rather than against RESEARCH_PROMPT itself.
+    The template is retuned by hand against the live model and its placeholders come
+    and go — `{context_clause}` was removed from it in one such retune, which silently
+    killed the context box, because str.format() ignores a keyword the template does
+    not use. Testing the assembled text pins the behaviour that matters (the context
+    reaches the model) instead of the wording that does not, so the prompt stays free
+    to change without this test having an opinion about it.
+    """
+    out = orch.build_research_prompt("Mercury", "the planet")
+    assert "Mercury" in out
+    assert "the planet" in out, "the context box never reached the model"
+
+    # And nothing is bolted on when the box was left empty: with no context the model
+    # gets the tuned template and not one word more.
+    from phansora.products.chrono_origin.pipeline import prompts as P
+    assert orch.build_research_prompt("Mercury", None) == P.RESEARCH_PROMPT.format(
+        title="Mercury", context_clause=""
+    )
 
 
 
@@ -568,7 +582,12 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
             return {"origin": {"year": -400, "source_title": "O", "summary": "s",
                                "citations": [], "confidence": 0.6,
                                "evidence": {"claim": "c"}},
-                    "timeline": [], "connections": [], "reasoning": "r", "confidence": 0.6}
+                    # Carries a step because the pipeline refuses a trace with an empty
+                    # timeline; this test is about keeping SOURCES, not about emptiness.
+                    "timeline": [{"id": "t1", "year": -300, "source_title": "A step",
+                                  "claim": "c", "citations": [], "confidence": 0.6,
+                                  "evidence": {"claim": "c"}}],
+                    "connections": [], "reasoning": "r", "confidence": 0.6}
 
     monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)

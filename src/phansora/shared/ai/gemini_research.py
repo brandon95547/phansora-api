@@ -44,6 +44,15 @@ _SEARCH_MAX_TOKENS = int(os.getenv("GEMINI_SEARCH_MAX_TOKENS", "4000"))
 
 _JSON_SYSTEM = "You return only valid JSON. No prose, no code fences, no commentary."
 
+# Said in the system channel, never in the prompt. RESEARCH_PROMPT is tuned against the
+# live model and has to reach it exactly as written, so the one thing that may be added
+# when the model skips the tool is added somewhere the prompt text is not.
+_SEARCH_SYSTEM = (
+    "You must use the Google Search tool before answering. Run searches, read what comes "
+    "back, and build your answer from those results. Do not answer from memory: an answer "
+    "you did not search for cannot be used here."
+)
+
 # Grounding does not hand back the pages it read. It hands back redirect proxies on
 # this host, one per source, with the real domain tucked into the chunk's `title`.
 #
@@ -295,6 +304,36 @@ class GeminiResearchClient:
     # -------------------------------------------------------------------- search
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:
         usage.stage("search")
+        answer = self._grounded_attempt(prompt, temperature=temperature, system="")
+        if answer is not None:
+            return answer
+
+        # The model answered from memory. `google_search` is model-ELECTED: unlike the
+        # retired `google_search_retrieval` it carries no threshold that can force a
+        # lookup, so there is no config switch to flip here and no prompt wording that
+        # guarantees it. Asking once more, with the obligation stated in the system
+        # channel, is the only lever left that does not touch the research prompt.
+        logger.warning("Gemini answered without searching; asking again with search made explicit.")
+        answer = self._grounded_attempt(prompt, temperature=temperature, system=_SEARCH_SYSTEM)
+        if answer is not None:
+            return answer
+
+        # Still ungrounded. Memory is not evidence — a timeline step whose source is
+        # "the model recalled it" is the one thing this product cannot ship — so the
+        # answer is dropped and the caller fails the trace rather than reporting that
+        # no evidence exists.
+        logger.warning(
+            "Gemini answered without searching on the retry too; discarding an ungrounded "
+            "answer rather than treating recall as research."
+        )
+        return GroundedAnswer(text="", citations=[], queries=[])
+
+    def _grounded_attempt(
+        self, prompt: str, *, temperature: float, system: str
+    ) -> Optional[GroundedAnswer]:
+        """One grounded call. None means the model did not search, which is the caller's
+        decision to act on. An empty GroundedAnswer means the call itself failed, which
+        is not worth retrying here — the transport already retried three times."""
         try:
             data = self._generate(
                 model=self._cfg.model,
@@ -302,6 +341,7 @@ class GeminiResearchClient:
                 temperature=temperature,
                 max_tokens=_SEARCH_MAX_TOKENS,
                 grounded=True,
+                system=system,
             )
         except Exception as exc:  # noqa: BLE001 — search is best-effort
             logger.warning("Gemini grounded search failed: %s", exc)
@@ -324,16 +364,7 @@ class GeminiResearchClient:
         queries = self._queries_of(data)
 
         if not citations and not queries:
-            # The model did not search. It answered from memory, and memory is not
-            # evidence — a timeline step whose source is "the model recalled it" is
-            # the one thing this product cannot ship. Returned as empty so it lands
-            # in the caller's existing "search unavailable" path, which tells the
-            # user their search did not run instead of reporting no evidence exists.
-            logger.warning(
-                "Gemini answered without searching; discarding an ungrounded answer "
-                "rather than treating recall as research."
-            )
-            return GroundedAnswer(text="", citations=[], queries=[])
+            return None
 
         if not citations:
             # It searched but cited nothing back. The text may still be usable, so it

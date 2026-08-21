@@ -46,7 +46,16 @@ class ScriptedClient:
                 "citations": ["https://www.jstor.org/stable/1"], "confidence": 0.6,
                 "evidence": {"claim": "c"},
             },
-            "timeline": [],
+            # A real step, not an empty list. The pipeline now REFUSES a trace with an
+            # empty timeline — the timeline is the product, and one that arrives empty
+            # is a failed trace that must not be cached or charged — so a scripted
+            # synthesis returning nothing would be scripting a failure, not a trace.
+            "timeline": [{
+                "id": "t1", "year": 200, "source_title": "A later witness",
+                "claim": "It survives in a second-century copy.",
+                "citations": ["https://www.jstor.org/stable/1"], "confidence": 0.6,
+                "evidence": {"claim": "c"},
+            }],
             "connections": [],
             "reasoning": "r",
             "confidence": 0.6,
@@ -170,5 +179,66 @@ class TestTheResponseIsStillWellFormed:
         """
         o, client = pipeline
         client.reason_json = lambda prompt, use_reasoning_model=False: {}
-        with pytest.raises(RuntimeError, match="no timeline and no origin"):
+        with pytest.raises(RuntimeError, match="empty timeline"):
+            o.run(TraceRequest(title="Jesus Christ"))
+
+
+class TestASearchThatDidNotRunIsAFailedSearch:
+    """The 2026-08-21 incident, pinned.
+
+    A trace came back with an empty board. The grounded search had answered from memory,
+    the guard in the Gemini client correctly discarded it, and the orchestrator then
+    carried on with a corpus of the literal string "(no search results)". Synthesis duly
+    wrote a well-formed account of having nothing to say — "No research material was
+    provided for Jesus Christ" — which is prose, which is truthy, which defeated the
+    empty-trace guard's `and not response.origin.summary` clause. So the trace was marked
+    done, CACHED for thirty days, and charged; and because it was cached, re-running it
+    returned the same emptiness without ever calling the model again.
+
+    Three things had to be true for that to happen, so all three are held here.
+    """
+
+    @staticmethod
+    def _searched_nothing(prompt):
+        return GroundedAnswer(text="", citations=[], queries=[])
+
+    def test_an_empty_corpus_fails_the_trace(self, pipeline):
+        o, client = pipeline
+        client.grounded_search = self._searched_nothing
+        with pytest.raises(RuntimeError, match="returned nothing"):
+            o.run(TraceRequest(title="Jesus Christ"))
+
+    def test_synthesis_is_never_reached_with_nothing_to_synthesize(self, pipeline):
+        """It is also the expensive call — no reason to pay for it to describe a void."""
+        o, client = pipeline
+        client.grounded_search = self._searched_nothing
+        with pytest.raises(RuntimeError):
+            o.run(TraceRequest(title="Jesus Christ"))
+        assert client.json_calls == [], "paid for a synthesis with no research to synthesize"
+
+    def test_a_hollow_trace_never_reaches_the_cache(self, pipeline, monkeypatch):
+        """The part that made it stick: re-running could not clear it."""
+        o, client = pipeline
+        saved = []
+        monkeypatch.setattr(orch, "save_cached", lambda *a, **k: saved.append(a))
+        client.grounded_search = self._searched_nothing
+        with pytest.raises(RuntimeError):
+            o.run(TraceRequest(title="Jesus Christ"))
+        assert saved == [], "an empty trace was written to the cache"
+
+    def test_summary_prose_no_longer_defeats_the_guard(self, pipeline):
+        """The exact shape that got through: empty timeline, null year, and a summary
+        politely explaining that there was nothing to report."""
+        o, client = pipeline
+        client.reason_json = lambda prompt, use_reasoning_model=False: {
+            "origin": {
+                "year": None,
+                "source_title": "None identified",
+                "summary": "No research material was provided for Jesus Christ.",
+                "citations": [], "confidence": 0.5,
+                "evidence": {"claim": "None identified"},
+            },
+            "timeline": [], "connections": [], "reasoning": "r", "confidence": 0.5,
+        }
+        with pytest.raises(RuntimeError, match="empty timeline"):
             o.run(TraceRequest(title="Jesus Christ"))
