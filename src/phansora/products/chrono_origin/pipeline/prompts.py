@@ -69,32 +69,23 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Using live web search, trace the historical and material lineage of "{title}"{context_clause} as far back as supported evidence allows.
+Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from memory. Every item must come from a search you actually ran. Before finalizing the trace, walk backward through each item found and ask: “What earlier identifiable evidence did this derive from or build upon?” If an earlier supported source exists, research and include it, then repeat until no earlier supported connection can be found. If an item comes from a larger source work, corpus, collection, or predecessor, include that source as its own item rather than replacing it with one example, translation, or surviving copy.
 
-Do not answer from memory. Every item must come from web research.
-
-For each item you find, search for what earlier source, material, work, or predecessor it came from or built upon. Then research that earlier item the same way. Keep walking backward until no earlier supported connection can be found.
-
-Use new search queries for each item rather than continuing to search only for "jesus christ".
-
-If an item comes from a larger source work, corpus, collection, or predecessor, include that source as its own item rather than replacing it with one example, translation, or surviving copy.
-
-Then present the complete trace from oldest to newest.
-
-For each item give:
+Then present everything forward in date order, oldest to new. For each item:
 
 Date
-Evidence
-Source
-Original vs surviving
-Connection to the next item
-What it establishes
-What is uncertain
-Web pages consulted
+Evidence — what it is
+Source — where our knowledge of it comes from
+Original vs surviving — composition date and oldest surviving witness, when different
+Connection — what evidence links this item to the next
+Establishes — what it actually shows
+Uncertain — what is estimated, disputed, or unknown
+Consulted — the pages you actually opened
 
-Keep interpretations, theories, traditions, and unsupported influences out of the evidence chain. Put relevant interpretation in NOTES instead.
+Keep interpretation out of the chain. Ideas, traditions, influences and developments are not
+items — put them in a NOTES section after the chain and say which items they rest on.
 
-Where the evidence stops, stop. Never fill a gap.
+Where the evidence stops, say so. Never fill a gap.
 """
 SYNTHESIZE_PROMPT = """\
 Below is research already gathered about "{title}". Turn it into the JSON structure at the
