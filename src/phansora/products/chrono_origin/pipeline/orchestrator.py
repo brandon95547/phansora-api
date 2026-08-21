@@ -52,7 +52,7 @@ from . import source_policy as sp
 from .prompts import (
     RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
-    EXTRACT_DOCTRINE,
+    EXPAND_DOCTRINE,
     EXPAND_SEARCH_PROMPT,
     expand_mode,
     format_existing_block,
@@ -1074,7 +1074,7 @@ class TraceOrchestrator:
             notes=answer.text,
             pages_block=pages_block,
             citations_block=_format_citations_block(citations),
-            extract_doctrine=EXTRACT_DOCTRINE,
+            expand_doctrine=EXPAND_DOCTRINE,
             max_events=req.max_events,
             mode_label=mode["label"],
             mode_extract=mode["extract"],

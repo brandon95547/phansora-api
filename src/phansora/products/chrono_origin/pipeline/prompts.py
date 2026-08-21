@@ -13,55 +13,6 @@ a summariser can actually do. Same behaviour, a fraction of the tokens, and the
 savings pay for reading real source pages instead.
 """
 from __future__ import annotations
-
-# ---------------------------------------------------------------------------
-# The evidence doctrine. Chrono Origin ranks a claim by the evidence you can
-# follow backwards from it, never by the reputation of whoever repeated it last.
-# Injected into DECOMPOSE and SYNTHESIZE only — the two stages that can act on it.
-# ---------------------------------------------------------------------------
-SOURCE_HIERARCHY = """\
-SOURCE TIERS — every source sits in one of these five. Record which.
-
-TIER 1 — PRIMARY EVIDENCE. The thing itself: earliest surviving manuscripts, inscriptions,
-  archaeological and excavation reports, government and court records, census returns, letters,
-  diaries, photographs, recordings, and newspapers published AT THE TIME of what they report.
-  Prefer the institution that actually holds or publishes the object — national archives,
-  libraries, museums, manuscript repositories, universities — and name it, with a shelfmark if
-  one is given. For any text you MUST record the estimated ORIGINAL COMPOSITION date separately
-  from the date of the EARLIEST SURVIVING PHYSICAL COPY. They are frequently centuries apart,
-  and conflating them is the single most common error in this kind of work.
-TIER 2 — SCHOLARLY ANALYSIS. Peer-reviewed articles, academic books, critical editions,
-  specialist scholarship. These are CONCLUSIONS and must be labeled as such — never silently
-  promoted to fact, however widely repeated.
-TIER 3 — SCHOLARLY DISCOVERY AND VERIFICATION. Crossref, DOIs, catalogue and index records.
-  These establish that a work exists, who wrote it, and where it sits in the literature. A DOI
-  does not make a claim true.
-TIER 4 — INSTITUTIONAL SECONDARY. Universities, government agencies, museums, libraries,
-  professional associations and research institutes writing ABOUT something they did not
-  themselves record. Useful for context; follow their citations backward.
-TIER 5 — GENERAL WEB. News organisations mainstream and alternative, independent researchers,
-  specialist sites, blogs, video, forums, Wikipedia, Reddit, social media, and search-result
-  snippets. These are LEAD GENERATORS, NOT EVIDENCE.
-
-The two rules that decide a trace:
-
-  NEVER let tiers 4-5 be the final evidentiary basis of a claim when the underlying primary or
-  scholarly source can reasonably be located. Use them to find it: ask what evidence THIS claim
-  cites, then follow the chain backward and cite what you find at the end of it.
-
-  If reliable evidence cannot be located, say UNKNOWN or UNVERIFIED. Do not fill the gap.
-  "None identified" is always a better answer than a guess, an assumed source, or a citation you
-  did not actually see. Absence of evidence is a finding, and this report exists to report it.
-
-Do not judge credibility by masthead. CNN, Fox, the BBC, a Substack and an independent
-researcher are all tier 5 by default and all promoted the same way: by what they can be followed
-back to. Ten websites repeating one article count as ONE source, not ten confirmations — say so
-explicitly when you detect it.
-"""
-
-
-# The short form, for stages that summarise rather than judge. Everything a
-# search step can actually act on, and nothing it cannot.
 SEARCH_DOCTRINE = """\
 EVIDENCE RULES for this summary:
 - Prefer original documents, artefacts and the repositories holding them over write-ups about them.
@@ -79,7 +30,7 @@ EVIDENCE RULES for this summary:
 # The extract stage assigns every source its tier and is the only stage that ever
 # saw none of the doctrine. It runs a handful of times per trace, not twenty, so
 # it can afford the vocabulary it is being asked to apply.
-EXTRACT_DOCTRINE = """\
+EXPAND_DOCTRINE = """\
 TIERS: 1 primary evidence (the object/record itself, or the archive, library or museum holding
 it) · 2 peer-reviewed and academic scholarship, critical editions · 3 Crossref/DOI/catalogue
 metadata · 4 institutional write-ups (university, museum, agency pages ABOUT something) ·
@@ -473,7 +424,7 @@ Research notes:
 Available citations (use these URLs verbatim):
 {citations_block}
 
-{extract_doctrine}
+{expand_doctrine}
 
 Return JSON:
 {{

@@ -232,25 +232,6 @@ class TestChasingLeads:
     def _tier(url: str) -> str:
         return sp.default_tier(url)
 
-    def test_only_claims_resting_on_leads_are_chased(self):
-        weak = {"claim": "weak", "citations": [WIKI], "confidence": 0.6}
-        strong = {"claim": "strong", "citations": [JSTOR], "confidence": 0.9}
-        targets = ev.chase_targets([weak, strong], self._tier, limit=5)
-        assert [t["claim"] for t in targets] == ["weak"]
-
-    def test_a_well_sourced_trace_pays_nothing(self):
-        strong = {"claim": "strong", "citations": [BL, JSTOR], "confidence": 0.9}
-        assert ev.chase_targets([strong], self._tier, limit=5) == []
-
-    def test_respects_its_budget(self):
-        weak = [{"claim": f"w{i}", "citations": [WIKI], "confidence": 0.5} for i in range(9)]
-        assert len(ev.chase_targets(weak, self._tier, limit=3)) == 3
-
-    def test_mining_selects_only_lead_pages(self):
-        cites = [{"url": WIKI}, {"url": JSTOR}, {"url": BL}, {"url": "https://www.reddit.com/r/x"}]
-        picked = ev.select_for_reference_mining(cites, self._tier, limit=5)
-        assert picked == [WIKI, "https://www.reddit.com/r/x"]
-
     def test_reading_still_refuses_to_read_leads(self):
         # Mining is a separate budget for a separate purpose, not a widening of
         # the reading set: a wiki's prose must still never reach the model.

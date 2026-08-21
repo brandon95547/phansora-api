@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from ..models import CLAIM_CLASS_BY_EVIDENCE_TYPE
-from .source_policy import EVIDENCE_RANK, READ_RANK, TIER_ORDER, WORST_RANK, rank_for
+from .source_policy import EVIDENCE_RANK, READ_RANK, TIER_ORDER, WORST_RANK
 
 # Two rankings, two questions, and conflating them makes traces worse.
 #
@@ -91,78 +91,6 @@ def claim_class_for(evidence_type: Any, declared: Any = None) -> str:
     if declared and declared == derived:
         return derived
     return derived
-
-
-# ------------------------------------------------------------------- mentions
-def dedupe_mentions(mentions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Collapse mentions describing the same source at the same date.
-
-    Rounds overlap heavily — the same manuscript surfaces in three of them — and
-    every duplicate used to be re-sent to the synthesis call and re-reasoned about.
-    The survivor keeps the highest confidence and the union of the citations, so
-    merging loses no evidence, only repetition.
-    """
-    merged: Dict[Tuple[str, Any], Dict[str, Any]] = {}
-    order: List[Tuple[str, Any]] = []
-
-    for m in mentions or []:
-        if not isinstance(m, dict):
-            continue
-        key = (_norm(m.get("source_title")), m.get("year"))
-        if not key[0] and key[1] is None:
-            continue
-        existing = merged.get(key)
-        if existing is None:
-            copy = dict(m)
-            copy["citations"] = list(dict.fromkeys(copy.get("citations") or []))
-            merged[key] = copy
-            order.append(key)
-            continue
-
-        # Union the citations; a mention seen from two angles is better evidenced.
-        cites = list(existing.get("citations") or []) + list(m.get("citations") or [])
-        existing["citations"] = list(dict.fromkeys(c for c in cites if c))
-        try:
-            if float(m.get("confidence", 0) or 0) > float(existing.get("confidence", 0) or 0):
-                existing["confidence"] = m.get("confidence")
-                if m.get("claim"):
-                    existing["claim"] = m["claim"]
-        except (TypeError, ValueError):
-            pass
-        # Absences fill in from whichever round actually found something. The
-        # type and the span belong on this list for the same reason the rest do:
-        # round two often recognises that what round one logged as a plain event
-        # is a text being composed, or that it ran to a second date, and a merge
-        # that dropped that would hand synthesis the poorer of the two readings.
-        for field in (
-            "surviving_copy", "chain", "era_label", "source_tier",
-            "node_type", "year_end", "published", "cites",
-        ):
-            if not existing.get(field) and m.get(field):
-                existing[field] = m[field]
-        # A lead stays flagged as a lead until a round finds better; only a
-        # round that produced a real citation clears it.
-        if m.get("discovery_only") and "discovery_only" not in existing:
-            existing["discovery_only"] = True
-
-    return [merged[k] for k in order]
-
-
-def new_mention_count(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]) -> int:
-    """How many of `incoming` are not already in `existing`.
-
-    The recursion's stop condition: a round that surfaces nothing new is a round
-    that will keep surfacing nothing new, and every further round costs a full set
-    of searches.
-    """
-    seen = {(_norm(m.get("source_title")), m.get("year")) for m in existing if isinstance(m, dict)}
-    fresh = 0
-    for m in incoming or []:
-        if not isinstance(m, dict):
-            continue
-        if (_norm(m.get("source_title")), m.get("year")) not in seen:
-            fresh += 1
-    return fresh
 
 
 # --------------------------------------------------------------------- chains
@@ -287,79 +215,6 @@ def select_for_reading(
         if domain and domain in seen_domains:
             continue
         seen_domains.add(domain)
-        chosen.append(url)
-        if len(chosen) >= limit:
-            break
-    return chosen
-
-
-# ------------------------------------------------------------ chasing leads
-# "Follow their references backward" was doctrine for as long as this product has
-# existed, and was never anything a caller could invoke. These two functions are
-# the mechanism: find the claims resting on leads, and find the lead pages whose
-# footnotes are worth harvesting. Neither spends a token.
-def chase_targets(
-    mentions: List[Dict[str, Any]],
-    tier_for: Any,
-    *,
-    limit: int,
-) -> List[Dict[str, Any]]:
-    """Mentions whose best citation is a lead (rank 4-5) rather than evidence.
-
-    Returns nothing when a trace is already well-sourced, so a strong subject
-    pays nothing for this pass. Weakest and least confident first: those are the
-    claims where finding the underlying source changes the answer.
-    """
-    if limit <= 0:
-        return []
-
-    scored: List[Tuple[int, float, int, Dict[str, Any]]] = []
-    for i, m in enumerate(mentions or []):
-        if not isinstance(m, dict):
-            continue
-        urls = [u for u in (m.get("citations") or []) if u]
-        if not urls:
-            continue
-        rank = min((EVIDENCE_RANK.get(tier_for(u), WORST_RANK) for u in urls), default=WORST_RANK)
-        if rank < 4:
-            continue  # already resting on something arguable
-        try:
-            conf = float(m.get("confidence", 0.5) or 0.5)
-        except (TypeError, ValueError):
-            conf = 0.5
-        scored.append((-rank, conf, i, m))
-
-    scored.sort(key=lambda t: (t[0], t[1], t[2]))
-    return [m for _, _, _, m in scored[:limit]]
-
-
-def select_for_reference_mining(
-    citations: List[Dict[str, Any]],
-    tier_for: Any,
-    *,
-    limit: int,
-) -> List[str]:
-    """Lead pages worth opening FOR THEIR FOOTNOTES ONLY.
-
-    The mirror image of select_for_reading, and deliberately not a widening of
-    it: that function picks pages to read for their prose, and its refusal to
-    read a wiki is correct and stays. This one opens exactly the pages that
-    function skips, takes only their reference lists, and never lets a word of
-    their text reach the model. Wikipedia becomes what the policy always said it
-    was — a lead generator — instead of either an evidentiary source or nothing.
-    """
-    if limit <= 0:
-        return []
-    chosen: List[str] = []
-    seen: set[str] = set()
-    for c in citations or []:
-        url = (c or {}).get("url") or ""
-        if not url or EVIDENCE_RANK.get(tier_for(url), WORST_RANK) < 5:
-            continue
-        domain = registrable_domain(url)
-        if domain and domain in seen:
-            continue
-        seen.add(domain)
         chosen.append(url)
         if len(chosen) >= limit:
             break

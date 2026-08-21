@@ -36,28 +36,6 @@ from phansora.products.chrono_origin.pipeline import source_policy as sp
 class TestStrandsSurviveADedupe:
     """Rounds overlap; the merge must keep the better reading, not the first one."""
 
-    def test_a_later_round_supplies_the_type_the_first_one_missed(self):
-        merged = ev.dedupe_mentions([
-            {"source_title": "Gospel of Mark", "year": 70, "citations": ["https://a"]},
-            {"source_title": "Gospel of Mark", "year": 70, "citations": ["https://b"],
-             "node_type": "text", "year_end": 80},
-        ])
-        assert len(merged) == 1
-        assert merged[0]["node_type"] == "text"
-        assert merged[0]["year_end"] == 80
-        assert merged[0]["citations"] == ["https://a", "https://b"]
-
-    def test_a_type_already_established_is_not_overwritten(self):
-        merged = ev.dedupe_mentions([
-            {"source_title": "P52", "year": 125, "node_type": "manuscript"},
-            {"source_title": "P52", "year": 125, "node_type": "event"},
-        ])
-        assert merged[0]["node_type"] == "manuscript"
-
-
-
-
-
 class TestATierIsNotWhateverTheModelSaysItIs:
     """The rule that makes the policy binding rather than decorative."""
 
