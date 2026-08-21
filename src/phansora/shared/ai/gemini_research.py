@@ -112,6 +112,19 @@ class GeminiConfig:
     api_key: str = ""
     model: str = ""
     reasoning_model: str = ""
+    # The model that does the SEARCHING, which is not the same job as the rest.
+    #
+    # Whether a search happens at all is the model's own call — `google_search` is
+    # elected, not commanded — and the cheap tiers routinely decline it, answer from
+    # recall, and return no groundingMetadata at all. Nothing in the prompt fixes that:
+    # gemini-3.5-flash-lite declined a research prompt AND declined the retry that put
+    # "you must search" in the system channel, then wrote a fluent from-memory list.
+    #
+    # So the tier is the lever, and it is worth setting on its own: grounding wants a
+    # model that reliably reaches for a tool, while synthesis is formatting work that a
+    # lite tier does perfectly well for a fraction of the price. Blank = use `model`,
+    # the same way a blank GEMINI_REASONING_MODEL falls through.
+    search_model: str = ""
     # Must stay under the caller's request budget, or a slow call outlives the handler
     # that is waiting on it and strands the worker running it.
     timeout_s: int = 90
@@ -120,10 +133,12 @@ class GeminiConfig:
     def from_env(cls) -> "GeminiConfig":
         from .models import resolve_model, resolve_reasoning_model
 
+        model = resolve_model("CHRONO_MODEL", provider="gemini")
         return cls(
             api_key=_env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY"),
-            model=resolve_model("CHRONO_MODEL", provider="gemini"),
+            model=model,
             reasoning_model=resolve_reasoning_model("CHRONO_MODEL", provider="gemini"),
+            search_model=_env("GEMINI_SEARCH_MODEL") or model,
             timeout_s=int(_env("GEMINI_TIMEOUT_S", "90")),
         )
 
@@ -201,13 +216,18 @@ class GeminiResearchClient:
             # alongside a search tool, and the two stages want different things anyway.
             body["generationConfig"]["responseMimeType"] = "application/json"
 
+        # The key goes in a header. As a query parameter it lands in httpx's INFO log
+        # line, which is how a live key came to sit in prod's journal in plaintext,
+        # readable by anything that can run journalctl and kept in the archives.
         url = f"{_API_ROOT}/{model}:generateContent"
         with httpx.Client(timeout=self._cfg.timeout_s) as client:
             resp = client.post(
                 url,
-                params={"key": self._cfg.api_key},
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": self._cfg.api_key,
+                },
             )
         if resp.status_code >= 400:
             raise RuntimeError(f"Gemini {resp.status_code}: {resp.text[:400]}")
@@ -310,9 +330,13 @@ class GeminiResearchClient:
 
         # The model answered from memory. `google_search` is model-ELECTED: unlike the
         # retired `google_search_retrieval` it carries no threshold that can force a
-        # lookup, so there is no config switch to flip here and no prompt wording that
-        # guarantees it. Asking once more, with the obligation stated in the system
-        # channel, is the only lever left that does not touch the research prompt.
+        # lookup, so nothing here can require one and no prompt wording guarantees it.
+        # Asking once more with the obligation in the system channel is the only lever
+        # inside a single call that does not touch the research prompt.
+        #
+        # It is not much of a lever. A tier that declines the tool declines it twice —
+        # measured, not assumed — so when this fires for every trace the answer is
+        # GEMINI_SEARCH_MODEL, not another retry.
         logger.warning("Gemini answered without searching; asking again with search made explicit.")
         answer = self._grounded_attempt(prompt, temperature=temperature, system=_SEARCH_SYSTEM)
         if answer is not None:
@@ -324,7 +348,8 @@ class GeminiResearchClient:
         # no evidence exists.
         logger.warning(
             "Gemini answered without searching on the retry too; discarding an ungrounded "
-            "answer rather than treating recall as research."
+            "answer rather than treating recall as research. If this is every trace rather "
+            "than the odd one, the model tier is the cause: set GEMINI_SEARCH_MODEL."
         )
         return GroundedAnswer(text="", citations=[], queries=[])
 
@@ -336,7 +361,7 @@ class GeminiResearchClient:
         is not worth retrying here — the transport already retried three times."""
         try:
             data = self._generate(
-                model=self._cfg.model,
+                model=self._cfg.search_model or self._cfg.model,
                 prompt=prompt,
                 temperature=temperature,
                 max_tokens=_SEARCH_MAX_TOKENS,
@@ -364,6 +389,17 @@ class GeminiResearchClient:
         queries = self._queries_of(data)
 
         if not citations and not queries:
+            # Nothing in the response says a search happened. Log what came back
+            # instead, because a fluent answer with no groundingMetadata is exactly
+            # what recall looks like, and it is otherwise indistinguishable from a
+            # thin one in the logs.
+            logger.warning(
+                "%s returned no groundingMetadata (%d chars of ungrounded text). "
+                "Whether to search is the model's own decision; set GEMINI_SEARCH_MODEL "
+                "to a tier that reliably takes the tool.",
+                self._cfg.search_model or self._cfg.model,
+                len(self._text_of(data)),
+            )
             return None
 
         if not citations:

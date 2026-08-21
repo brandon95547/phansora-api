@@ -413,3 +413,101 @@ def test_a_transport_failure_is_not_mistaken_for_an_ungrounded_answer(monkeypatc
 
     assert len(calls) == 1, "a failed call must not be retried as if it were ungrounded"
     assert out.text == "" and out.citations == []
+
+
+# ------------------------------------------------------- searching is its own job
+# Whether a search happens is the model's decision, and the lite tiers decline it,
+# answer from memory and return no groundingMetadata — which Chrono-Origin can only
+# treat as a failed trace. The tier is the one lever that does not touch the research
+# prompt, so it has to be settable without dragging synthesis up in price with it.
+def test_the_grounded_call_uses_the_search_model(monkeypatch):
+    c = G.GeminiResearchClient(cfg(model="chat-model", search_model="search-model"))
+    seen = {}
+    monkeypatch.setattr(
+        c, "_generate",
+        lambda **kw: seen.update(kw) or grounded_body(
+            chunks=(("https://x.test/a", "x.test"),), queries=("q",)),
+    )
+
+    c.grounded_search("p")
+    assert seen["model"] == "search-model"
+
+
+def test_the_search_model_falls_through_to_the_model_when_unset(monkeypatch):
+    c = G.GeminiResearchClient(cfg(model="chat-model"))
+    seen = {}
+    monkeypatch.setattr(
+        c, "_generate",
+        lambda **kw: seen.update(kw) or grounded_body(
+            chunks=(("https://x.test/a", "x.test"),), queries=("q",)),
+    )
+
+    c.grounded_search("p")
+    assert seen["model"] == "chat-model"
+
+
+def test_a_search_model_does_not_take_over_synthesis(monkeypatch):
+    """The point of the split: pay for grounding where grounding happens, and leave
+    the formatting call on the cheap tier that does it perfectly well."""
+    c = G.GeminiResearchClient(cfg(model="chat-model", search_model="search-model"))
+    seen = {}
+    monkeypatch.setattr(c, "_generate", lambda **kw: seen.update(kw) or json_body({}))
+
+    c.reason_json("p", use_reasoning_model=False)
+    assert seen["model"] == "chat-model"
+
+
+def test_the_search_model_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL", "chat-model")
+    monkeypatch.setenv("GEMINI_SEARCH_MODEL", "search-model")
+    monkeypatch.delenv("CHRONO_MODEL", raising=False)
+
+    assert G.GeminiConfig.from_env().search_model == "search-model"
+
+
+def test_an_unset_search_model_means_the_configured_model(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_MODEL", "chat-model")
+    monkeypatch.delenv("GEMINI_SEARCH_MODEL", raising=False)
+    monkeypatch.delenv("CHRONO_MODEL", raising=False)
+
+    cfg_ = G.GeminiConfig.from_env()
+    assert cfg_.search_model == "chat-model"
+
+
+# ------------------------------------------------------------------- the transport
+def test_the_api_key_travels_in_a_header_not_the_url(monkeypatch):
+    """As a query parameter the key is logged verbatim by httpx at INFO, which put a
+    live key in prod's journal and its archives."""
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"candidates": []}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def post(self, url, **kw):
+            captured["url"] = url
+            captured.update(kw)
+            return FakeResponse()
+
+    monkeypatch.setattr(G.httpx, "Client", FakeClient)
+    c = G.GeminiResearchClient(cfg(api_key="secret-key"))
+
+    c.reason_json("p")
+    assert "secret-key" not in captured["url"]
+    assert "params" not in captured
+    assert captured["headers"]["x-goog-api-key"] == "secret-key"
