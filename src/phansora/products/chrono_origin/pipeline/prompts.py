@@ -118,32 +118,7 @@ name what THEY cite so it can be chased. Never fill an unknown with a plausible 
 # ---------------------------------------------------------------------------
 
 RESEARCH_PROMPT = """\
-Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from
-memory. Every item must come from a search you actually ran.
-
-Work backward first, then present forward.
-
-Find the earliest surviving evidence directly about "{title}". Then answer this by searching:
-
-  "What older, already-existing thing does that evidence draw on — quoting it, citing it,
-   translating it, copying its text, depicting it, or being built from it?"
-
-Find the oldest surviving evidence of THAT older thing: what it is, its date, and the
-institution holding it. Then ask the same question of what you just found, and again, until
-a search genuinely returns nothing older.
-
-Drawing on a different, older thing is a step back. A later copy, edition or reissue of the
-SAME thing is not — a work and its copies are one lineage, and the work is the older entry.
-
-Run at least eight separate searches with different queries. Cover each of these, and say so
-when one is empty:
-
-- the earliest surviving texts or records about the subject, with composition dates
-- the physical objects carrying them: shelfmark, repository, date
-- the older works those texts quote, translate, or are built from
-- the oldest surviving witnesses of those older works
-- sources from outside the subject's own tradition
-- inscriptions, artifacts, excavated finds, instruments, registers
+Using live web search, trace the complete historical, material, and conceptual lineage of "{title}"{context_clause}, starting from the absolute earliest known foundational bedrock (such as pre-existing texts, raw materials, or primitive prototypes, even if dating deep into the BCE or prehistoric era) Do not answer from memory. Every item must come from a search you actually ran. Follow every subsequent layer—from those root materials through intermediate adaptations, translations, or lost documents, down into later codified practices. Show how each stage built upon or derived its concepts from the preceding material, and present the complete trace chronologically from the oldest roots forward to its 1st-century or later historical expressions.
 
 Then present everything forward in date order. For each item:
 
@@ -161,7 +136,6 @@ items — put them in a NOTES section after the chain and say which items they r
 
 Where the evidence stops, say so. Never fill a gap.
 """
-
 
 EXTRACT_PROMPT = """\
 From the research material below, extract every distinct historical item relating to "{title}".
