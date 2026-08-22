@@ -119,5 +119,14 @@
     "speed": 1.0,
     "instruct_text": "",
     "ref_text": "The night sky is ablaze with stars."
+  },
+  {
+    "id": "94278b987f804bf4",
+    "name": "Icarus - Child",
+    "created_at": 1787425404.5173762,
+    "language": "en",
+    "speed": 1.0,
+    "instruct_text": "",
+    "ref_text": "The Little Red Hen edited by Hamilton Wright, maybe, Edward Everett Hale."
   }
 ]
