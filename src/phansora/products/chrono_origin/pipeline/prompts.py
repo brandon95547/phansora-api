@@ -311,16 +311,19 @@ EXPAND_MODES = {
         "label": "Path to Discovery",
         "search": (
             "the surviving RECORDS of how this first emerged, was documented or became "
-            "known: the excavation report, the first publication announcing it, field "
-            "notes, the observation or experiment that established it, the filing or "
-            "patent, the accession or purchase record, the paper that deciphered or "
-            "identified it — with dates, authors and where each is held"
+            "known — whichever of these a subject of this kind actually has: the earliest "
+            "surviving text, account or depiction of it, the first publication announcing "
+            "it, the report of the excavation, observation or experiment that established "
+            "it, the patent or filing, the notes, drawings or photographs made at the time, "
+            "the accession record, the study that identified or deciphered it — with dates, "
+            "authors, and where each is held"
         ),
         "extract": (
-            "Return the surviving records that document how this became known — the report, "
-            "the first published announcement, the notes, the photographs, the accession "
-            "record. The discovery ITSELF is an event and cannot be a step; the record that "
-            "captures it is a document and can. Date each to when the record was made."
+            "Return the surviving records that document how this became known — the earliest "
+            "account or depiction of it, the first published announcement, the report, the "
+            "notes, the accession record. The emergence or discovery ITSELF is an event and "
+            "cannot be a step; the record that captures it is a document and can. Date each "
+            "to when the record was made."
         ),
     },
     "earlier": {
@@ -398,9 +401,10 @@ ALREADY ON THE TIMELINE. These are shown to the user already, so finding them ag
 adds nothing. Search past them:
 {existing_block}
 
-Write a concise (<= 350 words) factual summary naming specific dates, manuscript names,
-shelfmarks, repositories, authors, places and cultures whenever the sources do. Do not
-speculate beyond the cited sources.
+Write a concise (<= 350 words) factual summary naming specific dates, titles, authors,
+places and cultures whenever the sources do — and whatever else identifies a thing of this
+kind: a shelfmark and repository for a manuscript, a patent number, a catalogue or
+accession number, a site, an edition. Do not speculate beyond the cited sources.
 """
 
 

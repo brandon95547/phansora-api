@@ -310,6 +310,26 @@ def test_every_mode_aims_both_stages():
         assert len(spec["extract"]) > 40, f"{name} has no extraction directive"
 
 
+def test_an_expansion_keeps_a_kind_its_vocabulary_has_no_word_for():
+    """A branch on a subject that is not a manuscript must survive its own label.
+
+    node_type's nine values are documentary — text, manuscript, scroll, letter,
+    inscription, document, record, artifact, archaeological_find. Trace something those
+    words were not written for and the honest label is "invention" or "technique", which
+    is not among them. Expand used to DROP such an entry, so the further a subject sat
+    from a manuscript the less an expansion returned, and it said nothing about it.
+    """
+    for odd in ("invention", "technique", "practice", "", None):
+        assert not orch.is_node_kind(odd)
+        # what the pipeline does with it: relabel, never discard
+        assert (odd if orch.is_node_kind(odd) else "event") == "event"
+
+    # and a kind it DOES know is passed through untouched, not flattened to the default
+    for known in ("artifact", "text", "inscription", "event"):
+        assert orch.is_node_kind(known)
+        assert (known if orch.is_node_kind(known) else "event") == known
+
+
 def test_an_unknown_mode_falls_back_rather_than_failing():
     from phansora.products.chrono_origin.pipeline.prompts import expand_mode
 

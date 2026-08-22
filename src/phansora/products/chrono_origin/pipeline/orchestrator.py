@@ -1249,10 +1249,19 @@ class TraceOrchestrator:
                 # node, and "in 1947 shepherds found jars in a cave" is the true answer
                 # to how the scrolls were discovered — refusing it because a shepherd is
                 # not an artefact is what made three of the six modes unanswerable.
-                kind = entry.get("node_type")
-                if not (is_evidence_kind(kind) or kind == "event"):
-                    logger.info("Expand: dropped unusable kind %r for %r", kind, entry.get("source_title"))
-                    continue
+                # An unrecognised kind is RELABELLED, not dropped — the same rule the
+                # chain uses. node_type is a display label backed by a pydantic Literal,
+                # and its nine values are documentary: text, manuscript, scroll, letter,
+                # inscription, document, record, artifact, archaeological_find. Expand a
+                # subject those words were not written for — a kite, an alloy, a piece of
+                # music — and the honest label is "invention" or "technique", which is not
+                # in the list. Dropping meant the further a subject sat from a manuscript,
+                # the less an expansion returned, and it returned it silently.
+                raw_kind = entry.get("node_type")
+                if not is_node_kind(raw_kind):
+                    logger.info("Expand: relabelled unknown kind %r as event for %r", raw_kind, entry.get("source_title"))
+                kind = raw_kind if is_node_kind(raw_kind) else "event"
+
                 if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
                     logger.info("Expand: dropped undated %r", entry.get("source_title"))
                     continue
@@ -1267,8 +1276,15 @@ class TraceOrchestrator:
                     TimelineEvent(
                         id=event_id,
                         year=entry.get("year"),
+                        year_end=entry.get("year_end") if isinstance(entry.get("year_end"), int) else None,
                         era_label=entry.get("era_label"),
                         precision=entry.get("precision", "unknown"),
+                        # Carried through. It was computed and then thrown away, so every
+                        # branch on the board arrived as the field's default, "text" — a
+                        # Han-dynasty kite and the excavation report that describes it drew
+                        # the same icon and read as the same kind of thing.
+                        node_type=kind,
+                        attribution=_attribution(entry.get("attribution")),
                         source_title=entry.get("source_title", "Unknown"),
                         claim=entry.get("claim", ""),
                         citations=to_citations(entry_cites),
