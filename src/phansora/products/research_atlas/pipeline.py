@@ -26,7 +26,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import extraction, neutrality, report
 from .config import Config

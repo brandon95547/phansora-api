@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from .embeddings import EmbeddingStore
-from .provenance import is_grounded
 from .utils import split_paragraphs
 
 
@@ -188,66 +187,6 @@ def compute_duplication_ratio(
 # ------------------------------------------------------------------
 # 3b. Provenance — is every word in the dossier actually from a source?
 # ------------------------------------------------------------------
-
-def compute_provenance(
-    sections: List[Dict[str, Any]],
-    sources: List[Dict[str, str]],
-) -> Dict[str, Any]:
-    """
-    Audit the finished dossier body against the documents it was built from.
-
-    Coverage (above) asks how much of the SOURCE reached the dossier. This asks the
-    opposite and more important question: does anything in the DOSSIER have no source?
-    That is the direction editorializing travels, and until now nothing measured it.
-
-    Every section is checked against its own source first, then against the others — a
-    passage attributed to the wrong file is a labeling bug, not an invention, and the two
-    deserve different names in the report.
-
-    Returns character-weighted figures, not per-section ones: one fabricated paragraph
-    among fifty short quotes matters more than the section count suggests.
-    """
-    by_label = {s.get("label", ""): (s.get("text") or "") for s in (sources or [])}
-    all_text = "\n\n".join(by_label.values())
-
-    total_chars = 0
-    grounded_chars = 0
-    misattributed = 0
-    ungrounded_sections: List[Dict[str, str]] = []
-
-    for sec in sections:
-        text = (sec.get("text") or "").strip()
-        if not text:
-            continue
-        n = len(text)
-        total_chars += n
-        label = sec.get("source_label", "") or ""
-
-        own = by_label.get(label)
-        if own and is_grounded(text, own):
-            grounded_chars += n
-            continue
-
-        # Not in the file it claims — but is it in ANY file?
-        if all_text and is_grounded(text, all_text):
-            grounded_chars += n
-            misattributed += 1
-            continue
-
-        ungrounded_sections.append({
-            "source_label": label,
-            "excerpt": text[:160],
-        })
-
-    ratio = (grounded_chars / total_chars) if total_chars else 1.0
-    return {
-        "grounded_ratio": ratio,
-        "total_chars": total_chars,
-        "grounded_chars": grounded_chars,
-        "misattributed_sections": misattributed,
-        "ungrounded_sections": ungrounded_sections,
-    }
-
 
 # ------------------------------------------------------------------
 # 4. Loss report generation (extended)

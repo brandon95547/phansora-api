@@ -1,19 +1,23 @@
-"""End-to-end trace pipeline: decompose -> search -> extract+plan -> read -> synthesize.
+"""The trace pipeline: research -> synthesize -> build response.
 
 Two principles govern the shape of this file.
 
 TOKENS BUY JUDGEMENT, NOT REPETITION. Anything deterministic — deduplicating
 mentions, deciding which sources are one source repeated, turning an evidence
 type into a claim class — happens in ``evidence.py`` for free. The model is asked
-only for what it alone can do: read sources, weigh them, and say what is missing.
-The loop stops as soon as a round adds nothing new rather than running to a fixed
-depth, because a round that found nothing will keep finding nothing.
+only for what it alone can do: search, read what it finds, and weigh it.
 
-EVIDENCE IS READ, NOT RECALLED. Search returns titles and URLs; on the OpenAI
-path it does not even return snippets. A provenance claim built on that is the
-model's memory wearing a citation. So before synthesis the pipeline opens the few
-highest-tier pages and reads them, and every claim records whether it rests on
-text we actually saw.
+ONE PLACE DECIDES. ``RESEARCH_PROMPT`` holds every rule about what qualifies as a
+step in a chain of descent. Synthesis is a FORMATTER: it maps what the research
+returned onto the timeline schema and does not re-judge it. There used to be a
+second set of rules downstream, worded differently, and the two disagreed — the
+downstream one silently won, which is why work-level entries (the Hebrew
+scriptures, say) never reached a timeline that its own research had named.
+
+A trace is one grounded call. The provider's model searches for itself and the
+citations come back attached to the answer, so there is no separate search,
+decompose or read stage here. ``expand()`` is the exception and still reads pages
+directly: it works from an item already on the board rather than from a search.
 """
 from __future__ import annotations
 

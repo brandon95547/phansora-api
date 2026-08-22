@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Iterable, List, Sequence, Tuple
 
 # ---------------------------------------------------------------------------
 # What the model is told

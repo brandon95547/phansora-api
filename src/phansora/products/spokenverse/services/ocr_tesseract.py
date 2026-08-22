@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass
-from typing import Optional
 
 import pytesseract
 from PIL import Image
@@ -53,19 +52,3 @@ def ocr_image_bytes(
     )
     return (text or "").strip()
 
-
-def ocr_image_file(
-    image_path: str,
-    *,
-    cfg: TesseractOCRConfig = TesseractOCRConfig(),
-) -> str:
-    """
-    OCR a single image file path and return raw extracted text.
-    """
-    img = Image.open(image_path).convert("RGB")
-    text = pytesseract.image_to_string(
-        img,
-        lang=cfg.lang,
-        config=cfg.to_tesseract_config(),
-    )
-    return (text or "").strip()

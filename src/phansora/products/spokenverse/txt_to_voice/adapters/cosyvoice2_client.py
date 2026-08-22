@@ -123,13 +123,6 @@ def _cuda_available() -> bool:
     return bool(torch.cuda.is_available())
 
 
-def _resolve_language(language: Optional[str]) -> str:
-    lang = (language or "").strip().lower()
-    if not lang:
-        lang = _env("COSYVOICE2_LANGUAGE", LANGUAGE_DEFAULT).lower()
-    return lang if lang in LANGUAGES else LANGUAGE_DEFAULT
-
-
 def _repo() -> Path:
     repo = _env("COSYVOICE2_REPO")
     if not repo:

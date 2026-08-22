@@ -16,10 +16,6 @@ from typing import Awaitable, Callable
 
 LOG = logging.getLogger("txt_to_voice")
 
-_COSYVOICE2_ALIASES = {
-    "cosyvoice2", "cosyvoice", "cosy-voice", "cosy_voice", "cosy", "cosyvoice-2",
-    "default", "",
-}
 # Engines that used to exist here; a leftover TTS_ENGINE / --engine pointing at one
 # degrades to CosyVoice2 with a warning rather than crashing every request.
 _RETIRED_ALIASES = {

@@ -134,11 +134,6 @@ def plan_phases(lessons: list[dict], *, cap_seconds: int = PHASE_TARGET_SECONDS)
     ]
 
 
-def sessions_for_phase(phase: dict) -> range:
-    """The inclusive session-ordinal span of a phase, as a range."""
-    return range(int(phase["session_start"]), int(phase["session_end"]) + 1)
-
-
 def _secs(group: list[dict]) -> int:
     return sum(max(0, int(item.get("seconds") or 0)) for item in group)
 

@@ -110,7 +110,6 @@ into parts — which is what ``SEGMENT_SYSTEM`` below asks for.
 """
 from __future__ import annotations
 
-import json
 
 # Raised from 8 when the index became the coverage contract rather than a hint
 # for boundary placement. At 8, a dense excerpt silently shed ideas that the

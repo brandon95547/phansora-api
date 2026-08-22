@@ -25,7 +25,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from phansora.shared.auth import enforce_user_scope
