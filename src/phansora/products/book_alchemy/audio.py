@@ -49,6 +49,7 @@ async def render_script_to_audio(
     voice: str = "default",
     output_format: str = "mp3",
     speed: Optional[float] = None,
+    instruct_text: Optional[str] = None,
 ) -> int:
     """Synthesize ``script`` to ``out_path`` via the shared TTS endpoint.
 
@@ -68,6 +69,11 @@ async def render_script_to_audio(
     form.add_field("output_format", output_format)
     if speed is not None:
         form.add_field("speed", str(speed))
+    # Delivery direction, e.g. "read this calmly". Sent only when the project asked
+    # for one: the endpoint falls back to the voice's OWN saved instruct_text when
+    # the field is absent, and a blank string would override that with nothing.
+    if instruct_text:
+        form.add_field("instruct_text", instruct_text)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)

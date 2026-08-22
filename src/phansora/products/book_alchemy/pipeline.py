@@ -1189,6 +1189,9 @@ async def _phase_audio(project: dict) -> None:
 
     options = _as_dict(project.get("options"))
     voice = str(options.get("voice") or "default")
+    # Chosen once for the course, applied to every lesson — the narrator should not
+    # change character between session 3 and session 4.
+    instruct_text = str(options.get("instruct_text") or "").strip() or None
     # Pass the raw voice id + user_id to the shared txt-to-audio endpoint; it
     # resolves a cloned voice id -> its reference clip and its stored transcript
     # (ref_text -> prompt_text). (Resolving to a path here would make the endpoint
@@ -1197,6 +1200,7 @@ async def _phase_audio(project: dict) -> None:
     seconds = await render_script_to_audio(
         script=sess["script"], out_path=out_path,
         user_id=project["user_id"], voice=voice,
+        instruct_text=instruct_text,
     )
 
     await db.set_session(

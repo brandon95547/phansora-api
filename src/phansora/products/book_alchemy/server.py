@@ -245,6 +245,10 @@ if _BOOK_ALCHEMY_OK:
         text: str = Form("", max_length=2_000_000),
         voice: str = Form("default"),
         depth: str = Form(""),
+        # Delivery direction for the narration, e.g. "read this calmly". Bounded to
+        # match the field's own data-max-chars; long instructions weaken the voice
+        # match, and this rides on every lesson in the course.
+        instruct_text: str = Form("", max_length=200),
         file: Optional[UploadFile] = File(None),
     ) -> dict:
         uid = _ba_user_id(user_id)
@@ -277,7 +281,11 @@ if _BOOK_ALCHEMY_OK:
         project_id = await ba_db.create_project(
             user_id=uid, name=proj_name, source_format=fmt,
             source_path=None, source_url=(url or None),
-            options={"voice": voice, "depth": _ba_depth(depth)},
+            options={
+                "voice": voice,
+                "depth": _ba_depth(depth),
+                "instruct_text": (instruct_text or "").strip(),
+            },
             max_projects=limit,
         )
         if project_id is None:  # raced another upload past the pre-check
