@@ -291,11 +291,11 @@ def test_the_reasoning_budget_starts_where_the_work_lands():
 # Expanding exists to GROW a timeline. Unaimed, an expansion mostly returns the
 # anchor's own neighbours — ask around Paul's letters and the gospels come back,
 # which are already the next step along.
-def test_the_six_modes_are_the_ones_the_dialog_offers():
+def test_the_three_modes_are_the_ones_the_dialog_offers():
     from phansora.products.chrono_origin.models import ExpandMode
     from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
 
-    ids = {"discovery", "preservation", "verification", "related", "earlier", "later"}
+    ids = {"discovery", "earlier", "context"}
     assert set(ExpandMode.__args__) == ids
     assert set(EXPAND_MODES) == ids, "model vocabulary and prompt directives have drifted"
 
@@ -313,8 +313,12 @@ def test_every_mode_aims_both_stages():
 def test_an_unknown_mode_falls_back_rather_than_failing():
     from phansora.products.chrono_origin.pipeline.prompts import expand_mode
 
-    assert expand_mode("nonsense")["label"] == "Related Evidence"
-    assert expand_mode(None)["label"] == "Related Evidence"
+    assert expand_mode("nonsense")["label"] == "Path to Discovery"
+    assert expand_mode(None)["label"] == "Path to Discovery"
+    # The dialog used to offer six. A client holding one of the three retired ids gets
+    # an expansion, not a 500 — the Node route drops what it cannot name, so a stale
+    # value arrives here as absent rather than as itself.
+    assert expand_mode("preservation")["label"] == "Path to Discovery"
 
 
 def test_what_is_already_shown_is_named_for_the_model():
@@ -399,7 +403,7 @@ def test_the_anchor_is_what_the_fallback_angle_picks_up():
     from phansora.products.chrono_origin.pipeline import prompts as P
     from phansora.shared.ai.deepseek_research import _QUOTED
 
-    m = P.expand_mode("related")
+    m = P.expand_mode("context")
     out = P.EXPAND_SEARCH_PROMPT.format(
         story_title="Jesus Christ", context_clause="", when="", parent_source_title="Dead Sea Scrolls",
         parent_claim="c", search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],

@@ -468,19 +468,22 @@ class TraceResponse(BaseModel):
 # an unaimed expansion mostly returns the neighbours the chain already has: ask for
 # "related sub-events" around Paul's letters and you get the gospels back, which are
 # already the next step along. Each mode points the search at a different axis, so
-# six expansions of one node produce six different kinds of finding rather than six
+# expanding one node three times produces three kinds of finding rather than three
 # rewordings of one.
+#
+# Three, and these three. There were six, which asked the reader to tell "Path to
+# Preservation" from "Related Evidence" before they could spend a call — a distinction
+# that means something to this pipeline and nothing to someone looking at a card. These
+# are the three questions people actually arrive with: how did we come to know this,
+# what came before it, and what was going on around it.
 #
 # Deliberately subject-agnostic. These have to read the same way for a manuscript, a
 # telescope observation, a treaty, an excavation and a patent, because Chrono Origin
 # does not know which it is looking at.
 ExpandMode = Literal[
-    "discovery",     # how this became known to us
-    "preservation",  # how it survived or was carried forward
-    "verification",  # how what we know about it was established
-    "related",       # other evidence directly connected to it
-    "earlier",       # evidence before it that fills a gap
-    "later",         # what it influenced or contributed to afterwards
+    "discovery",  # how this first emerged, was documented, became known
+    "earlier",    # what came before it and fed into it
+    "context",    # what surrounded it at the time
 ]
 
 
@@ -496,7 +499,7 @@ class ExpandRequest(BaseModel):
     context: Optional[str] = Field(default=None, description="Optional disambiguating context for the overall story.")
     max_events: int = Field(default=6, ge=1, le=12, description="Max sub-events to return.")
     mode: ExpandMode = Field(
-        default="related",
+        default="discovery",
         description="Which axis to expand along. See ExpandMode.",
     )
     # What the board already shows. An expansion that returns the step sitting next to

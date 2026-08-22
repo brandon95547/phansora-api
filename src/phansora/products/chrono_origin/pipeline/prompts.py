@@ -294,100 +294,73 @@ OUTPUT:
 # treaty, an excavation and a patent alike. Chrono Origin does not know which kind of
 # subject it is looking at, so a directive that assumes documents would quietly fail on
 # half the product's range.
+# The three axes an expansion can be aimed at.
+#
+# There were six. Four of them — preservation, verification, related, later — asked the
+# reader to tell "Path to Preservation" from "Related Evidence" before they could spend a
+# call, which is a distinction this pipeline cares about and a person looking at a card
+# does not. These three are the questions people actually arrive with.
+#
+# `search` points the search at a topic. `extract` is the one that can REJECT, and it earns
+# its place: pointed at a topic alone the model returns the anchor's own neighbours, already
+# on the board. Both stay subject-agnostic — a node may be a manuscript, an observation, a
+# treaty, a patent or a piece of software, and Chrono Origin does not know which.
 EXPAND_MODES = {
     "discovery": {
-        "query": "oldest surviving manuscript discovery excavation found",
+        "query": "discovered excavation first published announced found record",
         "label": "Path to Discovery",
         "search": (
-            "the surviving RECORDS of how this came to be known: the excavation report, the "
-            "first publication announcing it, field notes, site photographs, the accession or "
-            "purchase record, the paper that deciphered or identified it — with dates, authors "
-            "and where each is held"
+            "the surviving RECORDS of how this first emerged, was documented or became "
+            "known: the excavation report, the first publication announcing it, field "
+            "notes, the observation or experiment that established it, the filing or "
+            "patent, the accession or purchase record, the paper that deciphered or "
+            "identified it — with dates, authors and where each is held"
         ),
         "extract": (
-            "Return the surviving records that document how this became known — the excavation "
-            "report, the first published announcement, the field notes, the photographs, the "
-            "accession record. The DISCOVERY ITSELF is an event and cannot be a step; the report "
-            "that records it is a document and can. Date each to when the record was made."
-        ),
-    },
-    "preservation": {
-        "query": "manuscript transmission copies custody conservation",
-        "label": "Path to Preservation",
-        "search": (
-            "the surviving objects and records that carried this forward: later copies, "
-            "translations, editions, conservation and restoration reports, inventories, catalogues "
-            "and archive records naming it, with their dates and repositories"
-        ),
-        "extract": (
-            "Return the surviving things that did the carrying — the copies, the translations, "
-            "the editions, the conservation report, the inventory or catalogue entry that proves "
-            "it was held somewhere at a date. Each is an object with its own date, not a statement "
-            "that the subject survived."
-        ),
-    },
-    "verification": {
-        "query": "radiocarbon dating authentication palaeography analysis",
-        "label": "Path to Verification",
-        "search": (
-            "the surviving reports of tests and analysis: radiocarbon and scientific dating "
-            "papers, palaeographic studies, provenance and authentication reports, forensic "
-            "examinations, and published challenges to its authenticity"
-        ),
-        "extract": (
-            "Return the published reports and studies that establish or dispute what is known — "
-            "the dating paper, the analysis, the authentication report, the article contesting it. "
-            "The test is an event; the paper reporting it is a text, and that is the step. A report "
-            "concluding something is FALSE belongs here as much as one confirming it."
-        ),
-    },
-    "related": {
-        "query": "associated finds same site archive catalogue",
-        "label": "Related Evidence",
-        "search": (
-            "other surviving evidence DIRECTLY connected to this: companion finds from the same "
-            "site, hoard or archive, works by the same hand, contemporaneous records naming it, "
-            "objects catalogued alongside it"
-        ),
-        "extract": (
-            "Return other surviving evidence with a direct, statable relationship to the anchor — "
-            "found with it, produced by the same hand, naming it, held with it. Name the "
-            "relationship in the claim. Proximity in time alone is not a relationship."
+            "Return the surviving records that document how this became known — the report, "
+            "the first published announcement, the notes, the photographs, the accession "
+            "record. The discovery ITSELF is an event and cannot be a step; the record that "
+            "captures it is a document and can. Date each to when the record was made."
         ),
     },
     "earlier": {
-        "query": "earlier sources older manuscript predecessor origins",
-        "label": "Earlier Evidence",
+        "query": "earlier sources predecessors origins influences tradition",
+        "label": "Earlier Origins",
         "search": (
-            "surviving evidence from BEFORE this that bears on its origin: what it was copied "
-            "from, drew on, translated or replaced, and older objects and texts in the same "
-            "tradition"
+            "what came BEFORE this and fed into it: earlier sources, predecessor works, "
+            "influences, traditions, inventions, materials and ideas it drew on, was "
+            "copied or translated from, replaced, or otherwise descends from"
         ),
         "extract": (
-            "Return surviving evidence PREDATING the anchor that fills a gap in how it came about. "
-            "It must be genuinely earlier and genuinely new — the point is the missing stretch of "
-            "timeline, not the step that already sits before this one."
+            "Return evidence PREDATING the anchor that contributed to how it came about — "
+            "the source it drew on, the predecessor it replaced, the tradition it belongs "
+            "to, the earlier invention or idea behind it. It must be genuinely earlier and "
+            "genuinely new: the point is the missing stretch of timeline, not the step that "
+            "already sits before this one."
         ),
     },
-    "later": {
-        "query": "later citations quoted influence reception",
-        "label": "Later Influence",
+    "context": {
+        "query": "contemporary events culture society technology at the time",
+        "label": "Historical Context",
         "search": (
-            "surviving later evidence showing this had an effect: texts that quote, copy, answer "
-            "or build on it, and works that cite it by name"
+            "what was happening AROUND this at the time: contemporaneous events, the "
+            "culture and society it sat in, the people and institutions involved, the "
+            "technologies and materials available, the beliefs of the period, and the "
+            "circumstances that explain its place in history"
         ),
         "extract": (
-            "Return surviving later evidence showing this had an effect — texts that quote, reuse, "
-            "answer or build on it, with the route named. It must be genuinely new: the step that "
-            "already follows this one on the timeline is not an influence."
+            "Return contemporaneous evidence that situates the anchor — surviving records "
+            "of the events, people, institutions, technologies and conditions around it. "
+            "Each must be a dated source in its own right, and the claim must say how it "
+            "bears on the anchor. Sharing a century is not a relationship."
         ),
     },
 }
 
 
 def expand_mode(mode: str) -> dict:
-    """The directives for a mode, defaulting to the least presumptuous one."""
-    return EXPAND_MODES.get(mode) or EXPAND_MODES["related"]
+    """The directives for a mode, defaulting to the one the dialog preselects."""
+    return EXPAND_MODES.get(mode) or EXPAND_MODES["discovery"]
 
 
 def format_existing_block(existing) -> str:
