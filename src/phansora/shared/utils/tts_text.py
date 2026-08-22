@@ -134,6 +134,52 @@ _SYMBOLS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Typography that is written to be SEEN, arriving in text that is only ever heard.
+#
+# An em dash is the clearest case and the one that prompted this: the engine has no
+# reading for it, so it either voices something or swallows the break the dash was
+# there to make. It becomes a COMMA rather than nothing, because that break is the
+# whole point — "the report — which nobody read — was filed" with the dashes deleted
+# runs the words together. A comma is also the chunk-safe choice: a period would
+# invent a sentence boundary that ``_chunk_text`` then splits on, changing how the
+# audio is batched.
+#
+# Hyphens are deliberately NOT in the class. "twenty-one" and "co-operate" are words.
+#
+# The markdown rules are here because narration in this app is model-written. Nobody
+# types "**Chapter one**" into a script box, but a model hands one back, and the
+# stars are read aloud or mangle the word they wrap.
+_DASHES = "\u2014\u2013\u2015"          # em, en, horizontal bar
+
+# Line-leading punctuation is a LIST MARKER, not a pause — dropped outright, since a
+# line that starts with a comma reads as a stumble.
+_LEADING_MARK_RE = re.compile(rf"(?m)^[ \t]*(?:[{_DASHES}]+|[\u2022\u00b7\u2023\u25aa]+|#{{1,6}}[ \t]+)[ \t]*")
+# Between numbers a dash is a RANGE, not a pause. "1914-1918" is read "nineteen
+# fourteen to nineteen eighteen"; as a comma it becomes a list of two years, which is
+# a different fact. Must run before the general rule below, which would eat it.
+_RANGE_RE = re.compile(rf"(?<=\d)[ \t]*[{_DASHES}][ \t]*(?=\d)")
+# Anywhere else a dash is a break, and becomes one.
+_DASH_RE = re.compile(rf"[ \t]*[{_DASHES}]+[ \t]*")
+# Emphasis stars, kept only when they actually wrap something: the lookarounds mean
+# "2 * 3 * 4" is arithmetic and survives untouched.
+_MD_EMPHASIS_RE = re.compile(r"\*{1,3}(?=\S)(.+?)(?<=\S)\*{1,3}", re.S)
+# Tidy-up after the above: a dash next to punctuation that was already there leaves
+# ", ," or " ,". Runs last so it catches whatever the other rules produced.
+_COMMA_RUN_RE = re.compile(r"(?:,[ \t]*){2,}")
+_SPACED_COMMA_RE = re.compile(r"[ \t]+,")
+
+
+def _strip_typography(text: str) -> str:
+    """Remove marks that exist for the eye, keeping the pauses they stood for."""
+    out = _LEADING_MARK_RE.sub("", text)
+    out = _MD_EMPHASIS_RE.sub(r"\1", out)
+    out = _RANGE_RE.sub(" to ", out)
+    out = _DASH_RE.sub(", ", out)
+    out = _COMMA_RUN_RE.sub(", ", out)
+    out = _SPACED_COMMA_RE.sub(",", out)
+    return out
+
+
 def _looks_terminal(text: str, end: int) -> bool:
     """True when the period at ``end`` plausibly ends a sentence rather than an abbreviation.
 
@@ -202,6 +248,9 @@ def normalize_for_tts(text: str) -> str:
     # Middle initials before initialisms — see _INITIAL_RE.
     out = _INITIAL_RE.sub(r"\1", out)
     out = _sub_initialisms(out)
+    # After the abbreviation passes, which read sentence terminals and must not be shown
+    # commas this pass invented.
+    out = _strip_typography(out)
 
     for pattern, replacement in _SYMBOLS:
         out = pattern.sub(replacement, out)

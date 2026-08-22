@@ -177,3 +177,52 @@ def test_chunker_no_longer_breaks_at_an_abbreviation():
     assert any(c.endswith("D.C.") for c in before)
     # After: nothing ends on the abbreviation any more.
     assert not any(c.rstrip().endswith("D C") for c in after)
+
+
+# ── Typography: marks written to be seen, in text that is only heard ─────────
+
+@pytest.mark.parametrize("raw,expect", [
+    # The case this exists for: a dash is a BREAK, and the break has to survive. Deleting
+    # it runs the words together, which is what "strip the symbol" naively produces.
+    ("The report — which nobody read — was filed.",
+     "The report, which nobody read, was filed."),
+    ("A gap—no spaces—here.", "A gap, no spaces, here."),
+    ("Ten – twenty", "Ten, twenty"),
+    # Between numbers the same character is a RANGE, and a comma would turn one fact
+    # into two.
+    ("Range 1914–1918 mattered.", "Range 1914 to 1918 mattered."),
+    ("2020—2021 was hard.", "2020 to 2021 was hard."),
+    # Line-leading marks are list bullets. A line that opens with a comma reads as a
+    # stumble, so these go entirely rather than becoming a pause.
+    ("— a leading dash bullet", "a leading dash bullet"),
+    ("• a bullet point", "a bullet point"),
+    ("## Chapter one", "Chapter one"),
+    # Narration here is model-written; nobody types these but a model returns them.
+    ("**Bold** and *italic* text.", "Bold and italic text."),
+    # A dash beside punctuation that was already there must not leave a double comma.
+    ("Already, — doubled up.", "Already, doubled up."),
+])
+def test_typography_is_spoken_not_seen(raw, expect):
+    assert normalize_for_tts(raw) == expect
+
+
+@pytest.mark.parametrize("raw", [
+    # Hyphens are letters in a word, not punctuation. If these ever change, real words
+    # are being rewritten.
+    "Twenty-one co-operate state-of-the-art",
+    # Not emphasis: the stars are separated from their neighbours, so this is arithmetic.
+    "2 * 3 * 4 = 24",
+])
+def test_typography_leaves_real_text_alone(raw):
+    assert normalize_for_tts(raw) == raw
+
+
+@pytest.mark.parametrize("raw", [
+    "The report — which nobody read — was filed.",
+    "1914–1918", "**Bold** text", "• bullet", "## Head", "a—b", "Already, — doubled.",
+])
+def test_typography_is_idempotent(raw):
+    """The normalizer runs at two hooks — document level and engine level — so a second
+    pass over its own output has to be a no-op."""
+    once = normalize_for_tts(raw)
+    assert normalize_for_tts(once) == once
