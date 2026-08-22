@@ -18,7 +18,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,6 +85,10 @@ def health() -> dict:
 
 
 if _BOOK_ALCHEMY_OK:
+    # The URL tab's cap, enforced here as well as in the browser: the list rides on a
+    # form field anyone can repeat, and each entry costs a fetch and a parse.
+    _BA_MAX_URLS = 10
+
     _BA_FILE_FORMATS = {
         ".pdf": "pdf", ".epub": "epub", ".mobi": "mobi", ".azw": "mobi", ".azw3": "mobi",
         ".docx": "docx", ".txt": "txt", ".md": "markdown", ".markdown": "markdown",
@@ -238,7 +242,10 @@ if _BOOK_ALCHEMY_OK:
         user_id: str = Form(...),
         name: str = Form(""),
         source_format: str = Form(""),
-        url: str = Form(""),
+        # Repeated field: the URL tab sends up to ten. FastAPI collects repeats into
+        # the list; a single value still arrives as a one-item list, so the old
+        # one-URL client keeps working unchanged.
+        url: List[str] = Form([]),
         # Bounded like every other text field on this API. Unbounded, a paste was
         # written to disk and run through the whole course pipeline at whatever size
         # arrived. 2M characters is a very long book and still a small file.
@@ -252,7 +259,10 @@ if _BOOK_ALCHEMY_OK:
         file: Optional[UploadFile] = File(None),
     ) -> dict:
         uid = _ba_user_id(user_id)
-        url = (url or "").strip()
+        urls = [u.strip() for u in (url or []) if u and u.strip()][:_BA_MAX_URLS]
+        # The first is what the project row shows and what a one-URL course still uses;
+        # the whole list rides in options for the pipeline to read.
+        first_url = urls[0] if urls else ""
         text = (text or "").strip()
 
         # Cheap pre-check so an over-limit upload is rejected before we read the
@@ -268,9 +278,9 @@ if _BOOK_ALCHEMY_OK:
             if not fmt:
                 raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
             default_name = _safe_stem(file.filename, "Untitled")
-        elif url:
+        elif urls:
             fmt = "url"
-            default_name = url
+            default_name = first_url if len(urls) == 1 else f"{len(urls)} articles"
         elif text:
             fmt = "text"
             default_name = "Pasted text"
@@ -280,11 +290,12 @@ if _BOOK_ALCHEMY_OK:
         proj_name = (name or default_name or "Untitled").strip()[:200]
         project_id = await ba_db.create_project(
             user_id=uid, name=proj_name, source_format=fmt,
-            source_path=None, source_url=(url or None),
+            source_path=None, source_url=(first_url or None),
             options={
                 "voice": voice,
                 "depth": _ba_depth(depth),
                 "instruct_text": (instruct_text or "").strip(),
+                "source_urls": urls,
             },
             max_projects=limit,
         )

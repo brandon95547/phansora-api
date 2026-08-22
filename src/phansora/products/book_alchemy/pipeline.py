@@ -39,7 +39,7 @@ from . import db, prompts
 from .audio import render_script_to_audio
 from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
-from .parsers import ScannedPdfError, UnsupportedSourceError, parse_source
+from .parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_source
 from .storage import session_audio_path
 from .validation import scrub_apparatus, validate_script
 
@@ -203,13 +203,23 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     await db.set_project(pid, stage="Extracting content", progress=4)
     fmt = project["source_format"]
     source_path = project.get("source_path")
+    # A URL project may carry up to ten. They are read in the order they were added
+    # and concatenated into ONE document, because that is what the course is: the
+    # chunker, the concept index and the lesson budget all reason over a single text,
+    # and ten separate documents would be ten courses.
+    source_urls = [
+        u for u in (_as_dict(project.get("options")).get("source_urls") or []) if str(u).strip()
+    ] or ([project.get("source_url")] if project.get("source_url") else [])
     try:
-        doc = parse_source(
-            source_format=fmt,
-            path=source_path,
-            url=project.get("source_url"),
-            title_hint=project.get("name"),
-        )
+        if fmt == "url" and len(source_urls) > 1:
+            doc = _parse_urls(source_urls, title_hint=project.get("name"))
+        else:
+            doc = parse_source(
+                source_format=fmt,
+                path=source_path,
+                url=(source_urls[0] if source_urls else project.get("source_url")),
+                title_hint=project.get("name"),
+            )
     except ScannedPdfError:
         # Image/scanned PDF: recover the text with the existing OCR pipeline
         # (render -> Tesseract -> DeepSeek clean), then continue as plain text.
@@ -700,6 +710,31 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
         pid, curriculum=plan, phase="sessions",
         stage="Creating sessions", progress=55,
     )
+
+
+def _parse_urls(urls: list, *, title_hint: Optional[str] = None) -> ParsedDoc:
+    """Read several article URLs into one document.
+
+    Every page contributes its blocks in the order it was added. A page that cannot be
+    fetched or parsed is SKIPPED with a log line rather than failing the course — one
+    dead link out of ten is not a reason to lose the other nine — but if every one
+    fails there is nothing to teach and the caller's "no readable text" check fires.
+
+    The title comes from the project name when there is one, else the first page that
+    parsed, because "3 articles" is what the row already says.
+    """
+    blocks: list = []
+    titles: list[str] = []
+    for u in urls:
+        try:
+            part = parse_source(source_format="url", url=u, title_hint=None)
+        except Exception as exc:  # noqa: BLE001 — one bad link must not lose the rest
+            log.warning("Skipping unreadable source URL %s: %s", u, exc)
+            continue
+        if part.blocks:
+            blocks.extend(part.blocks)
+            titles.append(part.title)
+    return ParsedDoc(title=title_hint or (titles[0] if titles else "Untitled"), blocks=blocks)
 
 
 def resolve_depth(options: Any) -> Depth:
