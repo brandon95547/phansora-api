@@ -197,7 +197,11 @@ git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/Cosy
 sed -E '/^(torch|torchaudio|pydantic)==/d' /var/www/CosyVoice/requirements.txt > /tmp/cosy-reqs.txt
 .venv/bin/pip install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r /tmp/cosy-reqs.txt
 .venv/bin/python -c "from modelscope import snapshot_download; \
-  snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512_RL', local_dir='/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL')"
+  snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512', local_dir='/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL', ignore_file_pattern=['speech_tokenizer_v3.batch.onnx'])"
+# The repo ships base (llm.pt) AND RL (llm.rl.pt) LLMs; CosyVoice3 only ever loads
+# llm.pt, so activate RL by putting it there. `make install-tts` does this for you.
+mv /var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL/llm.rl.pt \
+   /var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL/llm.pt
 ```
 
 Then set in `.env` and restart the service:

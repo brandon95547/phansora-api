@@ -1,6 +1,6 @@
 """Fun-CosyVoice 3 TTS adapter — the project's TTS engine.
 
-Fun-CosyVoice 3 (FunAudioLLM/CosyVoice, ``Fun-CosyVoice3-0.5B-2512_RL``) is a zero-shot
+Fun-CosyVoice 3 (FunAudioLLM/CosyVoice, ``Fun-CosyVoice3-0.5B-2512``) is a zero-shot
 voice-cloning TTS. It clones from a short reference clip (the *speaker prompt*) plus that
 clip's **transcript** (``prompt_text``) — the transcript is required; CosyVoice conditions
 on it. It is run **in-process** from a CosyVoice checkout (it is not a pip package).
@@ -13,8 +13,13 @@ Upgraded from CosyVoice2-0.5B. Same 0.5B parameter count and the same class surf
 1M hours instead of 10k, with a new speech tokenizer (``speech_tokenizer_v3.onnx``). The
 motivating defect was a word ("transformative") that v2 mispronounced identically on every
 render and every voice, which is the signature of a rare token with a badly-learned
-pronunciation rather than anything in our pipeline. The RL checkpoint is the one we pull:
-CER 0.81/1.68/5.44 (zh/en/hard) against the base model's 1.21/2.24/6.71.
+pronunciation rather than anything in our pipeline.
+
+We run the RL post-trained LLM — CER 0.81/1.68/5.44 (zh/en/hard) against the base model's
+1.21/2.24/6.71. There is no separate RL model id: the one repo ships both ``llm.pt`` and
+``llm.rl.pt``, and since ``CosyVoice3.__init__`` hardcodes ``<model_dir>/llm.pt``, the
+Makefile activates RL by moving the file into that name. So a model dir here holds the RL
+weights under the base weights' filename — surprising if you go looking, hence this note.
 
 Acceleration (all quality-preserving, all default-on; see the load flags below):
     * vLLM backend for the LLM  — CUDA graphs + paged attention remove the per-token CPU

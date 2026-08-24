@@ -21,6 +21,8 @@ VENV   ?= .venv
 # The checkout already ships CosyVoice3 support, so upgrading v2 -> v3 was a model
 # download, not a re-clone.
 COSYVOICE_REPO ?= /var/www/CosyVoice
+# Must match cosyvoice3_client.MODEL_DIR_NAME.
+MODEL_DIR ?= $(COSYVOICE_REPO)/pretrained_models/Fun-CosyVoice3-0.5B-RL
 # Prod needs Python 3.10 — the torch wheels in requirements.txt are cp310, and
 # CentOS Stream 8's default `python3` is 3.6 (which fails with "not a supported
 # wheel"). `install` builds the venv with 3.10 via uv (see below).
@@ -105,11 +107,28 @@ install-tts: ## Clone CosyVoice, install its reqs (torch-stripped) + download th
 	$(PIP) install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r $(VENV)/cosy-reqs.txt
 	$(PIP) install --no-deps --no-build-isolation openai-whisper==20231117
 	$(PIP) install more-itertools
-	# Fun-CosyVoice3 RL checkpoint (~6 GB). The _RL post-trained variant beats the base
-	# model on every reported CER (0.81/1.68/5.44 vs 1.21/2.24/6.71 for zh/en/hard).
-	# NOTE the local_dir name is what cosyvoice3_client.MODEL_DIR_NAME expects — change
-	# both together or the loader will not find the model.
-	$(PY) -c "from modelscope import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512_RL', local_dir='$(COSYVOICE_REPO)/pretrained_models/Fun-CosyVoice3-0.5B-RL')"
+	# Fun-CosyVoice3 (~7 GB). There is NO separate _RL model id — that string is a row
+	# label in the repo's benchmark table, not a ModelScope repo. The single repo ships
+	# BOTH llm.pt (base) and llm.rl.pt (the RL post-trained LLM), and nothing in the
+	# CosyVoice checkout reads llm.rl.pt: CosyVoice3.__init__ hardcodes '<dir>/llm.pt'.
+	# So selecting RL means putting it where the loader looks — the mv below.
+	# RL wins on every published CER: 0.81/1.68/5.44 vs 1.21/2.24/6.71 (zh/en/hard).
+	#
+	# speech_tokenizer_v3.batch.onnx (924 MB) is the batched variant; __init__ loads the
+	# non-batch one, so it is skipped. flow.decoder.estimator.fp32.onnx IS kept — it is the
+	# source the TensorRT engine is built from, and re-downloading it to turn TRT on later
+	# would be worse than the 1.3 GB.
+	#
+	# NOTE the local_dir basename is cosyvoice3_client.MODEL_DIR_NAME — change both together
+	# or the loader will not find the model.
+	$(PY) -c "from modelscope import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512', local_dir='$(MODEL_DIR)', ignore_file_pattern=['speech_tokenizer_v3.batch.onnx'])"
+	@# Activate the RL LLM. Idempotent: a re-run finds llm.rl.pt already consumed and skips.
+	@if [ -f "$(MODEL_DIR)/llm.rl.pt" ]; then \
+		mv -f "$(MODEL_DIR)/llm.rl.pt" "$(MODEL_DIR)/llm.pt" && \
+		echo "Activated the RL checkpoint (llm.rl.pt -> llm.pt); base llm.pt discarded."; \
+	else \
+		echo "llm.rl.pt not present — assuming the RL checkpoint is already active."; \
+	fi
 	$(PY) -c "import torch, torchaudio, vllm; print('OK torch', torch.__version__, 'vllm', vllm.__version__, 'cuda', torch.cuda.is_available())"
 	@echo ""
 	@echo "Set COSYVOICE3_REPO=$(COSYVOICE_REPO) in .env (+ COSYVOICE3_DEFAULT_REF / _REF_TEXT)."
