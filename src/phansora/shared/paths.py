@@ -31,7 +31,7 @@ def assets_root() -> Path:
     """Base directory for shipped, read-only asset data that travels with the repo.
 
     The counterpart to :func:`runtime_root`: that one holds mutable per-user state,
-    this one holds content we author and version (the CosyVoice2 reference clip for
+    this one holds content we author and version (the CosyVoice reference clip for
     the built-in "default" voice, and the app-wide default voices). Anything here is
     the same on every deployment and arrives via ``git pull``, so it must never be
     written to at runtime.

@@ -14,7 +14,7 @@ per-user JSON manifest live under the runtime data root:
 
 The app-wide default voices use the identical layout but are *shipped content*, not
 user state, so they live in the git-tracked assets tree instead — alongside the
-built-in "default" voice's reference clip that COSYVOICE2_DEFAULT_REF points at:
+built-in "default" voice's reference clip that COSYVOICE3_DEFAULT_REF points at:
 
     <assets_root>/voices/<voice_id>.wav / .sample.wav / voices.json
 
@@ -65,10 +65,10 @@ _SAMPLE_RATE = 24000
 PENDING_TTL_SECONDS = 6 * 3600
 
 # Per-voice generation knobs, mirroring the options CosyVoice2 supports. These are
-# captured at approval and reapplied when the voice is later used for TTS. CosyVoice2
+# captured at approval and reapplied when the voice is later used for TTS. CosyVoice
 # clones from the clip PLUS its transcript, so the reference transcript (``ref_text``)
 # stored on the voice record is required at synthesis time (passed as prompt_text).
-from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice2_client import (
+from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client import (
     LANGUAGES, LANGUAGE_DEFAULT,
     SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
     INSTRUCT_MAX_CHARS,

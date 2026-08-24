@@ -7,7 +7,7 @@ Two problems, one fix:
 
 2. **Chunking (the more damaging one).** Every chunker in the pipeline splits sentences
    on ``(?<=[.!?])\\s+`` — ``shared/utils/chunking.chunk_text`` at the document level and
-   ``cosyvoice2_client._chunk_text`` at the 200-char engine level. Neither knows what an
+   ``cosyvoice3_client._chunk_text`` at the 200-char engine level. Neither knows what an
    abbreviation is, so "The march on Washington, D.C. drew thousands." splits after
    "D.C.". Chunks are synthesized independently and concatenated with ffmpeg, so whenever
    such a split lands on a chunk boundary the result is an audible seam mid-sentence.

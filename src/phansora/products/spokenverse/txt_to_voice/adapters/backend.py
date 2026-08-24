@@ -1,6 +1,6 @@
 """TTS engine selection.
 
-CosyVoice2 is the sole engine. The selector is kept as a thin indirection so the
+Fun-CosyVoice 3 is the sole engine. The selector is kept as a thin indirection so the
 rest of the pipeline stays engine-agnostic (and a second engine could be added
 later), but there is only one implementation today.
 
@@ -23,6 +23,8 @@ _RETIRED_ALIASES = {
     "gptsovits", "gpt-sovits", "gpt_sovits", "sovits", "gsv",
     "styletts2", "styletts-2", "style", "stts2", "st2",
     "kokoro", "openvoice", "chatterbox", "xtts",
+    # v2 was replaced in place by v3; a stale TTS_ENGINE=cosyvoice2 must not 500.
+    "cosyvoice2", "cosyvoice-2", "cosyvoice_2", "cosyvoice2-0.5b",
 }
 
 _warned_retired: set[str] = set()
@@ -33,19 +35,19 @@ def resolve_engine(engine: str | None = None) -> str:
     if name in _RETIRED_ALIASES:
         if name not in _warned_retired:
             LOG.warning(
-                "TTS engine '%s' has been removed; using CosyVoice2. "
-                "Update TTS_ENGINE / --engine to 'cosyvoice2' to silence this.",
+                "TTS engine '%s' has been removed; using Fun-CosyVoice 3. "
+                "Update TTS_ENGINE / --engine to 'cosyvoice3' to silence this.",
                 name,
             )
             _warned_retired.add(name)
-        return "cosyvoice2"
-    # Everything else (cosyvoice2 aliases, unknown values) resolves to the only engine.
-    return "cosyvoice2"
+        return "cosyvoice3"
+    # Everything else (cosyvoice3 aliases, unknown values) resolves to the only engine.
+    return "cosyvoice3"
 
 
 def _module(engine: str | None):
     resolve_engine(engine)  # validate (warns on retired engines)
-    from . import cosyvoice2_client as mod  # type: ignore
+    from . import cosyvoice3_client as mod  # type: ignore
     return mod
 
 

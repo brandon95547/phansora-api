@@ -1,21 +1,30 @@
-"""CosyVoice 2 TTS adapter — the project's TTS engine.
+"""Fun-CosyVoice 3 TTS adapter — the project's TTS engine.
 
-CosyVoice 2 (FunAudioLLM/CosyVoice, ``CosyVoice2-0.5B``) is a zero-shot voice-cloning TTS.
-It clones from a short reference clip (the *speaker prompt*) plus that clip's **transcript**
-(``prompt_text``) — the transcript is required; CosyVoice conditions on it, unlike IndexTTS2.
-It is run **in-process** from a CosyVoice checkout (it is not a pip package).
+Fun-CosyVoice 3 (FunAudioLLM/CosyVoice, ``Fun-CosyVoice3-0.5B-2512_RL``) is a zero-shot
+voice-cloning TTS. It clones from a short reference clip (the *speaker prompt*) plus that
+clip's **transcript** (``prompt_text``) — the transcript is required; CosyVoice conditions
+on it. It is run **in-process** from a CosyVoice checkout (it is not a pip package).
 
 Pipeline stages: a Qwen2-0.5B LLM autoregressively emits speech tokens, a flow-matching
 model turns them into a mel-spectrogram, and a HiFT vocoder renders 24 kHz audio.
 
+Upgraded from CosyVoice2-0.5B. Same 0.5B parameter count and the same class surface —
+``CosyVoice3`` subclasses ``CosyVoice2`` and overrides only ``__init__`` — but trained on
+1M hours instead of 10k, with a new speech tokenizer (``speech_tokenizer_v3.onnx``). The
+motivating defect was a word ("transformative") that v2 mispronounced identically on every
+render and every voice, which is the signature of a rare token with a badly-learned
+pronunciation rather than anything in our pipeline. The RL checkpoint is the one we pull:
+CER 0.81/1.68/5.44 (zh/en/hard) against the base model's 1.21/2.24/6.71.
+
 Acceleration (all quality-preserving, all default-on; see the load flags below):
     * vLLM backend for the LLM  — CUDA graphs + paged attention remove the per-token CPU
-      sync that otherwise starves the GPU (the dominant cost). Registers CosyVoice2's
-      custom ``CosyVoice2ForCausalLM`` with vLLM before the engine loads.
+      sync that otherwise starves the GPU (the dominant cost). Registers the custom
+      ``CosyVoice2ForCausalLM`` architecture with vLLM before the engine loads (the class
+      name is unchanged for v3 — upstream registers it and then loads a v3 checkpoint).
     * fp16                      — half the LLM/flow memory bandwidth, ~half the VRAM.
     * TensorRT flow estimator   — fp16 engine for the flow ODE (built once, cached to disk).
 
-Speed is a NATIVE CosyVoice2 knob (mel time-scaled at synthesis, 0.5-2.0) — no ffmpeg
+Speed is a NATIVE CosyVoice knob (mel time-scaled at synthesis, 0.5-2.0) — no ffmpeg
 post-process.
 
 Delivery is steered with ``instruct_text`` — a short natural-language direction ("speak
@@ -23,6 +32,13 @@ in a calm, reassuring tone") routed through ``inference_instruct2``. It shapes p
 while the reference clip still supplies the timbre, so the clone stays on-voice. There is
 no emotion *vector* (that went with IndexTTS2); ``emo_*`` args are accepted for interface
 parity and ignored.
+
+``<|endofprompt|>`` IS REQUIRED — this is the one hard break from v2. CosyVoice3's LLM
+asserts the token (id 151646) is present in the conditioning text and refuses to run
+without it, so every prompt we build is prefixed by ``_ensure_endofprompt``. Upstream's
+conventions, which we follow: a plain clone gets ``"You are a helpful assistant.<|endofprompt|>"``
+in front of the reference transcript, and an instruction gets the marker appended to
+itself. Prefixing is idempotent, mirroring upstream's own triton runtime.
 
 Exposes the backend surface used by ``adapters.backend``:
     * ``synthesize_to_file(...)`` — async, writes a WAV to ``out_path``
@@ -32,14 +48,19 @@ Exposes the backend surface used by ``adapters.backend``:
 
 Install (prod): CosyVoice is a git checkout + a model download, not a pip package. Clone
 FunAudioLLM/CosyVoice (+ its Matcha-TTS submodule), install its requirements into this
-venv (see requirements.txt / Makefile — the API is pinned to torch 2.7 + vllm 0.9.0 to
-match), download the CosyVoice2-0.5B checkpoints, then point the app at the checkout:
+venv (see requirements.txt / Makefile — the API is pinned to torch 2.7 + vllm 0.9.0, which
+upstream still supports for v3 alongside the newer 0.11.x V1 engine), download the
+Fun-CosyVoice3 checkpoints, then point the app at the checkout:
 
-    COSYVOICE2_REPO=/path/to/CosyVoice
+    COSYVOICE3_REPO=/path/to/CosyVoice
 
-Model dir defaults to ``<repo>/pretrained_models/CosyVoice2-0.5B`` (override with
-COSYVOICE2_MODEL_DIR). The built-in "default" voice needs a reference clip + its transcript
-— set COSYVOICE2_DEFAULT_REF and COSYVOICE2_DEFAULT_REF_TEXT, else only cloned voices work.
+Model dir defaults to ``<repo>/pretrained_models/Fun-CosyVoice3-0.5B-RL`` (override with
+COSYVOICE3_MODEL_DIR). The built-in "default" voice needs a reference clip + its transcript
+— set COSYVOICE3_DEFAULT_REF and COSYVOICE3_DEFAULT_REF_TEXT, else only cloned voices work.
+
+Every COSYVOICE3_* variable falls back to its COSYVOICE2_* predecessor when unset, so an
+.env written for v2 keeps working across the deploy and can be renamed afterwards rather
+than in lockstep with the code.
 """
 
 from __future__ import annotations
@@ -62,7 +83,7 @@ logger = logging.getLogger(__name__)
 
 _MODEL_LOCK = Lock()      # guards the one-per-process model construction
 _INFER_LOCK = Lock()      # serializes synthesis (the vLLM engine + flow are shared state)
-_COSY = None              # cached CosyVoice2 instance
+_COSY = None              # cached CosyVoice engine instance
 _SPK_CACHE: dict[str, str] = {}  # ref-clip signature -> cached zero-shot speaker id
 
 # Audio suffixes we treat as "this argument is a reference clip to clone".
@@ -75,32 +96,51 @@ LANGUAGES = ["en", "zh", "ja", "ko", "yue", "auto"]
 LANGUAGE_DEFAULT = "en"
 
 # Generation-knob ranges (kept in sync with voices.clamp_settings / the UI). Speed is a
-# native CosyVoice2 parameter (mel time-scaling), applied at synthesis time.
+# native CosyVoice parameter (mel time-scaling), applied at synthesis time.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 
-# CosyVoice2 intermittently drops/truncates words when a single inference chunk is long (the
+# CosyVoice2 intermittently dropped/truncated words when a single inference chunk was long (the
 # drop clusters at the chunk tail), and it is far worse with cloned voices. Measured on prod
 # with a cloned voice + whisper transcription: 550/400 dropped whole sentences, 300 dropped
 # the tail, 250 dropped words in 1/2 trials, while 200 was clean in 8/8 trials. So we cap the
 # per-inference chunk at 200 chars. Input is split into <= MAX_CHARS chunks (on line and
 # sentence boundaries) and the rendered audio is concatenated. Only a run longer than
-# MAX_CHARS is broken mid-boundary (at a word). Override with COSYVOICE2_MAX_CHARS.
+# MAX_CHARS is broken mid-boundary (at a word). Override with COSYVOICE3_MAX_CHARS.
+#
+# ⚠ NOT yet re-measured on v3. The numbers above are v2's, and a new speech tokenizer can
+# move the threshold either way — v3 may not need a 200-char cap at all. Re-run the
+# whisper-diff sweep (200/250/300/400) and raise this if it holds, since a bigger chunk is
+# both faster and more natural across sentence boundaries.
 MAX_CHARS_DEFAULT = 200
 
 
+def _raw(name: str) -> str:
+    """Read COSYVOICE3_X, falling back to the COSYVOICE2_X it replaced.
+
+    The engine upgrade renamed every variable. Reading the old name too means a prod .env
+    written for v2 survives the deploy — otherwise the rename would silently unset
+    COSYVOICE2_REPO and take TTS down until someone edited .env on the box, in the middle
+    of a restart. The fallback can be dropped once the deployed .env is renamed.
+    """
+    value = os.getenv(name, "").strip()
+    if value or not name.startswith("COSYVOICE3_"):
+        return value
+    return os.getenv(name.replace("COSYVOICE3_", "COSYVOICE2_", 1), "").strip()
+
+
 def _env(name: str, default: str = "") -> str:
-    return os.getenv(name, "").strip() or default
+    return _raw(name) or default
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "").strip().lower()
+    raw = _raw(name).lower()
     if not raw:
         return default
     return raw in ("1", "true", "yes", "on")
 
 
 def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name, "").strip()
+    raw = _raw(name)
     try:
         return float(raw) if raw else default
     except ValueError:
@@ -108,7 +148,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
+    raw = _raw(name)
     try:
         return int(raw) if raw else default
     except ValueError:
@@ -124,22 +164,25 @@ def _cuda_available() -> bool:
 
 
 def _repo() -> Path:
-    repo = _env("COSYVOICE2_REPO")
+    repo = _env("COSYVOICE3_REPO")
     if not repo:
         raise RuntimeError(
-            "CosyVoice2 is not configured. Set COSYVOICE2_REPO to your CosyVoice "
-            "checkout (with its requirements installed + CosyVoice2-0.5B checkpoints "
+            "CosyVoice is not configured. Set COSYVOICE3_REPO to your CosyVoice "
+            "checkout (with its requirements installed + Fun-CosyVoice3 checkpoints "
             "downloaded)."
         )
     return Path(repo)
 
 
+MODEL_DIR_NAME = "Fun-CosyVoice3-0.5B-RL"  # what the Makefile's snapshot_download writes
+
+
 def _model_dir(repo: Path) -> str:
-    return _env("COSYVOICE2_MODEL_DIR", str(repo / "pretrained_models" / "CosyVoice2-0.5B"))
+    return _env("COSYVOICE3_MODEL_DIR", str(repo / "pretrained_models" / MODEL_DIR_NAME))
 
 
 def _load_cosy():
-    """Construct the CosyVoice2 engine once per process (lock-guarded, cached).
+    """Construct the CosyVoice engine once per process (lock-guarded, cached).
 
     This is the expensive call: it loads weights, and (with vLLM) captures CUDA graphs +
     (with TRT, first run only) compiles the flow TensorRT engine. Called from ``preload``
@@ -157,37 +200,46 @@ def _load_cosy():
             if p not in sys.path:
                 sys.path.insert(0, p)
         try:
-            use_fp16 = _env_bool("COSYVOICE2_FP16", True) and _cuda_available()
-            use_vllm = _env_bool("COSYVOICE2_USE_VLLM", True) and _cuda_available()
-            use_trt = _env_bool("COSYVOICE2_USE_TRT", True) and _cuda_available()
+            use_fp16 = _env_bool("COSYVOICE3_FP16", True) and _cuda_available()
+            use_vllm = _env_bool("COSYVOICE3_USE_VLLM", True) and _cuda_available()
+            # TRT defaults OFF on v3: upstream warns "DiT tensorRT fp16 engine have some
+            # performance issue, use at caution!" when loading it for CosyVoice3. Flip
+            # COSYVOICE3_USE_TRT=1 once the flow ODE has been measured on this model.
+            use_trt = _env_bool("COSYVOICE3_USE_TRT", False) and _cuda_available()
 
-            # CosyVoice2's LLM is a CUSTOM vLLM architecture — it must be registered with
-            # vLLM's ModelRegistry BEFORE the engine loads, or vLLM raises "Cannot find
-            # model module 'CosyVoice2ForCausalLM'".
+            # The LLM is a CUSTOM vLLM architecture — it must be registered with vLLM's
+            # ModelRegistry BEFORE the engine loads, or vLLM raises "Cannot find model
+            # module 'CosyVoice2ForCausalLM'". The class name is unchanged for v3: upstream's
+            # own vllm_example.py registers CosyVoice2ForCausalLM and then loads a v3 model
+            # through AutoModel, so this is correct despite reading like a leftover.
             if use_vllm:
                 from vllm import ModelRegistry  # type: ignore
                 from cosyvoice.vllm.cosyvoice2 import CosyVoice2ForCausalLM  # type: ignore
                 ModelRegistry.register_model("CosyVoice2ForCausalLM", CosyVoice2ForCausalLM)
 
-            from cosyvoice.cli.cosyvoice import CosyVoice2  # type: ignore
+            # AutoModel dispatches on which cosyvoice*.yaml the model dir contains, so a
+            # future checkpoint bump needs no code change here — and pointing
+            # COSYVOICE3_MODEL_DIR back at a v2 directory still works, which is the rollback.
+            from cosyvoice.cli.cosyvoice import AutoModel  # type: ignore
 
             model_dir = _model_dir(repo)
             logger.info(
-                "Loading CosyVoice2 from %s (fp16=%s, vllm=%s, trt=%s) — first run also "
+                "Loading CosyVoice from %s (fp16=%s, vllm=%s, trt=%s) — first run also "
                 "captures CUDA graphs / builds the TRT engine.",
                 model_dir, use_fp16, use_vllm, use_trt,
             )
-            _COSY = CosyVoice2(
-                model_dir,
-                load_jit=False,
+            # NOTE: no load_jit here. CosyVoice3.__init__ does not accept it (CosyVoice2's
+            # did); passing it raises TypeError.
+            _COSY = AutoModel(
+                model_dir=model_dir,
                 load_trt=use_trt,
                 load_vllm=use_vllm,
                 fp16=use_fp16,
             )
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
-                "Could not import/load CosyVoice2 from "
-                f"{repo} — check COSYVOICE2_REPO / COSYVOICE2_MODEL_DIR and that its deps "
+                "Could not import/load CosyVoice from "
+                f"{repo} — check COSYVOICE3_REPO / COSYVOICE3_MODEL_DIR and that its deps "
                 f"(torch 2.7 + vllm 0.9.0) are installed.\nOriginal error: "
                 f"{type(e).__name__}: {e}"
             ) from e
@@ -200,12 +252,12 @@ def preload() -> None:
          critical win; this is the ~80s+ cold start we don't want on a user request.
       2. Run a throwaway synthesis with the default voice to warm the remaining kernels.
     Lock-guarded and cached; safe from a background thread (a racing request waits on the
-    same load). Every failure is logged, never raised — stage 2 needs COSYVOICE2_DEFAULT_REF
+    same load). Every failure is logged, never raised — stage 2 needs COSYVOICE3_DEFAULT_REF
     (+ _REF_TEXT); if unset, weights are still loaded (the big win) and warmup is skipped."""
     try:
         _load_cosy()
     except Exception as e:  # noqa: BLE001
-        logger.warning("CosyVoice2 preload skipped (model load failed): %s: %s", type(e).__name__, e)
+        logger.warning("CosyVoice preload skipped (model load failed): %s: %s", type(e).__name__, e)
         return
     try:
         warm_out = Path(tempfile.gettempdir()) / f"cosy_warmup_{uuid.uuid4().hex}.wav"
@@ -221,9 +273,9 @@ def preload() -> None:
             ref_audio=None,
         )
         warm_out.unlink(missing_ok=True)
-        logger.info("CosyVoice2 preloaded + kernel-warmed (first request will be fast)")
+        logger.info("CosyVoice preloaded + kernel-warmed (first request will be fast)")
     except Exception as e:  # noqa: BLE001
-        logger.warning("CosyVoice2 weights loaded, kernel warmup skipped: %s: %s", type(e).__name__, e)
+        logger.warning("CosyVoice weights loaded, kernel warmup skipped: %s: %s", type(e).__name__, e)
 
 
 # CosyVoice works best with a short prompt clip (<= 30s hard limit; 3-10s ideal). Trim
@@ -262,19 +314,23 @@ def _ensure_ref_length(ref_clip: str) -> tuple[str, Optional[str]]:
         return ref_clip, None  # best-effort; let the engine surface any error
 
 
-# CosyVoice2 has no end-of-prompt token: it interleaves the prompt transcript with the
+# CosyVoice2 had no end-of-prompt token: it interleaves the prompt transcript with the
 # prompt audio, so if the transcript doesn't clearly "end", the model can treat the prompt
 # audio as unfinished and leak ~1s of prompt-like (often non-English) audio at the START of
 # the generated clip. Guaranteeing terminal punctuation demarcates the prompt boundary and
 # suppresses that leak. Our reference clips are cut at a fixed length (voices.MAX_SECONDS),
 # which routinely lands mid-sentence, so the auto-transcript often lacks closing punctuation.
 # See github.com/FunAudioLLM/CosyVoice issues #967 and #1704.
+#
+# v3 marks the boundary explicitly with <|endofprompt|>, so this is belt-and-braces now.
+# Kept because it costs nothing and the leak it prevents was real; worth re-testing whether
+# v3 still needs it before removing.
 _TERMINAL_PUNCT = ".!?。！？…"
 
 
 def _ensure_prompt_terminal(p_text: str) -> str:
     """Append a period if the reference transcript lacks sentence-final punctuation, so
-    CosyVoice2 sees a clean prompt boundary (prevents leaked prompt audio at the start)."""
+    the model sees a clean prompt boundary (prevents leaked prompt audio at the start)."""
     p_text = (p_text or "").strip()
     if p_text and p_text[-1] not in _TERMINAL_PUNCT:
         # Use a full-width period when the text looks CJK, else an ASCII period.
@@ -282,8 +338,32 @@ def _ensure_prompt_terminal(p_text: str) -> str:
     return p_text
 
 
+# CosyVoice3 REQUIRES this marker in the conditioning text — cosyvoice/llm/llm.py asserts
+# `151646 in text` and raises outright without it, so a missing marker is a hard failure on
+# every request, not a quality regression. Upstream's own triton runtime prefixes only when
+# absent (runtime/triton_trtllm/model_repo_cosyvoice3/cosyvoice3/1/model.py), which is the
+# shape copied here.
+_ENDOFPROMPT = "<|endofprompt|>"
+# What upstream's example.py puts in front of a plain clone's reference transcript. It reads
+# like a chat system prompt because the LLM is a Qwen2 derivative and that is the slot.
+_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
+
+def _ensure_endofprompt(text: str, system_prompt: str = _DEFAULT_SYSTEM_PROMPT) -> str:
+    """Guarantee the conditioning text carries ``<|endofprompt|>``.
+
+    Idempotent: text that already contains the marker anywhere is returned untouched, so
+    this is safe to apply to a caller-supplied instruction that already has one, and safe
+    to apply twice.
+    """
+    text = (text or "").strip()
+    if _ENDOFPROMPT in text:
+        return text
+    return f"{system_prompt}{_ENDOFPROMPT}{text}"
+
+
 def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[str]) -> Optional[str]:
-    for candidate in (ref_audio, speaker, voice, os.getenv("COSYVOICE2_REF_AUDIO")):
+    for candidate in (ref_audio, speaker, voice, os.getenv("COSYVOICE3_REF_AUDIO")):
         if not candidate:
             continue
         c = str(candidate).strip()
@@ -405,7 +485,7 @@ def _synthesize_sync(
     emo_vector: Optional[Sequence[float]] = None,
     instruct_text: Optional[str] = None,
 ) -> None:
-    # CosyVoice2 clones from the speaker clip + its transcript. rate/volume/language/style
+    # CosyVoice clones from the speaker clip + its transcript. rate/volume/language/style
     # and emo_* are accepted for interface parity but not used by the model.
     _ = (rate, volume, language, style, emo_alpha, emo_vector)
     text = (text or "").strip()
@@ -414,29 +494,29 @@ def _synthesize_sync(
 
     ref_clip = _resolve_reference(voice, speaker, ref_audio)
     if not ref_clip:
-        ref_clip = _env("COSYVOICE2_DEFAULT_REF")
+        ref_clip = _env("COSYVOICE3_DEFAULT_REF")
     if not ref_clip:
         raise RuntimeError(
-            "CosyVoice2 needs a reference clip. Select a cloned voice, or set "
-            "COSYVOICE2_DEFAULT_REF for the default voice."
+            "CosyVoice needs a reference clip. Select a cloned voice, or set "
+            "COSYVOICE3_DEFAULT_REF for the default voice."
         )
 
     # The transcript of the reference clip. CosyVoice conditions on it; for the default
-    # voice fall back to COSYVOICE2_DEFAULT_REF_TEXT.
-    p_text = (prompt_text or "").strip() or _env("COSYVOICE2_DEFAULT_REF_TEXT")
+    # voice fall back to COSYVOICE3_DEFAULT_REF_TEXT.
+    p_text = (prompt_text or "").strip() or _env("COSYVOICE3_DEFAULT_REF_TEXT")
     if not p_text:
         raise RuntimeError(
-            "CosyVoice2 needs the reference clip's transcript (prompt_text). Cloned voices "
-            "store it as ref_text; for the default voice set COSYVOICE2_DEFAULT_REF_TEXT."
+            "CosyVoice needs the reference clip's transcript (prompt_text). Cloned voices "
+            "store it as ref_text; for the default voice set COSYVOICE3_DEFAULT_REF_TEXT."
         )
-    # Demarcate the prompt boundary so CosyVoice2 doesn't leak prompt audio at the start.
+    # Demarcate the prompt boundary so the model doesn't leak prompt audio at the start.
     p_text = _ensure_prompt_terminal(p_text)
 
     ref_clip, _ref_tmp = _ensure_ref_length(ref_clip)
 
     speed = max(SPEED_MIN, min(SPEED_MAX, float(
-        speed if speed is not None else _env_float("COSYVOICE2_SPEED", SPEED_DEFAULT))))
-    max_chars = _env_int("COSYVOICE2_MAX_CHARS", MAX_CHARS_DEFAULT)
+        speed if speed is not None else _env_float("COSYVOICE3_SPEED", SPEED_DEFAULT))))
+    max_chars = _env_int("COSYVOICE3_MAX_CHARS", MAX_CHARS_DEFAULT)
 
     cosy = _load_cosy()
 
@@ -447,7 +527,7 @@ def _synthesize_sync(
     chunks = _chunk_text(text, max_chars)
 
     # Instruct mode: a delivery direction steers prosody while the clip still supplies the
-    # voice. CosyVoice2 implements this by swapping the reference transcript out of the LLM
+    # voice. CosyVoice implements this by swapping the reference transcript out of the LLM
     # prompt for the instruction and dropping llm_prompt_speech_token (so the LLM stops
     # copying the prompt's delivery), while flow_prompt_speech_token + the speaker embedding
     # — what actually carry timbre — are untouched.
@@ -459,8 +539,12 @@ def _synthesize_sync(
     # instruction in as the cache entry's conditioning text — _SPK_CACHE is keyed on it, so
     # each instruction gets its own entry and we keep the one-extraction-per-voice win. We
     # still pass it positionally for correctness if the cache ever misses.
+    #
+    # <|endofprompt|> goes on HERE, on the string that becomes the cache key — for exactly
+    # the reason above. Applying it to the call argument instead would leave the cached
+    # conditioning without the marker and CosyVoice3 would assert on every request.
     instruct = _clean_instruct(instruct_text)
-    conditioning = instruct or p_text
+    conditioning = _ensure_endofprompt(instruct or p_text)
 
     try:
         with _INFER_LOCK:
@@ -468,9 +552,12 @@ def _synthesize_sync(
             parts: list["torch.Tensor"] = []
             for chunk in chunks:
                 # Both paths run off the cached speaker id (prompt_text/prompt_wav unused).
+                # We pass `conditioning`, not the bare instruction: it is ignored on a cache
+                # HIT, but on a miss it is what reaches the LLM — and without the
+                # <|endofprompt|> marker that path asserts.
                 if instruct:
                     stream = cosy.inference_instruct2(
-                        chunk, instruct, "", zero_shot_spk_id=spk_id, stream=False, speed=speed
+                        chunk, conditioning, "", zero_shot_spk_id=spk_id, stream=False, speed=speed
                     )
                 else:
                     stream = cosy.inference_zero_shot(
@@ -479,11 +566,11 @@ def _synthesize_sync(
                 for out in stream:
                     parts.append(out["tts_speech"])
             if not parts:
-                raise RuntimeError("CosyVoice2 synthesis produced no audio.")
+                raise RuntimeError("CosyVoice synthesis produced no audio.")
             wav = torch.cat(parts, dim=1)  # each tts_speech is [1, samples]
         torchaudio.save(str(out_path), wav, cosy.sample_rate)
         if not out_path.is_file() or out_path.stat().st_size == 0:
-            raise RuntimeError("CosyVoice2 synthesis produced no audio.")
+            raise RuntimeError("CosyVoice synthesis produced no audio.")
     finally:
         if _ref_tmp:
             Path(_ref_tmp).unlink(missing_ok=True)
@@ -494,15 +581,15 @@ async def synthesize_to_file(
     out_path: Path,
     voice: str,  # reference-clip path for cloning, or a preset name ("default")
     use_gpu: bool,
-    rate: str = "+0%",  # accepted for interface parity; ignored by CosyVoice2
-    volume: str = "+0%",  # accepted for interface parity; ignored by CosyVoice2
+    rate: str = "+0%",  # accepted for interface parity; ignored by CosyVoice
+    volume: str = "+0%",  # accepted for interface parity; ignored by CosyVoice
     speaker: Optional[str] = None,  # optional alias; treated like voice
     language: Optional[str] = None,  # en/zh/ja/ko/yue/auto; used for ref transcription/metadata
     ref_audio: Optional[str] = None,  # explicit reference clip for cloning
     prompt_text: Optional[str] = None,  # transcript of the reference clip (REQUIRED by CosyVoice)
-    speed: Optional[float] = None,  # 0.5-2.0 (native CosyVoice2 mel time-scaling)
+    speed: Optional[float] = None,  # 0.5-2.0 (native CosyVoice mel time-scaling)
     style: Optional[str] = None,  # accepted for parity; not used
-    emo_alpha: Optional[float] = None,  # accepted for parity; CosyVoice2 has no emotion control
+    emo_alpha: Optional[float] = None,  # accepted for parity; CosyVoice has no emotion control
     emo_vector: Optional[Sequence[float]] = None,  # accepted for parity; ignored
     instruct_text: Optional[str] = None,  # delivery direction, e.g. "speak in a calm tone"
     **_ignored,
@@ -532,7 +619,7 @@ async def list_voices() -> None:
     for voice in await asyncio.to_thread(_discover_voices_sync):
         print(voice)
     print(
-        "\n(CosyVoice2 clones a voice from a reference clip + its transcript — pass "
+        "\n(CosyVoice clones a voice from a reference clip + its transcript — pass "
         "--ref-audio /path/to/sample.wav and the clip's text. Speed 0.5-2.0 is native.)"
     )
     print("Languages: " + ", ".join(LANGUAGES))

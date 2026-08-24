@@ -1,6 +1,6 @@
 """Render a session script to a single audio file via the shared TTS service.
 
-The CosyVoice2 model is a per-process singleton with no unload path, so a second
+The CosyVoice model is a per-process singleton with no unload path, so a second
 resident copy does not fit alongside the API's copy on a 16 GB GPU. Instead of
 loading its own model, the worker POSTs the script to the API's existing
 ``POST /spokenverse/txt-to-audio`` endpoint (the same one the frontend uses) and

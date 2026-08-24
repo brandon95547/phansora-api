@@ -46,7 +46,7 @@ class TTSConfig:
     # CosyVoice2 reference clip for voice cloning.
     ref_audio: Optional[str] = None
     # Transcript of the reference clip. CosyVoice conditions on it (REQUIRED for cloning);
-    # cloned voices store it as ``ref_text``. None => engine's COSYVOICE2_DEFAULT_REF_TEXT.
+    # cloned voices store it as ``ref_text``. None => engine's COSYVOICE3_DEFAULT_REF_TEXT.
     prompt_text: Optional[str] = None
 
     # NEW: how many chunks to synthesize in parallel per TXT file

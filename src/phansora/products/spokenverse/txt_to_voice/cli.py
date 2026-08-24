@@ -50,7 +50,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--engine",
         default=None,
         choices=["cosyvoice2"],
-        help="TTS engine to use (CosyVoice2 is the only engine)",
+        help="TTS engine to use (CosyVoice is the only engine)",
     )
     parser.add_argument(
         "--voice",
@@ -73,8 +73,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--format", dest="output_format", default="mp3", choices=["mp3", "wav"])
     parser.add_argument("--chunk-chars", type=int, default=2500)
 
-    # --- CosyVoice2 generation knobs ---
-    parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; native CosyVoice2 speed (default 1.0)")
+    # --- CosyVoice generation knobs ---
+    parser.add_argument("--speed", type=float, default=None, help="0.5-2.0; native CosyVoice speed (default 1.0)")
 
     # NEW: concurrency
     parser.add_argument(

@@ -556,7 +556,7 @@ async def tts_options() -> dict:
     """
     Options currently available from the CosyVoice2 backend.
     """
-    from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice2_client as cv
+    from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice3_client as cv
 
     voices = discover_voices()
     return {
@@ -569,23 +569,25 @@ async def tts_options() -> dict:
             "language": {"values": cv.LANGUAGES, "default": cv.LANGUAGE_DEFAULT,
                          "description": "language of the synthesized text"},
             "speed": {"min": cv.SPEED_MIN, "max": cv.SPEED_MAX,
-                      "default": cv.SPEED_DEFAULT, "description": "native CosyVoice2 speed (mel time-scaling)"},
+                      "default": cv.SPEED_DEFAULT, "description": "native CosyVoice speed (mel time-scaling)"},
             "instruct_text": {"max_chars": cv.INSTRUCT_MAX_CHARS, "default": "",
                               "description": "natural-language delivery direction (e.g. 'speak in a "
                                              "calm, reassuring tone'); empty = plain cloning"},
             "rate_volume": "`rate`/`volume` accepted for compatibility; ignored by backend",
         },
+        # Each also honours its COSYVOICE2_* predecessor when unset (see
+        # cosyvoice3_client._raw), so a .env not yet renamed still applies.
         "env_overrides": [
-            "COSYVOICE2_REPO", "COSYVOICE2_MODEL_DIR", "COSYVOICE2_FP16",
-            "COSYVOICE2_USE_VLLM", "COSYVOICE2_USE_TRT", "COSYVOICE2_DEFAULT_REF",
-            "COSYVOICE2_DEFAULT_REF_TEXT", "COSYVOICE2_LANGUAGE", "COSYVOICE2_SPEED",
-            "COSYVOICE2_MAX_CHARS",
+            "COSYVOICE3_REPO", "COSYVOICE3_MODEL_DIR", "COSYVOICE3_FP16",
+            "COSYVOICE3_USE_VLLM", "COSYVOICE3_USE_TRT", "COSYVOICE3_DEFAULT_REF",
+            "COSYVOICE3_DEFAULT_REF_TEXT", "COSYVOICE3_LANGUAGE", "COSYVOICE3_SPEED",
+            "COSYVOICE3_MAX_CHARS",
         ],
     }
 
 
 # ----------------------------
-# Custom voices (CosyVoice2 cloning)
+# Custom voices (CosyVoice cloning)
 # ----------------------------
 
 # Spoken during the create-voice preview so the user hears the cloned voice, not

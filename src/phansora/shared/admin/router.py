@@ -73,11 +73,15 @@ def _torch_cache_dir() -> Path:
 
 
 def _cosyvoice_dir() -> Path:
-    d = os.getenv("COSYVOICE2_MODEL_DIR")
+    # Mirrors cosyvoice3_client's resolution, including the COSYVOICE2_* fallback, so the
+    # storage report keeps pointing at the real model dir on a box whose .env predates the
+    # v3 rename. Kept as plain getenv rather than importing the client: this module must
+    # stay importable on hosts with no TTS stack installed.
+    d = os.getenv("COSYVOICE3_MODEL_DIR") or os.getenv("COSYVOICE2_MODEL_DIR")
     if d:
         return Path(d)
-    repo = os.getenv("COSYVOICE2_REPO", "/var/www/CosyVoice")
-    return Path(repo) / "pretrained_models" / "CosyVoice2-0.5B"
+    repo = os.getenv("COSYVOICE3_REPO") or os.getenv("COSYVOICE2_REPO") or "/var/www/CosyVoice"
+    return Path(repo) / "pretrained_models" / "Fun-CosyVoice3-0.5B-RL"
 
 
 def _dossier_embeddings() -> Path:

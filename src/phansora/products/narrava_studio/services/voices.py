@@ -1,7 +1,7 @@
 """Preset narration voices for Narrava Studio.
 
 These are the curated, ready-to-use voices exposed in the Studio UI. Synthesis
-runs through the existing CosyVoice2 engine (see products/spokenverse); each preset
+runs through the existing CosyVoice engine (see products/spokenverse); each preset
 maps to a CosyVoice reference/speaker. The list is intentionally static for now —
 Brandon is adding the actual preset reference clips to the engine; until then the
 ids here are the contract the frontend selects against.

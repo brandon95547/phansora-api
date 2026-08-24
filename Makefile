@@ -17,7 +17,9 @@
 .PHONY: help doctor install install-dev install-tts install-mac dev run worker test compile clean
 
 VENV   ?= .venv
-# Where the CosyVoice2 TTS engine checkout lives (git clone, not a pip package).
+# Where the CosyVoice TTS engine checkout lives (git clone, not a pip package).
+# The checkout already ships CosyVoice3 support, so upgrading v2 -> v3 was a model
+# download, not a re-clone.
 COSYVOICE_REPO ?= /var/www/CosyVoice
 # Prod needs Python 3.10 — the torch wheels in requirements.txt are cp310, and
 # CentOS Stream 8's default `python3` is 3.6 (which fails with "not a supported
@@ -82,7 +84,7 @@ install: ## Create Python 3.10 venv and install deps (CUDA torch — prod / Linu
 	@echo ""
 	@echo "API installed. Now install the TTS engine:  make install-tts"
 
-install-tts: ## Clone CosyVoice2, install its reqs (torch-stripped) + download the model
+install-tts: ## Clone CosyVoice, install its reqs (torch-stripped) + download the v3 model
 	@test -d $(COSYVOICE_REPO)/.git || \
 		git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git $(COSYVOICE_REPO)
 	cd $(COSYVOICE_REPO) && git submodule update --init --recursive
@@ -103,17 +105,22 @@ install-tts: ## Clone CosyVoice2, install its reqs (torch-stripped) + download t
 	$(PIP) install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r $(VENV)/cosy-reqs.txt
 	$(PIP) install --no-deps --no-build-isolation openai-whisper==20231117
 	$(PIP) install more-itertools
-	$(PY) -c "from modelscope import snapshot_download; snapshot_download('iic/CosyVoice2-0.5B', local_dir='$(COSYVOICE_REPO)/pretrained_models/CosyVoice2-0.5B')"
+	# Fun-CosyVoice3 RL checkpoint (~6 GB). The _RL post-trained variant beats the base
+	# model on every reported CER (0.81/1.68/5.44 vs 1.21/2.24/6.71 for zh/en/hard).
+	# NOTE the local_dir name is what cosyvoice3_client.MODEL_DIR_NAME expects — change
+	# both together or the loader will not find the model.
+	$(PY) -c "from modelscope import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512_RL', local_dir='$(COSYVOICE_REPO)/pretrained_models/Fun-CosyVoice3-0.5B-RL')"
 	$(PY) -c "import torch, torchaudio, vllm; print('OK torch', torch.__version__, 'vllm', vllm.__version__, 'cuda', torch.cuda.is_available())"
 	@echo ""
-	@echo "Set COSYVOICE2_REPO=$(COSYVOICE_REPO) in .env (+ COSYVOICE2_DEFAULT_REF / _REF_TEXT)."
+	@echo "Set COSYVOICE3_REPO=$(COSYVOICE_REPO) in .env (+ COSYVOICE3_DEFAULT_REF / _REF_TEXT)."
+	@echo "Old v2 weights, if present, are now dead: rm -rf $(COSYVOICE_REPO)/pretrained_models/CosyVoice2-0.5B (~6 GB)."
 
 install-dev: ## Linux local dev: venv + CPU torch + deps (no CUDA, no vLLM — so no TTS)
 	@# Everything except the GPU stack. Nothing installed here is pinned to a specific
 	@# CPython, so it works on whatever python3 the machine has (3.11 / 3.12) instead of
 	@# demanding 3.10 like `install` does.
 	@#
-	@# What you lose: vLLM and therefore CosyVoice2 synthesis. main.py mounts products
+	@# What you lose: vLLM and therefore CosyVoice synthesis. main.py mounts products
 	@# defensively (_load_products skips any that fail to import), so the API still comes
 	@# up with /studio, /chrono, /dossier and /book-alchemy — it just logs a warning and
 	@# omits /spokenverse. Narration authoring works; voicing a script does not.
@@ -166,14 +173,14 @@ install-mac: ## macOS local dev: venv + CPU/MPS torch + deps (no CUDA)
 	$(PIP) install -r $(VENV)/requirements-mac.txt
 	$(PIP) install -e .
 	@echo ""
-	@echo "API deps installed. Note: CosyVoice2 (vLLM) is CUDA-only — Mac dev runs the API"
-	@echo "without TTS, or set COSYVOICE2_USE_VLLM=0/_USE_TRT=0 for a slow CPU path."
+	@echo "API deps installed. Note: CosyVoice (vLLM) is CUDA-only — Mac dev runs the API"
+	@echo "without TTS, or set COSYVOICE3_USE_VLLM=0/_USE_TRT=0 for a slow CPU path."
 
 dev: ## Run the unified API with autoreload
 	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --reload
 
 run: ## Run the unified API (no reload)
-	# --workers 1: CosyVoice2 is a per-process singleton (weights + a resident vLLM engine).
+	# --workers 1: CosyVoice is a per-process singleton (weights + a resident vLLM engine).
 	# Each extra worker would load its OWN copy — doubling VRAM and the ~80s startup warmup —
 	# so the GPU model must live in a single warm process. Scale non-TTS load via a proxy/
 	# replicas, not in-process workers, if ever needed.

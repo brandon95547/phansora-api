@@ -5,7 +5,7 @@ serves all products, each under a path prefix:
 
 | Product | Prefix | What it does |
 |---|---|---|
-| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice2 voice cloning), PDF→text, audio→text |
+| **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice voice cloning), PDF→text, audio→text |
 | **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (web-search research) |
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 | **Book Alchemy** | `/book-alchemy` | book → structured audio course |
@@ -48,7 +48,7 @@ because that provider has no `ANTHROPIC_MODEL` var to resolve through.
 
 | Product | Used for | Model | Var |
 |---|---|---|---|
-| SpokenVerse | text→speech + voice cloning | CosyVoice2-0.5B / IndexTTS2 / GPT-SoVITS | `TTS_ENGINE`, `COSYVOICE2_MODEL_DIR` |
+| SpokenVerse | text→speech + voice cloning | Fun-CosyVoice3-0.5B-RL | `TTS_ENGINE`, `COSYVOICE3_MODEL_DIR` |
 | SpokenVerse | audio→text | faster-whisper | `WHISPER_MODEL` (`base`) |
 | Narrava Studio | word-level narration timing | faster-whisper | `NARRAVA_ALIGN_MODEL` → `WHISPER_MODEL` |
 | Dossier Nova | semantic chunking + dedupe | `sentence-transformers/all-MiniLM-L6-v2` (384-dim) | `EMBEDDING_DIMENSIONS` |
@@ -89,9 +89,9 @@ with instructions if neither is found — so **don't** run a bare `python3 -m ve
 `requirements.txt` pins the `+cu126` torch 2.7.0 wheels as direct
 `download.pytorch.org/whl/cu126/…` CloudFront URLs, cp310 / `manylinux_2_28_x86_64`
 (the index links to Cloudflare R2, which the prod network can't reach over TLS). Prod
-runs on an **RTX A4000 (16 GB, Ampere)** — plenty for CosyVoice2 (~3 GB fp16); `+cu126`
+runs on an **RTX A4000 (16 GB, Ampere)** — plenty for CosyVoice (~3 GB fp16); `+cu126`
 runs on any recent driver via CUDA minor-version compatibility. Note: the vLLM/TensorRT
-acceleration is CUDA-only; on CPU set `COSYVOICE2_USE_VLLM=0`/`_USE_TRT=0` (minutes/gen).
+acceleration is CUDA-only; on CPU set `COSYVOICE3_USE_VLLM=0`/`_USE_TRT=0` (minutes/gen).
 For a CPU-only host, swap `whl/cu126` + `+cu126` for `whl/cpu` + `+cpu`.
 
 ### System dependencies (NOT installed by pip)
@@ -140,8 +140,8 @@ Verify a box has everything — run this on a **freshly provisioned host, before
 make doctor     # reports each dependency + the install command for this distro; exits non-zero if any are missing
 ```
 
-CosyVoice2 is a fourth non-pip dependency (a git checkout, not a package) — see
-[TTS engine — CosyVoice2 (prod)](#tts-engine--cosyvoice2-prod) below.
+CosyVoice is a fourth non-pip dependency (a git checkout, not a package) — see
+[TTS engine — Fun-CosyVoice 3 (prod)](#tts-engine--fun-cosyvoice-3-prod) below.
 
 ### Local dev on Mac
 
@@ -153,36 +153,36 @@ make dev            # API runs on http://localhost:8000
 ```
 
 The API boots **without** the TTS engine — every non-TTS route works immediately;
-only a voice-generation call needs CosyVoice2, and without it you get a clean
+only a voice-generation call needs CosyVoice, and without it you get a clean
 "engine not configured" error instead of a crash.
 
-CosyVoice2's fast path (vLLM + TensorRT) is **CUDA-only**, so full-quality TTS is not
+CosyVoice's fast path (vLLM + TensorRT) is **CUDA-only**, so full-quality TTS is not
 available on a Mac. If you must synthesize locally, clone CosyVoice to `~/CosyVoice`,
 install the Mac torch build, and set in `.env`:
 
 ```bash
 TTS_ENGINE=cosyvoice2
-COSYVOICE2_REPO=/Users/<you>/CosyVoice
-COSYVOICE2_FP16=0
-COSYVOICE2_USE_VLLM=0            # CUDA-only — falls back to the (slow) in-process LLM loop
-COSYVOICE2_USE_TRT=0            # CUDA-only
+COSYVOICE3_REPO=/Users/<you>/CosyVoice
+COSYVOICE3_FP16=0
+COSYVOICE3_USE_VLLM=0            # CUDA-only — falls back to the (slow) in-process LLM loop
+COSYVOICE3_USE_TRT=0            # CUDA-only
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
 
-CosyVoice2 auto-selects CUDA when available and falls back to CPU otherwise (Mac has no
+CosyVoice auto-selects CUDA when available and falls back to CPU otherwise (Mac has no
 CUDA). The `pynini` dependency (pulled in by CosyVoice's WeTextProcessing) is the tricky
 part on macOS — install it via conda (`conda install -c conda-forge pynini==2.1.6`).
 
-### TTS engine — CosyVoice2 (prod)
+### TTS engine — Fun-CosyVoice 3 (prod)
 
 > **License:** CosyVoice is released under **Apache-2.0** (commercial use permitted).
 
-CosyVoice2 is a git checkout, not a published pip package, run in-process. Its vLLM
+CosyVoice is a git checkout, not a published pip package, run in-process. Its vLLM
 backend **hard-pins `torch==2.7.0`** and needs `transformers==4.51.3` + `pydantic>=2.9`,
 all pinned in `requirements.txt` and installed by `make install` — so run `make install`
 FIRST, then `make install-tts` (clones CosyVoice, installs its requirements with the
-conflicting torch/pydantic pins stripped, and downloads the CosyVoice2-0.5B checkpoints):
+conflicting torch/pydantic pins stripped, and downloads the Fun-CosyVoice3-0.5B-RL checkpoints):
 
 ```bash
 make install        # API venv: torch 2.7 + vllm 0.9.0 + transformers 4.51.3
@@ -197,25 +197,25 @@ git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git /var/www/Cosy
 sed -E '/^(torch|torchaudio|pydantic)==/d' /var/www/CosyVoice/requirements.txt > /tmp/cosy-reqs.txt
 .venv/bin/pip install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r /tmp/cosy-reqs.txt
 .venv/bin/python -c "from modelscope import snapshot_download; \
-  snapshot_download('iic/CosyVoice2-0.5B', local_dir='/var/www/CosyVoice/pretrained_models/CosyVoice2-0.5B')"
+  snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512_RL', local_dir='/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL')"
 ```
 
 Then set in `.env` and restart the service:
 
 ```bash
 TTS_ENGINE=cosyvoice2
-COSYVOICE2_REPO=/var/www/CosyVoice
-# COSYVOICE2_MODEL_DIR=/var/www/CosyVoice/pretrained_models/CosyVoice2-0.5B  # default
-COSYVOICE2_FP16=1                  # half VRAM + bandwidth (CUDA-only)
-COSYVOICE2_USE_VLLM=1              # vLLM LLM backend — the big speedup (CUDA-only)
-COSYVOICE2_USE_TRT=1               # TensorRT flow estimator (CUDA-only; builds once)
+COSYVOICE3_REPO=/var/www/CosyVoice
+# COSYVOICE3_MODEL_DIR=/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL  # default
+COSYVOICE3_FP16=1                  # half VRAM + bandwidth (CUDA-only)
+COSYVOICE3_USE_VLLM=1              # vLLM LLM backend — the big speedup (CUDA-only)
+COSYVOICE3_USE_TRT=0               # TensorRT flow estimator — off on v3 (upstream warns)
 # "Default" voice needs a reference clip AND its transcript (CosyVoice conditions on the
 # transcript). Set both so warmup also kernel-warms and the FIRST request is fast:
-COSYVOICE2_DEFAULT_REF=/path/to/ref.wav
-COSYVOICE2_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
+COSYVOICE3_DEFAULT_REF=/path/to/ref.wav
+COSYVOICE3_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
 ```
 
-> **Runs on GPU (RTX A4000, 16 GB).** CosyVoice2 loads at ~3 GB (fp16) with plenty of
+> **Runs on GPU (RTX A4000, 16 GB).** CosyVoice loads at ~3 GB (fp16) with plenty of
 > headroom. The engine loads **once at FastAPI startup** (the model is a per-process
 > singleton) — this pays weights + vLLM CUDA-graph capture (~80 s) and, on the very
 > first boot, a one-time TensorRT engine build (cached to disk after). The startup
@@ -230,7 +230,7 @@ COSYVOICE2_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
 
 The API boots without the engine; only TTS calls need it. Speed (0.5–2.0×, native) is a
 per-request option — see `GET /spokenverse/tts-options`. There is no emotion control
-(CosyVoice2 has none; it clones from a reference clip + its transcript).
+(CosyVoice has none; it clones from a reference clip + its transcript).
 
 ## Environment (`.env`)
 
@@ -244,11 +244,11 @@ both.
 | `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | your real site origin(s) |
 | `PHANSORA_DATA_DIR` | *unset* → uses cwd | `/var/lib/phansora` (user voices/audio/db live here) |
 | `PHANSORA_ASSETS_DIR` | *unset* → `<repo>/assets` | rarely set; shipped read-only content (the default voices) |
-| `COSYVOICE2_REPO` | `~/CosyVoice` | `/var/www/CosyVoice` |
-| `COSYVOICE2_FP16` | `0` (CPU) | `1` (fp16 on GPU — faster, lower VRAM) |
-| `COSYVOICE2_USE_VLLM` | `0` (CUDA-only) | `1` (the LLM speedup) |
-| `COSYVOICE2_USE_TRT` | `0` (CUDA-only) | `1` (flow TensorRT engine) |
-| `COSYVOICE2_DEFAULT_REF` / `_REF_TEXT` | *unset* | ref clip + its transcript for the "default" voice |
+| `COSYVOICE3_REPO` | `~/CosyVoice` | `/var/www/CosyVoice` |
+| `COSYVOICE3_FP16` | `0` (CPU) | `1` (fp16 on GPU — faster, lower VRAM) |
+| `COSYVOICE3_USE_VLLM` | `0` (CUDA-only) | `1` (the LLM speedup) |
+| `COSYVOICE3_USE_TRT` | `0` (CUDA-only) | `0` (upstream warns on the v3 DiT engine) |
+| `COSYVOICE3_DEFAULT_REF` / `_REF_TEXT` | *unset* | ref clip + its transcript for the "default" voice |
 | `WHISPER_DEVICE` | `cpu` | `cuda` |
 | `WHISPER_COMPUTE_TYPE` | `int8` | `float16` |
 | `DB_HOST` / `DB_PORT` | your local Postgres | `127.0.0.1` / the shared Postgres port |
@@ -313,17 +313,17 @@ text
 - **Pipeline split** — `chunk_text(text, chunk_chars=2500)` (`shared/utils/chunking.py`),
   on paragraph/sentence boundaries. Most inputs are ≤ 2500 → a single pipeline chunk.
 - **Engine split** — inside `_synthesize_sync`, `_chunk_text(text, 200)`
-  (`txt_to_voice/adapters/cosyvoice2_client.py`) packs whole lines/sentences up to the
-  `MAX_CHARS_DEFAULT` / `COSYVOICE2_MAX_CHARS` cap (**200**; newline-aware so verse splits too).
+  (`txt_to_voice/adapters/cosyvoice3_client.py`) packs whole lines/sentences up to the
+  `MAX_CHARS_DEFAULT` / `COSYVOICE3_MAX_CHARS` cap (**200**; newline-aware so verse splits too).
 - **Join within a pipeline chunk** — the ≤200 pieces are **not** separate files; their audio
-  tensors are concatenated in RAM via `torch.cat` (`cosyvoice2_client.py`) → one wav.
+  tensors are concatenated in RAM via `torch.cat` (`cosyvoice3_client.py`) → one wav.
 - **Join across pipeline chunks** — only when text > 2500 (N > 1) are the per-chunk wavs
   written out and stitched with **ffmpeg** `concat_audio_files_ffmpeg` → `merged.wav`
   (`shared/utils/ffmpeg.py`; orchestrated in `txt_to_voice/pipeline.py`).
 - **Transcode** — `transcode_audio_ffmpeg` → the final mp3.
 
 **Why every word lands:** the concat steps always preserved order — nothing was ever dropped
-at a join. The words that used to vanish were never *generated*: given a long piece, CosyVoice2
+at a join. The words that used to vanish were never *generated*: given a long piece, CosyVoice
 truncates its tail mid-call. The 200-char cap keeps each piece short enough to finish. See
 known-issue #8.
 
@@ -342,9 +342,9 @@ phansora tts --help        # batch TTS / PDF→TXT
 phansora dossier --help    # Dossier Nova pipeline
 ```
 
-## Known issues / what not to do (SpokenVerse + CosyVoice2 + vLLM)
+## Known issues / what not to do (SpokenVerse + CosyVoice + vLLM)
 
-Hard-won notes from the CosyVoice2 + vLLM GPU setup. **Read before touching the TTS engine
+Hard-won notes from the CosyVoice + vLLM GPU setup. **Read before touching the TTS engine
 or its torch/vLLM pins** — several of these cost real time.
 
 1. **vLLM 0.9.0 hard-pins `torch==2.7.0` — the whole API venv is on torch 2.7, not 2.8.**
@@ -355,15 +355,15 @@ or its torch/vLLM pins** — several of these cost real time.
    command line. If pip then errors on `deepspeed`/`lightning` capping torch, add them to the
    strip list — they're training-only and unused at inference.
 
-2. **Register `CosyVoice2ForCausalLM` with vLLM BEFORE constructing the engine.** CosyVoice2's
+2. **Register `CosyVoice2ForCausalLM` with vLLM BEFORE constructing the engine.** CosyVoice's
    LLM is a custom vLLM architecture; without `ModelRegistry.register_model(...)` (done in
-   `cosyvoice2_client._load_cosy`, gated on `COSYVOICE2_USE_VLLM`) vLLM raises "Cannot find
+   `cosyvoice3_client._load_cosy`, gated on `COSYVOICE3_USE_VLLM`) vLLM raises "Cannot find
    model module 'CosyVoice2ForCausalLM'".
 
 3. **The model loads ONCE at FastAPI startup; don't construct it per request.** It's a
    per-process singleton (`_load_cosy`, lock-guarded, cached). Startup preload (off-thread)
    pays weights + vLLM CUDA-graph capture (~80 s) + first-run TensorRT build (cached to disk).
-   Constructing `CosyVoice2` inside a request handler would re-pay all of that every call.
+   Constructing `CosyVoice` inside a request handler would re-pay all of that every call.
 
 4. **Run a single uvicorn worker (`make run` → `--workers 1`).** vLLM's graph capture is
    per-process and not disk-cached, and each worker holds its own resident engine — extra
@@ -371,18 +371,18 @@ or its torch/vLLM pins** — several of these cost real time.
 
 5. **CosyVoice needs the reference clip's transcript (`prompt_text`).** Unlike the old engine,
    CosyVoice conditions on the transcript. Cloned voices store it as `ref_text` (auto-whisper
-   at create-voice); the `default` voice needs `COSYVOICE2_DEFAULT_REF_TEXT`. No transcript →
+   at create-voice); the `default` voice needs `COSYVOICE3_DEFAULT_REF_TEXT`. No transcript →
    a clear "needs transcript" error, not silent garbage.
 
-6. **No emotion control.** CosyVoice2 has no emotion vector/intensity knob (that was IndexTTS2).
+6. **No emotion control.** CosyVoice has no emotion vector/intensity knob (that was IndexTTS2).
    Only `speed` (0.5–2.0×, native) remains. Don't wire emotion sliders back into the UI.
 
 7. **No CUDA toolkit / nvcc required.** vLLM and TensorRT ship precompiled CUDA ops in their
    wheels; the box needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh` and the
    `cuda-env.conf` systemd drop-in are legacy (DeepSpeed) and no longer needed for TTS.
 
-8. **CosyVoice2 silently drops/skips words on long inference chunks — cap chunks at ~200 chars.**
-   Given a long text in a single `inference_zero_shot` call, CosyVoice2 intermittently stops
+8. **CosyVoice silently drops/skips words on long inference chunks — cap chunks at ~200 chars.**
+   Given a long text in a single `inference_zero_shot` call, CosyVoice intermittently stops
    generating early and **omits whole clauses** — the dropped span clusters at the *tail* of the
    chunk. It is **far worse with cloned voices** than the `default` voice, and it is a *model*
    behavior, not a chunking-boundary or ffmpeg-concat bug (drops land mid-chunk, not at joins).
@@ -390,12 +390,12 @@ or its torch/vLLM pins** — several of these cost real time.
    word-diff against the source): 550/400 chars dropped whole sentences, 300 dropped the tail,
    250 dropped words in 1/2 trials, **200 was clean in 8/8 trials** (and clean on a 5-paragraph,
    ~2 k-char / 351-word input). **Fix/workaround:** `MAX_CHARS_DEFAULT = 200` in
-   `txt_to_voice/adapters/cosyvoice2_client.py` bounds every inference chunk; `_chunk_text` packs
+   `txt_to_voice/adapters/cosyvoice3_client.py` bounds every inference chunk; `_chunk_text` packs
    whole lines/sentences up to that cap (newline-aware so verse — line breaks, no periods — also
    splits), and only a single run longer than the cap is broken at a word boundary. (See
    *SpokenVerse txt → audio: chunking & concatenation* above for how the pieces re-join into one
    mp3.) Tune without
-   redeploying via `COSYVOICE2_MAX_CHARS` in `.env` (then `systemctl restart phansora-api`). Do
+   redeploying via `COSYVOICE3_MAX_CHARS` in `.env` (then `systemctl restart phansora-api`). Do
    **not** raise it back toward 550 "for fewer joins" — 250 already dropped words. If drops ever
    reappear, lower it further and re-verify with the whisper word-diff method above.
    *Latency note:* smaller chunks ⇒ more serialized inference (one `_INFER_LOCK`), so a very
