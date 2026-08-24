@@ -15,6 +15,22 @@ Acceleration (all quality-preserving, all default-on; see the load flags below):
     * fp16                      — half the LLM/flow memory bandwidth, ~half the VRAM.
     * TensorRT flow estimator   — fp16 engine for the flow ODE (built once, cached to disk).
 
+SAMPLING — the vLLM backend silently discards the model's own sampling config, so we put
+it back. ``cosyvoice2.yaml`` declares ``ras_sampling(top_p=0.8, top_k=25, win_size=10,
+tau_r=0.1)``, but that is only ever reached on the plain-torch path (``sampling_ids`` ->
+``ras_sampling``). ``Qwen2LM.inference_wrapper`` builds vLLM's SamplingParams from scratch
+and carries across exactly one field — ``top_k`` — so on the accelerated path:
+
+    top_k  25 (kept)   |   top_p  0.8 -> 1.0   |   repetition-aware resampling: dropped
+
+Sampling the full 25-candidate tail at temperature 1.0 lets the speech-token LLM pick an
+off-distribution token mid-word, which is heard as an intermittently garbled WORD (not a
+dropped one — that is the MAX_CHARS story below). ``_install_sampling_defaults`` patches
+``vllm.SamplingParams`` so the yaml's values are restored; it only fills in fields the
+caller omitted, so if upstream ever starts passing ``top_p`` that wins automatically.
+Overridable via COSYVOICE2_TOP_P / _TOP_K / _TEMPERATURE / _REPETITION_PENALTY / _SEED —
+all no-ops when COSYVOICE2_USE_VLLM=0, since the torch path already honours the yaml.
+
 Speed is a NATIVE CosyVoice2 knob (mel time-scaled at synthesis, 0.5-2.0) — no ffmpeg
 post-process.
 
@@ -78,6 +94,14 @@ LANGUAGE_DEFAULT = "en"
 # native CosyVoice2 parameter (mel time-scaling), applied at synthesis time.
 SPEED_MIN, SPEED_MAX, SPEED_DEFAULT = 0.5, 2.0, 1.0
 
+# Sampling defaults for the vLLM path. These are NOT a tuning of ours — they are the values
+# CosyVoice2-0.5B/cosyvoice2.yaml already declares, which vLLM drops (see the module
+# docstring). Restoring them is a bug fix, not a preference. Repetition penalty stays at
+# 1.0 (neutral) for parity; it is the first knob to reach for if token looping appears,
+# since the vLLM path has no ras_sampling loop-breaker.
+TOP_P_DEFAULT, TOP_K_DEFAULT, TEMPERATURE_DEFAULT = 0.8, 25, 1.0
+REPETITION_PENALTY_DEFAULT = 1.0
+
 # CosyVoice2 intermittently drops/truncates words when a single inference chunk is long (the
 # drop clusters at the chunk tail), and it is far worse with cloned voices. Measured on prod
 # with a cloned voice + whisper transcription: 550/400 dropped whole sentences, 300 dropped
@@ -138,6 +162,67 @@ def _model_dir(repo: Path) -> str:
     return _env("COSYVOICE2_MODEL_DIR", str(repo / "pretrained_models" / "CosyVoice2-0.5B"))
 
 
+def _sampling_overrides() -> dict:
+    """The sampling fields vLLM leaves at ITS defaults instead of CosyVoice2's."""
+    over = {
+        "top_p": _env_float("COSYVOICE2_TOP_P", TOP_P_DEFAULT),
+        "top_k": _env_int("COSYVOICE2_TOP_K", TOP_K_DEFAULT),
+        "temperature": _env_float("COSYVOICE2_TEMPERATURE", TEMPERATURE_DEFAULT),
+        "repetition_penalty": _env_float(
+            "COSYVOICE2_REPETITION_PENALTY", REPETITION_PENALTY_DEFAULT),
+    }
+    raw_seed = _env("COSYVOICE2_SEED")
+    if raw_seed:
+        try:
+            over["seed"] = int(raw_seed)  # fixed seed makes an A/B comparison mean something
+        except ValueError:
+            logger.warning("COSYVOICE2_SEED=%r is not an integer; ignoring.", raw_seed)
+    return over
+
+
+def _install_sampling_defaults() -> None:
+    """Make the vLLM path honour cosyvoice2.yaml's sampling config (see module docstring).
+
+    ``Qwen2LM.inference_wrapper`` does ``from vllm import SamplingParams`` INSIDE the
+    function, so it resolves the attribute off the ``vllm`` package at call time — swapping
+    that attribute is enough, and the upstream file is never edited (``make install-tts``
+    re-clones the checkout, so a patched fork would not survive anyway).
+
+    Patching the top-level re-export specifically is what makes this safe: vLLM's own
+    internals import the class from ``vllm.sampling_params``, so their isinstance checks
+    still see the real class — and we hand back a real instance regardless. In practice
+    CosyVoice is the only ``from vllm import SamplingParams`` caller in this process.
+
+    Only fills in fields the caller OMITTED, so if upstream is ever fixed to pass ``top_p``
+    itself, its value wins and this quietly becomes a no-op.
+    """
+    import vllm  # type: ignore
+
+    if getattr(vllm.SamplingParams, "_phansora_patched", False):
+        return
+    real = vllm.SamplingParams
+    over = _sampling_overrides()
+
+    def _sampling_params(*args, **kwargs):
+        if args:
+            # Upstream builds it purely with kwargs. Positional args would make setdefault
+            # ambiguous against SamplingParams' field order, so pass through untouched.
+            logger.warning(
+                "SamplingParams called positionally; CosyVoice2 sampling defaults not applied."
+            )
+            return real(*args, **kwargs)
+        for key, value in over.items():
+            kwargs.setdefault(key, value)
+        return real(**kwargs)
+
+    _sampling_params._phansora_patched = True
+    vllm.SamplingParams = _sampling_params
+    logger.info(
+        "CosyVoice2 sampling restored from cosyvoice2.yaml (vLLM drops it): %s",
+        ", ".join(f"{k}={v}" for k, v in over.items()),
+    )
+
+
 def _load_cosy():
     """Construct the CosyVoice2 engine once per process (lock-guarded, cached).
 
@@ -168,6 +253,8 @@ def _load_cosy():
                 from vllm import ModelRegistry  # type: ignore
                 from cosyvoice.vllm.cosyvoice2 import CosyVoice2ForCausalLM  # type: ignore
                 ModelRegistry.register_model("CosyVoice2ForCausalLM", CosyVoice2ForCausalLM)
+                # vLLM ignores the yaml's sampling block; put it back before any synthesis.
+                _install_sampling_defaults()
 
             from cosyvoice.cli.cosyvoice import CosyVoice2  # type: ignore
 
