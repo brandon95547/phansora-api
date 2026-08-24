@@ -160,9 +160,27 @@ _LEADING_MARK_RE = re.compile(rf"(?m)^[ \t]*(?:[{_DASHES}]+|[\u2022\u00b7\u2023\
 _RANGE_RE = re.compile(rf"(?<=\d)[ \t]*[{_DASHES}][ \t]*(?=\d)")
 # Anywhere else a dash is a break, and becomes one.
 _DASH_RE = re.compile(rf"[ \t]*[{_DASHES}]+[ \t]*")
-# Emphasis stars, kept only when they actually wrap something: the lookarounds mean
-# "2 * 3 * 4" is arithmetic and survives untouched.
-_MD_EMPHASIS_RE = re.compile(r"\*{1,3}(?=\S)(.+?)(?<=\S)\*{1,3}", re.S)
+# Emphasis stars, kept only when they actually wrap something. The inner lookarounds mean
+# "2 * 3 * 4" is arithmetic and survives; the OUTER ones extend that to unspaced
+# arithmetic, which the inner pair alone got wrong — "a*b*c" matched with "b" as the
+# emphasised run and came out "abc". A star preceded by a word character is not opening
+# anything. These boundaries are deliberately the same ones the orphan rules below use.
+_MD_EMPHASIS_RE = re.compile(
+    r"""(?<![^\s([{"'“‘])\*{1,3}(?=\S)(.+?)(?<=\S)\*{1,3}(?![^\s)\]}.,;:!?"'”’])""", re.S)
+# UNPAIRED stars, which the rule above cannot see. Models mix their delimiters —
+# `the *prima materia" the material` opens with a star and closes with a quote — and the
+# survivor is worse than a whole pair, because it fuses to the word: CosyVoice read
+# `*prima` as one mangled token rather than saying "star".
+#
+# Pairing is unknowable here, so go by POSITION instead: a star that hugs a word on one
+# side and has whitespace or punctuation on the other is a delimiter, whichever partner it
+# lost. A star with non-space on BOTH sides is arithmetic ("2*3") and is left alone, which
+# is the same distinction the paired rule draws — just applied to one side at a time.
+_MD_OPEN_STAR_RE = re.compile(r"""(?<![^\s([{"'“‘])\*{1,3}(?=[^\s*])""")
+_MD_CLOSE_STAR_RE = re.compile(r"""(?<=[^\s*])\*{1,3}(?![^\s)\]}.,;:!?"'”’])""")
+# A line-leading "* " is a bullet, not emphasis — the star has a space after it, so neither
+# rule above touches it. Dropped like the other list markers.
+_MD_BULLET_RE = re.compile(r"(?m)^[ \t]*\*[ \t]+")
 # Tidy-up after the above: a dash next to punctuation that was already there leaves
 # ", ," or " ,". Runs last so it catches whatever the other rules produced.
 _COMMA_RUN_RE = re.compile(r"(?:,[ \t]*){2,}")
@@ -172,7 +190,12 @@ _SPACED_COMMA_RE = re.compile(r"[ \t]+,")
 def _strip_typography(text: str) -> str:
     """Remove marks that exist for the eye, keeping the pauses they stood for."""
     out = _LEADING_MARK_RE.sub("", text)
+    out = _MD_BULLET_RE.sub("", out)
+    # Paired first, so "**bold**" is consumed as a unit; only genuine orphans reach the
+    # two rules below.
     out = _MD_EMPHASIS_RE.sub(r"\1", out)
+    out = _MD_OPEN_STAR_RE.sub("", out)
+    out = _MD_CLOSE_STAR_RE.sub("", out)
     out = _RANGE_RE.sub(" to ", out)
     out = _DASH_RE.sub(", ", out)
     out = _COMMA_RUN_RE.sub(", ", out)

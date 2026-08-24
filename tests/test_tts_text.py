@@ -226,3 +226,58 @@ def test_typography_is_idempotent(raw):
     pass over its own output has to be a no-op."""
     once = normalize_for_tts(raw)
     assert normalize_for_tts(once) == once
+
+
+# ---------------------------------------------------------------------------
+# Unpaired emphasis stars
+#
+# Reported from Narrava Studio: `the *prima materia" the material` reached the engine
+# with its star intact and CosyVoice read `*prima` as one mangled token. The paired rule
+# could not see it — the model had opened with a star and closed with a quote, so there
+# was no pair to match. A survivor is worse than a whole pair precisely because it fuses
+# to the word rather than being voiced as "star".
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    # The exact reported sentence: star in, quote out.
+    ('The raw substance was called the *prima materia" the material from which the work begins.',
+     'The raw substance was called the prima materia" the material from which the work begins.'),
+    # Each orphan on its own.
+    ("the *prima materia was first.", "the prima materia was first."),
+    ("called prima materia* by adepts.", "called prima materia by adepts."),
+    # The mirror of the reported case — quote in, star out.
+    ('the "prima materia* the material', 'the "prima materia the material'),
+    # An orphan that opens but never closes, at three stars.
+    ("***emphatic*** and ***orphan", "emphatic and orphan"),
+    # Adjacent to brackets rather than whitespace.
+    ("see (*note) below", "see (note) below"),
+    # A line-leading bullet: a space follows the star, so only the bullet rule catches it.
+    ("* first item\n* second item", "first item\nsecond item"),
+])
+def test_unpaired_emphasis_stars_are_removed(raw, expected):
+    assert normalize_for_tts(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [
+    # A star with non-space on BOTH sides is multiplication, whichever spacing is used.
+    # This is the same distinction the paired rule draws, applied one side at a time —
+    # and it is the reason the fix keys on position rather than trying to infer pairing.
+    "2*3 = 6",
+    "Compute a*b*c for the product.",
+    "2 * 3 * 4 = 24",
+])
+def test_arithmetic_stars_still_survive(raw):
+    assert normalize_for_tts(raw) == raw
+
+
+@pytest.mark.parametrize("raw", [
+    '*prima materia" the material',
+    "the *prima materia was first.",
+    "called prima materia* by adepts.",
+    "* bullet item",
+])
+def test_unpaired_star_removal_is_idempotent(raw):
+    """Same reason as the other idempotence test: the normalizer runs at both the document
+    and engine hooks, so a second pass must not chew further into the text."""
+    once = normalize_for_tts(raw)
+    assert normalize_for_tts(once) == once
