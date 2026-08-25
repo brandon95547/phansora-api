@@ -12,7 +12,6 @@ not a generator of new content.
 from __future__ import annotations
 
 import asyncio
-import json
 import random
 from typing import Any, Optional
 
@@ -91,8 +90,11 @@ class DeepSeekClient:
                 repaired = _repair_truncated_json(raw)
                 if repaired is not None:
                     try:
-                        return json.loads(repaired)
-                    except json.JSONDecodeError:
+                        # Back through the loose parser, not json.loads: a response can
+                        # be both cut off AND carry a literal backslash copied out of the
+                        # source, and only the loose parser fixes the second.
+                        return _parse_json_loose(repaired)
+                    except Exception:  # noqa: BLE001
                         pass
                 raise
         raise last_err  # pragma: no cover
