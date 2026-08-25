@@ -29,12 +29,22 @@
 # to come back through the same dropped return path, so a failed ping is
 # ambiguous between "nothing left" and "nothing returned". The counters are not.
 #
-# DETECTION
-# Inbound silence is the primary signal. This box absorbs constant SSH
-# brute-force traffic from hundreds of source IPs worldwide, which makes the
-# sshd journal a free always-on inbound traffic monitor: minutes with zero sshd
-# entries mean nothing on the internet reached the interface. Normal quiet gaps
-# run to about a minute, so SILENCE_SECS is set well clear of them.
+# DETECTION — the RX counter, not the logs
+# v1.0 triggered on sshd-journal silence, on the theory that constant SSH
+# brute-force traffic made the journal a free always-on inbound monitor. That
+# was wrong, and measurably so: across 2026-08-21..08-25 it fired 63 times and
+# every single one was a false positive — the RX counter kept climbing (77-450
+# packets per 15s cycle, never once flat) through all 63. The brute-force
+# traffic is heavy but BURSTY (14-22k entries/day arriving in waves), so 3+
+# minute sshd gaps are routine, not evidence of anything. nginx is no better:
+# this box is low-traffic and idles for up to 28 minutes at a time.
+#
+# So the trigger is now the measurement that was always the ground truth: the
+# NIC RX packet counter. If fewer than RX_FLOOR_PKTS packets arrive per cycle
+# for RX_DARK_SECS, then nothing is reaching the interface — no ARP, no
+# scanners, no traffic of any kind. That is a blackout by definition and it
+# cannot be faked by a quiet log. sshd and nginx silence are still recorded in
+# every report as corroborating detail; they just no longer decide anything.
 #
 # Requires: bash, ping, ip, journalctl, python3. Uses tracepath if present
 # (prod has no mtr or traceroute). Everything else degrades to a noted absence
@@ -42,14 +52,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail          # deliberately no -e: a failed probe must not kill the daemon
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # ── Config (all overridable from the systemd unit) ───────────────────────────
 SAMPLE_SECS="${SAMPLE_SECS:-15}"          # how often we take a reading
-SILENCE_SECS="${SILENCE_SECS:-180}"       # sshd quiet for this long ⇒ inbound is dark
-RECOVER_SECS="${RECOVER_SECS:-60}"        # sshd talking again within this ⇒ event over
+# Primary trigger. Observed floor on a healthy box is 77 rx packets per 15s
+# cycle; a true blackout should show single digits (stray ARP at most), so 15
+# sits ~5x below normal and well above blackout-level chatter.
+RX_FLOOR_PKTS="${RX_FLOOR_PKTS:-15}"      # rx at/below this per cycle ⇒ NIC is dark
+RX_DARK_SECS="${RX_DARK_SECS:-90}"        # dark this long ⇒ declare an event
+SILENCE_SECS="${SILENCE_SECS:-180}"       # sshd quiet: recorded as context, NOT a trigger
+RECOVER_SECS="${RECOVER_SECS:-60}"        # retained for the context lines only
 MIN_EVENT_SECS="${MIN_EVENT_SECS:-60}"    # shorter blips are logged, not emailed
 MAX_MAILS_PER_HOUR="${MAX_MAILS_PER_HOUR:-6}"
+HOURLY_SUMMARY_SECS="${HOURLY_SUMMARY_SECS:-3600}"   # positive "still reachable" evidence
 
 IFACE="${IFACE:-}"                        # autodetected from the default route
 PING_TARGETS="${PING_TARGETS:-8.8.8.8 1.1.1.1 9.9.9.9}"
@@ -343,6 +359,12 @@ log "net-watchdog ${VERSION} starting: iface=${IFACE} sample=${SAMPLE_SECS}s sil
 in_event=0
 event_start=0
 event_file=""
+first_cycle=1             # the first delta spans no real interval — discard it
+rx_dark_since=0           # ts at which rx first fell to/below the floor (0 = not dark)
+hour_start="$(now)"       # rolling window for the hourly reachability summary
+hour_cycles=0
+hour_dark_cycles=0
+hour_min_rx=-1
 prev_counters="$(nic_counters "$IFACE")"
 prev_sample_ts="$(now)"
 
@@ -351,6 +373,16 @@ while true; do
   printf '%s\n' "$ts" > "$HEARTBEAT" 2>/dev/null   # proof the guest kept executing
 
   cur_counters="$(nic_counters "$IFACE")"
+  # The first pass through the loop has no meaningful interval behind it — the
+  # baseline was read microseconds ago — so its delta is a near-zero artefact
+  # that would otherwise show up as a spurious dark cycle in the hourly record.
+  if [ "$first_cycle" -eq 1 ]; then
+    first_cycle=0
+    prev_counters="$cur_counters"
+    prev_sample_ts="$ts"
+    sleep "$SAMPLE_SECS"
+    continue
+  fi
   read -r c_rxp c_txp c_rxb c_txb c_rxe c_txe c_rxd <<< "$cur_counters"
   read -r p_rxp p_txp p_rxb p_txb p_rxe p_txe p_rxd <<< "$prev_counters"
   d_secs=$(( ts - prev_sample_ts )); [ "$d_secs" -gt 0 ] || d_secs=1
@@ -364,13 +396,39 @@ while true; do
   # whether we were transmitting into a void.
   sample_line="$(iso "$ts") rx_pkts=+${d_rxp} tx_pkts=+${d_txp} rx_bytes=+${d_rxb} tx_bytes=+${d_txb} over=${d_secs}s sshd_quiet=${sshd_q}s nginx_quiet=${nginx_q}s"
 
+  # ── Is the NIC dark? This is the trigger; the logs are only context. ──────
+  rx_dark_now=0
+  [ "$d_rxp" -le "$RX_FLOOR_PKTS" ] 2>/dev/null && rx_dark_now=1
+  if [ "$rx_dark_now" -eq 1 ]; then
+    [ "$rx_dark_since" -eq 0 ] && rx_dark_since=$(( ts - d_secs ))
+  else
+    rx_dark_since=0
+  fi
+  rx_dark_secs=0
+  [ "$rx_dark_since" -ne 0 ] && rx_dark_secs=$(( ts - rx_dark_since ))
+
   inbound_dark=0
-  [ "$sshd_q" -ge "$SILENCE_SECS" ] 2>/dev/null && inbound_dark=1
+  [ "$rx_dark_secs" -ge "$RX_DARK_SECS" ] 2>/dev/null && inbound_dark=1
+
+  # Rolling hourly evidence that the interface stayed reachable. Being able to
+  # show the provider a continuous record of "never went dark" is as much of
+  # the test they asked for as reporting an outage would be.
+  hour_cycles=$(( hour_cycles + 1 ))
+  [ "$rx_dark_now" -eq 1 ] && hour_dark_cycles=$(( hour_dark_cycles + 1 ))
+  { [ "$hour_min_rx" -lt 0 ] || [ "$d_rxp" -lt "$hour_min_rx" ]; } && hour_min_rx="$d_rxp"
+  if [ $(( ts - hour_start )) -ge "$HOURLY_SUMMARY_SECS" ]; then
+    if [ "$hour_dark_cycles" -eq 0 ]; then
+      log "REACHABILITY OK last $(( ts - hour_start ))s: ${hour_cycles} cycles, min rx=${hour_min_rx} pkts/cycle (floor ${RX_FLOOR_PKTS}) — NIC never went dark"
+    else
+      log "REACHABILITY last $(( ts - hour_start ))s: ${hour_cycles} cycles, ${hour_dark_cycles} at/below floor, min rx=${hour_min_rx} pkts/cycle"
+    fi
+    hour_start="$ts"; hour_cycles=0; hour_dark_cycles=0; hour_min_rx=-1
+  fi
 
   if [ "$in_event" -eq 0 ]; then
     if [ "$inbound_dark" -eq 1 ]; then
       in_event=1
-      event_start="$ts"
+      event_start="$rx_dark_since"    # backdate to when the NIC actually went dark
       event_file="${EVENT_DIR}/event-$(date -u -d "@$ts" +%Y%m%dT%H%M%SZ).txt"
       ob="$(outbound_up_count)"
       {
@@ -379,19 +437,20 @@ while true; do
         echo "  host:         $(hostname 2>/dev/null)"
         echo "  public IP:    $(ip -4 route get 8.8.8.8 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}')"
         echo "  interface:    ${IFACE}"
-        echo "  trigger:      no sshd entry for ${sshd_q}s (threshold ${SILENCE_SECS}s)"
+        echo "  trigger:      NIC received <=${RX_FLOOR_PKTS} pkts/cycle for ${rx_dark_secs}s (threshold ${RX_DARK_SECS}s)"
+        echo "  corroborating: sshd quiet ${sshd_q}s, nginx quiet ${nginx_q}s"
         echo "  outbound:     ${ob}/$(echo $PING_TARGETS | wc -w) ping targets responding at detection"
         echo
         snapshot "AT DETECTION" "$IFACE"
         echo
         echo "PER-CYCLE READINGS (every ${SAMPLE_SECS}s from detection):"
       } > "$event_file" 2>/dev/null
-      log "EVENT START sshd_quiet=${sshd_q}s outbound=${ob} → ${event_file}"
+      log "EVENT START rx_dark=${rx_dark_secs}s sshd_quiet=${sshd_q}s outbound=${ob} → ${event_file}"
     fi
   else
     echo "  $sample_line" >> "$event_file" 2>/dev/null
-    # Recovery: the internet is reaching us again.
-    if [ "$sshd_q" -ge 0 ] && [ "$sshd_q" -lt "$RECOVER_SECS" ] 2>/dev/null; then
+    # Recovery: packets are arriving at the interface again.
+    if [ "$rx_dark_now" -eq 0 ]; then
       dur=$(( ts - event_start ))
       {
         echo
