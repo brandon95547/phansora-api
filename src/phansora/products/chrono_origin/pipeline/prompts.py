@@ -438,7 +438,11 @@ def format_existing_block(existing) -> str:
     items = [str(t).strip() for t in (existing or []) if str(t or "").strip()]
     if not items:
         return "(nothing else on the timeline yet)"
-    return "\n".join(f"- {t}" for t in items[:40])
+    # 40 was sized for a board where one expansion added six cards. One now adds up to a
+    # hundred, so a list cut at 40 stops naming most of what is already there — and every
+    # title it fails to name is a repeat the user pays for and then watches the client
+    # drop as a duplicate.
+    return "\n".join(f"- {t}" for t in items[:150])
 
 
 # The wrapper, and everything in it earns its line.

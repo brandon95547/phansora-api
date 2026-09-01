@@ -377,10 +377,17 @@ def test_an_empty_board_says_so_rather_than_printing_nothing():
 
 
 def test_the_existing_list_is_bounded():
-    """It rides on every expansion call; a long trace should not turn it into a wall."""
+    """It rides on every expansion call; a long trace should not turn it into a wall.
+
+    The bound rose with the size of an expansion. At 40 it was sized for a board where
+    one call added six cards; one now adds up to a hundred, and every title the list
+    fails to name is a repeat the user pays for and then watches the client drop as a
+    duplicate. Still bounded, because it is caller-supplied and rides on every call.
+    """
     from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
 
-    assert len(format_existing_block([f"Item {i}" for i in range(200)]).split("\n")) == 40
+    assert len(format_existing_block([f"Item {i}" for i in range(500)]).split("\n")) == 150
+    assert len(format_existing_block([f"Item {i}" for i in range(12)]).split("\n")) == 12
 
 
 # ------------------------------------------- the expand search must state its query
