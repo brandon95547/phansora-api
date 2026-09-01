@@ -317,6 +317,44 @@ def _text_of_keys(entry: Dict[str, Any], *keys: str) -> str:
     return ""
 
 
+_YEAR_TEXT = re.compile(
+    r"^\s*(?:c(?:irca|a)?\.?\s*)?(?:ad\s+)?(-?\d{1,5})\s*(bce|bc|b\.c\.(?:e\.)?|ce|ad)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _year_of(value: Any) -> Optional[int]:
+    """A signed year out of whatever the model wrote, or None.
+
+    The gate below discards anything undated, which is right — a branch with no date has
+    nowhere to sit — but it used to accept nothing except a JSON int, and that is not
+    what a model asked for "the earliest defensible attestation date" reliably returns.
+    "-2350", "2350 BCE" and 2350.0 are all dated answers, and all three were being thrown
+    away one at a time in the log while the user counted the cards that did not arrive.
+
+    source_policy.parse_year is not this function: it reads publication years off pages
+    and cannot read a negative one at all.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if float(value).is_integer() else None
+    if not isinstance(value, str):
+        return None
+    found = _YEAR_TEXT.match(value)
+    if not found:
+        return None
+    year = int(found.group(1))
+    era = (found.group(2) or "").lower()
+    if era.startswith("b"):
+        # "2350 BCE" and "-2350 BCE" mean the same thing; nobody writes the second to
+        # mean 2350 CE.
+        return -abs(year)
+    return year
+
+
 def adapt_expand_events(
     raw_events: Any,
     *,
@@ -334,20 +372,37 @@ def adapt_expand_events(
     connections: List[Connection] = []
     used_ids = {parent_id}
     entries = raw_events if isinstance(raw_events, list) else []
+    cap = max(1, int(max_events or 1))
+    if len(entries) > cap:
+        # Loudly. This is the one loss with no trace on the board at all: the cards that
+        # do arrive look like the whole answer.
+        logger.warning(
+            "Expand: the model returned %d items and the cap is %d — %d are being thrown away.",
+            len(entries), cap, len(entries) - cap,
+        )
+    dropped: List[str] = []
 
-    for i, entry in enumerate(entries[: max(1, int(max_events or 1))]):
+    for i, entry in enumerate(entries[:cap]):
         if not isinstance(entry, dict):
+            dropped.append(f"not an object: {entry!r:.80}")
             continue
         title = _text_of_keys(entry, "name", "source_title", "title")
         if not title:
-            logger.info("Expand: dropped an entry with no name")
+            # The one thing still refused: a card with no title is not a result, and a
+            # board full of "Untitled" is worse than a board missing one row. Named here
+            # so it is not a silent loss.
+            dropped.append(f"no name: {entry!r:.120}")
             continue
 
-        year = entry.get("year") if isinstance(entry.get("year"), int) else None
-        year_end = entry.get("year_end") if isinstance(entry.get("year_end"), int) else None
-        if year is None and year_end is None:
-            logger.info("Expand: dropped undated %r", title)
-            continue
+        year = _year_of(entry.get("year"))
+        year_end = _year_of(entry.get("year_end"))
+        era = _text_of_keys(entry, "era_label", "era", "period")
+        # Undated used to be dropped here, on the rule that a step with no date has
+        # nowhere to sit. True of the chain, and NOT true of a branch: branches are
+        # stacked beside the node they hang from, and their position on screen owes
+        # nothing to their year. So an undated find is shown, last, saying so — which is
+        # a great deal more useful than a call that quietly returns four of nine.
+        undated = year is None and year_end is None
 
         word = _text_of_keys(entry, "relation", "classification", "link").lower()
         relation = (
@@ -404,6 +459,7 @@ def adapt_expand_events(
                 id=event_id,
                 year=year,
                 year_end=year_end,
+                era_label=era or ("Undated" if undated else None),
                 precision="year" if year is not None else "unknown",
                 node_type=raw_kind if is_node_kind(raw_kind) else "event",
                 source_title=title,
@@ -443,6 +499,21 @@ def adapt_expand_events(
         )
 
     events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+
+    # One record rather than twenty, so an expansion reads as a block in the terminal:
+    # what the model found, what reached the board, and what did not.
+    lines = [
+        f"Expand: {len(entries)} item(s) in, {len(events)} on the board"
+        + (f", {len(dropped)} refused" if dropped else "")
+    ]
+    by_id = {c.to_id: c for c in connections}
+    for e in events:
+        when = "undated" if e.year is None else str(e.year)
+        rel = by_id[e.id].relation if e.id in by_id else "?"
+        lines.append(f"    {when:>8}  {e.source_title[:52]:<52}  {rel}")
+    lines.extend(f"    REFUSED   {d}" for d in dropped)
+    logger.info("\n".join(lines))
+
     return events, connections
 
 
@@ -1384,6 +1455,12 @@ class TraceOrchestrator:
             )
             data = {}
         raw_events = data.get("events") or []
+        # The model's answer, verbatim, because every count below is a claim about it and
+        # the only way to check a claim about an answer is to read the answer.
+        logger.info(
+            "Expand [%s] %r — the model answered with %d characters:\n%s",
+            req.mode, req.parent_source_title, len(answer.text or ""), (answer.text or "").strip(),
+        )
         read_urls: set = set()
 
         url_lookup = {c["url"]: c for c in citations if c.get("url")}

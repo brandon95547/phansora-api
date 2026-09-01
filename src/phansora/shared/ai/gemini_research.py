@@ -40,7 +40,12 @@ _API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 # where the work does not fit means generating an answer, discarding it, and generating
 # it again — which is how the DeepSeek path came to pay for three passes per synthesis.
 _REASON_MAX_TOKENS = int(os.getenv("GEMINI_REASON_MAX_TOKENS", "32000"))
-_SEARCH_MAX_TOKENS = int(os.getenv("GEMINI_SEARCH_MAX_TOKENS", "4000"))
+# 4000 was sized for a grounded call that answers in prose — a <=350-word summary with
+# room to spare. Expanding now answers IN the grounded call, as a list the prompt asks
+# to be complete rather than representative, and a list cut off at the cap arrives as
+# a truncated JSON tail: salvageable, but silently short. It is a ceiling, not a
+# charge — an answer that does not need the room does not spend it.
+_SEARCH_MAX_TOKENS = int(os.getenv("GEMINI_SEARCH_MAX_TOKENS", "12000"))
 
 _JSON_SYSTEM = "You return only valid JSON. No prose, no code fences, no commentary."
 

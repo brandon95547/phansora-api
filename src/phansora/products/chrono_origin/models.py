@@ -497,10 +497,12 @@ class ExpandRequest(BaseModel):
     parent_claim: Optional[str] = Field(default=None, description="Existing claim text for the parent item.")
     parent_id: str = Field(default="parent", description="id the returned connections should hang off.")
     context: Optional[str] = Field(default=None, description="Optional disambiguating context for the overall story.")
-    # The ceiling rose with the one-call expand, whose prompt asks for "every qualifying
-    # result" rather than the strongest few. At 12 that instruction was answered and then
-    # silently truncated by the parser, which is the worst of both: paid for, not shown.
-    max_events: int = Field(default=6, ge=1, le=40, description="Max sub-events to return.")
+    # A safety valve, not a target. The expand prompt no longer mentions a number — it
+    # asks for every qualifying result — so anything this cap removes is material the
+    # user paid for and never sees. It was 12, then 40; it is 200 because the honest
+    # ceiling is "more than a model will ever return", and the truncation is logged as a
+    # warning if it ever bites.
+    max_events: int = Field(default=6, ge=1, le=200, description="Max sub-events to return.")
     mode: ExpandMode = Field(
         default="discovery",
         description="Which axis to expand along. See ExpandMode.",

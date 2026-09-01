@@ -589,23 +589,81 @@ def test_a_card_with_no_source_grades_itself_absent():
     assert events[0].evidence.verification == "unknown"
 
 
-def test_the_two_gates_the_trace_also_applies():
+def test_the_only_thing_still_refused_is_a_card_with_no_name():
+    """Undated used to be refused too, and that was the wrong rule for a branch.
+
+    A step with no date has nowhere to sit — the chain is a line and a year is a
+    position on it. A BRANCH is stacked beside the node it hangs from and its position
+    owes nothing to its year, so refusing it bought nothing and cost the user findings
+    they had paid for. What is still refused is an entry with no title, because a board
+    of "Untitled" is worse than a board one row short, and every refusal is named in the
+    log.
+    """
     events, conns = _adapt([
         {"name": "No year here", "relation": "independent_parallel"},
         {"year": -100, "relation": "independent_parallel"},
-        {"name": "Kept", "year": -100, "relation": "independent_parallel"},
+        {"name": "Dated", "year": -100, "relation": "independent_parallel"},
         "not a dict",
     ])
-    assert [e.source_title for e in events] == ["Kept"]
-    assert len(conns) == 1
+    assert [e.source_title for e in events] == ["Dated", "No year here"]
+    assert len(conns) == 2
 
 
-def test_year_zero_is_not_a_way_in():
-    """The template used to show "year": 0, which is a real int and not a real year."""
+def test_an_undated_find_is_shown_last_and_says_so():
+    events, _ = _adapt([
+        {"name": "undated", "relation": "records"},
+        {"name": "dated", "year": -500, "relation": "records"},
+    ])
+    assert [e.source_title for e in events] == ["dated", "undated"]
+    assert events[1].year is None
+    assert events[1].era_label == "Undated"
+    assert events[1].precision == "unknown"
+
+
+def test_an_era_the_model_named_beats_the_word_undated():
+    events, _ = _adapt([{"name": "x", "era_label": "Old Kingdom", "relation": "records"}])
+    assert events[0].era_label == "Old Kingdom"
+
+
+def test_a_date_is_a_date_in_whatever_shape_it_arrives():
+    """The gate discards the undated. It used to discard most of the DATED too.
+
+    Only a JSON int survived, which is not what a model asked for "the earliest defensible
+    attestation date" reliably writes — and each loss was one info line in the log while
+    the count of cards that never arrived went unexplained.
+    """
+    from phansora.products.chrono_origin.pipeline.orchestrator import _year_of
+
+    assert _year_of(-2350) == -2350
+    assert _year_of("-2350") == -2350
+    assert _year_of("2350 BCE") == -2350
+    assert _year_of("c. 2350 BCE") == -2350
+    assert _year_of("circa 500 BC") == -500
+    assert _year_of(-2350.0) == -2350
+    assert _year_of("70 CE") == 70
+    assert _year_of("AD 1947") == 1947
+    # And still nothing where there is nothing: an era name is not a position.
+    for junk in ("Old Kingdom", "", None, True, "12345678", "the third century"):
+        assert _year_of(junk) is None, junk
+
+    events, _ = _adapt([
+        {"name": "written as text", "year": "2350 BCE", "relation": "records"},
+        {"name": "written as float", "year": -1850.0, "relation": "records"},
+    ])
+    assert [(e.source_title, e.year) for e in events] == [
+        ("written as text", -2350), ("written as float", -1850),
+    ]
+
+
+def test_year_zero_is_taken_at_face_value():
+    """The template used to show "year": 0, which is a real int and not a real year.
+
+    It is still shown — an explicit 0 is the model's answer, and second-guessing it here
+    would mean deciding which of its answers are sincere. The template no longer suggests
+    it, which is the fix that belongs in the prompt rather than in the parser.
+    """
     events, _ = _adapt([{"name": "X", "year": 0, "relation": "records"}])
-    assert events and events[0].year == 0  # an explicit 0 is still the model's answer
-    events, _ = _adapt([{"name": "X", "year": None, "relation": "records"}])
-    assert events == []
+    assert events and events[0].year == 0
 
 
 def test_the_model_may_answer_in_the_older_shape():
