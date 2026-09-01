@@ -58,7 +58,6 @@ from .dated_list import SIGNIFICANCE_LABEL, parse_dated_list
 from .prompts import (
     RESEARCH_PROMPT,
     EXPAND_EXTRACT_PROMPT,
-    EXPAND_DOCTRINE,
     EXPAND_SEARCH_PROMPT,
     expand_mode,
     format_existing_block,
@@ -1203,7 +1202,6 @@ class TraceOrchestrator:
             notes=answer.text,
             pages_block=pages_block,
             citations_block=_format_citations_block(citations),
-            expand_doctrine=EXPAND_DOCTRINE,
             max_events=req.max_events,
             mode_label=mode["label"],
             mode_extract=mode["extract"],

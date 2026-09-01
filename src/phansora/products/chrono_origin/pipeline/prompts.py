@@ -6,11 +6,11 @@ calls of a trace, where it could not be acted on — a search step summarising f
 snippets cannot weigh a manuscript's provenance, so it was paying full price for
 instructions it had no way to follow.
 
-So the doctrine is split. The full hierarchy goes only to the two stages that
-exercise judgement: planning what to look for, and deciding what the evidence
-supports. Everything else gets SEARCH_DOCTRINE, the short form covering only what
-a summariser can actually do. Same behaviour, a fraction of the tokens, and the
-savings pay for reading real source pages instead.
+So the doctrine was split, and the long half has since been dropped entirely —
+see the note below on why the expand extract no longer carries a tier hierarchy.
+What remains is SEARCH_DOCTRINE, the short form covering only what a summariser
+can actually do. Same behaviour, a fraction of the tokens, and the savings pay
+for reading real source pages instead.
 """
 from __future__ import annotations
 SEARCH_DOCTRINE = """\
@@ -27,18 +27,18 @@ EVIDENCE RULES for this summary:
 """
 
 
-# The extract stage assigns every source its tier and is the only stage that ever
-# saw none of the doctrine. It runs a handful of times per trace, not twenty, so
-# it can afford the vocabulary it is being asked to apply.
-EXPAND_DOCTRINE = """\
-TIERS: 1 primary evidence (the object/record itself, or the archive, library or museum holding
-it) · 2 peer-reviewed and academic scholarship, critical editions · 3 Crossref/DOI/catalogue
-metadata · 4 institutional write-ups (university, museum, agency pages ABOUT something) ·
-5 general web: news, blogs, video, forums, Wikipedia, social media.
-
-Tiers 4-5 are leads, never the basis of a claim. When a mention rests only on them, say so and
-name what THEY cite so it can be chased. Never fill an unknown with a plausible guess.
-"""
+# The expand extract stage used to carry a tier hierarchy of its own — five ranks
+# of source, with "tiers 4-5 are leads, never the basis of a claim" under them. It
+# was removed deliberately: on an axis that asks for earlier parallels, a great deal
+# of the honest material surfaces first on general-web pages, and a ranking applied
+# before the claim is even read narrows what comes back rather than grading it.
+#
+# What replaced it is not nothing. The Rules block at the foot of the extract prompt
+# still forbids inventing a source or a date, still collapses repeats of one upstream
+# report into one source, and still demands "None identified" over a plausible guess —
+# and source tiers are assigned in code from the URL (source_policy.default_tier),
+# which was always the more reliable half of this. The search stage keeps
+# SEARCH_DOCTRINE.
 # ---------------------------------------------------------------------------
 # The research pass. One grounded call; the model runs its own searches.
 #
@@ -326,20 +326,56 @@ EXPAND_MODES = {
             "to when the record was made."
         ),
     },
+    # Two things live on this axis, and the second one has to be named or it never
+    # comes back. ANCESTRY is what fed into the anchor. PARALLELS are what merely
+    # resemble it from earlier and elsewhere — the same story, mechanism or design
+    # attested in another culture, religion, language or discipline, with no line of
+    # transmission required. Worded as descent alone ("what fed into it", "contributed
+    # to how it came about") the model reads a resemblance as failing the test and
+    # drops it, which is how the most interesting material on this axis went missing.
+    #
+    # The withholding clause matters as much as the invitation. Asked for earlier
+    # parallels, a model's second instinct — after finding one — is to suppress it
+    # because the popular version of the connection is disputed. Disputed DEPENDENCE
+    # is not absent EVIDENCE: the earlier thing is attested on its own terms, and the
+    # dossier has fields built for recording exactly what is contested about the link.
     "earlier": {
-        "query": "earlier sources predecessors origins influences tradition",
-        "label": "Earlier Origins",
+        "query": (
+            "earlier parallels analogues precedents predecessors older versions "
+            "sources influences tradition"
+        ),
+        "label": "Earlier Origins & Parallels",
         "search": (
-            "what came BEFORE this and fed into it: earlier sources, predecessor works, "
-            "influences, traditions, inventions, materials and ideas it drew on, was "
-            "copied or translated from, replaced, or otherwise descends from"
+            "what came BEFORE this, in two senses. FIRST, what fed into it: earlier "
+            "sources, predecessor works, influences, traditions, inventions, materials "
+            "and ideas it drew on, was copied or translated from, replaced, or otherwise "
+            "descends from. SECOND, what PARALLELS it: the same story, figure, motif, "
+            "pattern, mechanism, design, practice or claim attested EARLIER somewhere "
+            "else — in another culture, religion, language, region, discipline or lineage "
+            "— whether or not anyone has shown that one led to the other. Search for both, "
+            "separately. For each, find the earliest surviving record that attests it: the "
+            "text, inscription, relief, artefact, excavation report, filing or edition, "
+            "with its date and where it is held"
         ),
         "extract": (
-            "Return evidence PREDATING the anchor that contributed to how it came about — "
-            "the source it drew on, the predecessor it replaced, the tradition it belongs "
-            "to, the earlier invention or idea behind it. It must be genuinely earlier and "
-            "genuinely new: the point is the missing stretch of timeline, not the step that "
-            "already sits before this one."
+            "Return evidence PREDATING the anchor that either fed into it or parallels it.\n"
+            "ANCESTRY — the source it drew on, the predecessor it replaced, the tradition "
+            "it belongs to, the earlier invention or idea behind it.\n"
+            "PARALLELS — an earlier counterpart from another culture, religion, language, "
+            "region, discipline or lineage that shares this subject's story, figure, "
+            "structure, motif, mechanism, form or function: the older version of the same "
+            "pattern. Name the specific thing the two share; \"similar themes\" is not "
+            "one. A parallel belongs here even when no transmission between them is "
+            "documented, and a well-attested earlier parallel must NOT be withheld because "
+            "the connection to the anchor is disputed or unproven — return it on its own "
+            "evidence and record what is contested in the dossier. Set the connection to "
+            "what is actually shown: derives_from or translates only where descent is "
+            "evidenced, retells where the pattern matches with no dependency demonstrated, "
+            "no_established_link where the resemblance is all there is.\n"
+            "Each item must be a dated surviving record in its own right — the earlier text, "
+            "object or account itself — not a modern writer's comparison of the two. It must "
+            "be genuinely earlier and genuinely new: the point is the missing stretch of "
+            "timeline, not the step that already sits before this one."
         ),
     },
     "context": {
@@ -449,8 +485,6 @@ Research notes:
 {pages_block}
 Available citations (use these URLs verbatim):
 {citations_block}
-
-{expand_doctrine}
 
 Return JSON:
 {{
