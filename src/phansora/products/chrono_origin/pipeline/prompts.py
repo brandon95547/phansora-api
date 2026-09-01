@@ -1,44 +1,30 @@
 """Prompt templates for the trace pipeline.
 
-A note on cost, because it shapes every template here. The doctrine below is the
-most expensive text in the product: it used to be pasted into all ~20 search
-calls of a trace, where it could not be acted on — a search step summarising five
-snippets cannot weigh a manuscript's provenance, so it was paying full price for
-instructions it had no way to follow.
+A note on cost, because it shaped every template here. The evidence doctrine was
+once the most expensive text in the product: pasted into all ~20 search calls of
+a trace, where it could not be acted on — a search step summarising five snippets
+cannot weigh a manuscript's provenance, so it paid full price for instructions it
+had no way to follow.
 
-So the doctrine was split, and the long half has since been dropped entirely —
-see the note below on why the expand extract no longer carries a tier hierarchy.
-What remains is SEARCH_DOCTRINE, the short form covering only what a summariser
-can actually do. Same behaviour, a fraction of the tokens, and the savings pay
-for reading real source pages instead.
+It was split, then dropped: the tier hierarchy left the expand extract (see the
+note below), and the short form left with the two-prompt expand path that was its
+last caller. What grades a source now is code — source_policy.default_tier from
+the URL, and the caps it puts on evidence_type — which was always the half that
+could not talk itself up.
 """
 from __future__ import annotations
-SEARCH_DOCTRINE = """\
-EVIDENCE RULES for this summary:
-- Prefer original documents, artefacts and the repositories holding them over write-ups about them.
-- Wikis, blogs, forums, video and news write-ups are LEADS. Name the source THEY cite — author,
-  work, repository, shelfmark, DOI — and report that instead of summarising them.
-- Give each named source's publication date. One published at the time of the event is evidence;
-  one published later is commentary on it.
-- Give the COMPOSITION date and the EARLIEST SURVIVING COPY date separately whenever both appear.
-- Judge each source by the evidence it cites, not by its brand.
-- If several results repeat one upstream report, say so and name it: that is ONE source, not several.
-- State plainly what is NOT found. Never fill a gap with a plausible guess.
-"""
 
-
-# The expand extract stage used to carry a tier hierarchy of its own — five ranks
-# of source, with "tiers 4-5 are leads, never the basis of a claim" under them. It
-# was removed deliberately: on an axis that asks for earlier parallels, a great deal
-# of the honest material surfaces first on general-web pages, and a ranking applied
-# before the claim is even read narrows what comes back rather than grading it.
+# Expanding used to carry a tier hierarchy of its own — five ranks of source, with
+# "tiers 4-5 are leads, never the basis of a claim" under them. It was removed
+# deliberately: on an axis that asks for earlier parallels, much of the honest material
+# surfaces first on general-web pages, and a ranking applied before the claim is even
+# read narrows what comes back rather than grading it.
 #
-# What replaced it is not nothing. The Rules block at the foot of the extract prompt
-# still forbids inventing a source or a date, still collapses repeats of one upstream
-# report into one source, and still demands "None identified" over a plausible guess —
-# and source tiers are assigned in code from the URL (source_policy.default_tier),
-# which was always the more reliable half of this. The search stage keeps
-# SEARCH_DOCTRINE.
+# What replaced it is not nothing, and it is not in a prompt. Tiers are assigned in code
+# from the URL (source_policy.default_tier), and cap what a claim standing on them may
+# call itself — a claim resting on a wiki cannot describe itself as a primary document,
+# and because claim_class derives from evidence_type that cap reaches the marker on the
+# board. A grader that cannot talk itself up was always the more reliable half.
 # ---------------------------------------------------------------------------
 # The research pass. One grounded call; the model runs its own searches.
 #
@@ -284,115 +270,144 @@ OUTPUT:
 
 
 
-# What each expansion mode goes looking for.
+# What each expansion mode goes looking for, and the one call that asks it.
 #
-# Two directives per mode: one aims the WEB SEARCH, one aims the EXTRACTION. They are
-# separate because the stages can act on different things — a search can only be
-# pointed at a topic, while extraction can be told what to reject.
+# There used to be two prompts and three model steps: a grounded search that wrote a
+# summary, a pass that fetched source pages, and an extraction that turned the lot into
+# JSON. The axis was split across the first and the last, so steering a result meant
+# editing both and trusting the summary in the middle to carry what the extractor had
+# been told to want. It did not. Asked for the earlier parallels of a subject, the chain
+# returned old documents from the right part of the world and none of the counterparts
+# anyone would name — the search found records because the extractor's rules about
+# records were nowhere near it.
 #
-# Every one of these has to read sensibly for a manuscript, a telescope observation, a
-# treaty, an excavation and a patent alike. Chrono Origin does not know which kind of
-# subject it is looking at, so a directive that assumes documents would quietly fail on
-# half the product's range.
-# The three axes an expansion can be aimed at.
+# One call now. What is written here is what the model is judged on, and the answer comes
+# back in the same breath as the search.
 #
-# There were six. Four of them — preservation, verification, related, later — asked the
-# reader to tell "Path to Preservation" from "Related Evidence" before they could spend a
-# call, which is a distinction this pipeline cares about and a person looking at a card
-# does not. These three are the questions people actually arrive with.
+# Each mode is one body, addressed to `{subject}` — the NODE being expanded, not the
+# trace. Bodies are inserted, never `.format()`ed, so the JSON braces inside them need no
+# escaping; the subject is substituted by `.replace()` in `expand_body`.
 #
-# `search` points the search at a topic. `extract` is the one that can REJECT, and it earns
-# its place: pointed at a topic alone the model returns the anchor's own neighbours, already
-# on the board. Both stay subject-agnostic — a node may be a manuscript, an observation, a
-# treaty, a patent or a piece of software, and Chrono Origin does not know which.
+# All three answer in the SAME six flat fields, so one adapter in the orchestrator turns
+# any of them into the board's events and edges. What varies is the classification
+# vocabulary, which differs by axis because "direct_source" is the wrong word for a
+# discovery record and "records" is the wrong word for a parallel. Every value any mode
+# can emit is mapped in orchestrator._RELATION_WORDS.
+
+_JSON_TAIL = """\
+Return JSON only, ordered chronologically from earliest to latest:
+
+{"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
+"shared":"","url":""}]}"""
+
+
 EXPAND_MODES = {
     "discovery": {
         "query": "discovered excavation first published announced found record",
         "label": "Path to Discovery",
-        "search": (
-            "the surviving RECORDS of how this first emerged, was documented or became "
-            "known — whichever of these a subject of this kind actually has: the earliest "
-            "surviving text, account or depiction of it, the first publication announcing "
-            "it, the report of the excavation, observation or experiment that established "
-            "it, the patent or filing, the notes, drawings or photographs made at the time, "
-            "the accession record, the study that identified or deciphered it — with dates, "
-            "authors, and where each is held"
-        ),
-        "extract": (
-            "Return the surviving records that document how this became known — the earliest "
-            "account or depiction of it, the first published announcement, the report, the "
-            "notes, the accession record. The emergence or discovery ITSELF is an event and "
-            "cannot be a step; the record that captures it is a document and can. Date each "
-            "to when the record was made."
-        ),
+        "body": """\
+Using live web search, find the surviving RECORDS of how {subject} first emerged, was
+documented, or became known.
+
+Include whichever of these a subject of this kind actually has: the earliest surviving text,
+account or depiction of it; the first publication announcing it; the report of the excavation,
+observation or experiment that established it; the patent or filing; the notes, drawings or
+photographs made at the time; the accession record; the study that identified or deciphered it.
+
+The emergence itself is an event and cannot be returned; the record that captures it can. Date
+each to when the RECORD was made, not to what it records: an excavation report is dated to its
+publication.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific thing it records about {subject}.
+- Classify it as `direct_source`, `records`, or `disputed_parallel`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above; finding one result in a
+category does not complete that category.
+
+"""
+        + _JSON_TAIL,
     },
-    # Two things live on this axis, and the second one has to be named or it never
-    # comes back. ANCESTRY is what fed into the anchor. PARALLELS are what merely
-    # resemble it from earlier and elsewhere — the same story, mechanism or design
-    # attested in another culture, religion, language or discipline, with no line of
-    # transmission required. Worded as descent alone ("what fed into it", "contributed
-    # to how it came about") the model reads a resemblance as failing the test and
-    # drops it, which is how the most interesting material on this axis went missing.
-    #
-    # The withholding clause matters as much as the invitation. Asked for earlier
-    # parallels, a model's second instinct — after finding one — is to suppress it
-    # because the popular version of the connection is disputed. Disputed DEPENDENCE
-    # is not absent EVIDENCE: the earlier thing is attested on its own terms, and the
-    # dossier has fields built for recording exactly what is contested about the link.
+    # Written by the owner and shipped as supplied. The two things it does that nothing
+    # before it did: it refuses to let a parallel be disqualified for lacking a
+    # transmission nobody has ever shown, and it asks for the whole motif rather than one
+    # participant — a nursing-mother scene is a parallel to a nursing-mother scene, and
+    # reduced to either figure alone it stops being one.
     "earlier": {
-        "query": (
-            "earlier parallels analogues precedents predecessors older versions "
-            "sources influences tradition"
-        ),
-        "label": "Earlier Origins & Parallels",
-        "search": (
-            "what came BEFORE this, in two senses. FIRST, what fed into it: earlier "
-            "sources, predecessor works, influences, traditions, inventions, materials "
-            "and ideas it drew on, was copied or translated from, replaced, or otherwise "
-            "descends from. SECOND, what PARALLELS it: the same story, figure, motif, "
-            "pattern, mechanism, design, practice or claim attested EARLIER somewhere "
-            "else — in another culture, religion, language, region, discipline or lineage "
-            "— whether or not anyone has shown that one led to the other. Search for both, "
-            "separately. For each, find the earliest surviving record that attests it: the "
-            "text, inscription, relief, artefact, excavation report, filing or edition, "
-            "with its date and where it is held"
-        ),
-        "extract": (
-            "Return evidence PREDATING the anchor that either fed into it or parallels it.\n"
-            "ANCESTRY — the source it drew on, the predecessor it replaced, the tradition "
-            "it belongs to, the earlier invention or idea behind it.\n"
-            "PARALLELS — an earlier counterpart from another culture, religion, language, "
-            "region, discipline or lineage that shares this subject's story, figure, "
-            "structure, motif, mechanism, form or function: the older version of the same "
-            "pattern. Name the specific thing the two share; \"similar themes\" is not "
-            "one. A parallel belongs here even when no transmission between them is "
-            "documented, and a well-attested earlier parallel must NOT be withheld because "
-            "the connection to the anchor is disputed or unproven — return it on its own "
-            "evidence and record what is contested in the dossier. Set the connection to "
-            "what is actually shown: derives_from or translates only where descent is "
-            "evidenced, retells where the pattern matches with no dependency demonstrated, "
-            "no_established_link where the resemblance is all there is.\n"
-            "Each item must be a dated surviving record in its own right — the earlier text, "
-            "object or account itself — not a modern writer's comparison of the two. It must "
-            "be genuinely earlier and genuinely new: the point is the missing stretch of "
-            "timeline, not the step that already sits before this one."
-        ),
+        "query": "earlier parallels analogues counterparts precedents predecessors origins",
+        "label": "Earlier Parallels & Origins",
+        "body": """\
+Using live web search, find earlier parallels and origins for {subject}.
+
+Include two balanced categories:
+
+1. PARALLELS — earlier cross-cultural figures, stories, motifs, rituals, symbols, relationships,
+practices, mechanisms, designs, and visual/iconographic traditions sharing specific features with
+{subject}. Include well-known and disputed comparisons even when no influence or transmission is
+demonstrated.
+
+2. ANCESTRY — identifiable sources, predecessors, traditions, inventions, translations, or
+practices that {subject} demonstrably or probably drew upon or descended from.
+
+Search textual, narrative, theological, ritual, symbolic, relational, and visual/iconographic
+categories equally. Consider {subject} together with associated figures and relationships. Do not
+reduce a relational or iconographic parallel to one participant; name the complete motif, scene,
+relationship, or tradition and all figures essential to the comparison.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific shared or transmitted feature.
+- Classify it as `direct_source`, `probable_influence`, `possible_influence`,
+  `independent_parallel`, or `disputed_parallel`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, perform separate completeness searches for each category above. For
+relational and iconographic parallels, independently search parent-child, mother-child,
+father-child, birth, family, teacher-follower, adversary, death, enthronement, and protective
+relationships or scenes. Include every famous or frequently proposed qualifying comparison found;
+finding one result in a category does not complete that category.
+
+"""
+        + _JSON_TAIL,
     },
     "context": {
         "query": "contemporary events culture society technology at the time",
         "label": "Historical Context",
-        "search": (
-            "what was happening AROUND this at the time: contemporaneous events, the "
-            "culture and society it sat in, the people and institutions involved, the "
-            "technologies and materials available, the beliefs of the period, and the "
-            "circumstances that explain its place in history"
-        ),
-        "extract": (
-            "Return contemporaneous evidence that situates the anchor — surviving records "
-            "of the events, people, institutions, technologies and conditions around it. "
-            "Each must be a dated source in its own right, and the claim must say how it "
-            "bears on the anchor. Sharing a century is not a relationship."
-        ),
+        "body": """\
+Using live web search, find what was happening AROUND {subject} at the time.
+
+Include contemporaneous events, the culture and society it sat in, the people and institutions
+involved, the technologies and materials available, the beliefs of the period, and the
+circumstances that explain its place in history.
+
+Each result must be a dated source in its own right, and must say how it bears on {subject}.
+Sharing a century is not a relationship.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}.
+- Classify it as `contemporaneous`, `context`, or `direct_source`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for events, people, institutions, technologies and
+beliefs; finding one result in a category does not complete that category.
+
+"""
+        + _JSON_TAIL,
     },
 }
 
@@ -400,6 +415,16 @@ EXPAND_MODES = {
 def expand_mode(mode: str) -> dict:
     """The directives for a mode, defaulting to the one the dialog preselects."""
     return EXPAND_MODES.get(mode) or EXPAND_MODES["discovery"]
+
+
+def expand_body(mode: dict, subject: str) -> str:
+    """A mode's body with the node's own title in it.
+
+    `.replace`, not `.format`: the body ends in a JSON template, and every brace in it
+    would otherwise have to be doubled by hand — which is exactly the kind of edit that
+    silently breaks a prompt the next person pastes in.
+    """
+    return mode["body"].replace("{subject}", subject or "this subject")
 
 
 def format_existing_block(existing) -> str:
@@ -416,159 +441,29 @@ def format_existing_block(existing) -> str:
     return "\n".join(f"- {t}" for t in items[:40])
 
 
-EXPAND_SEARCH_PROMPT = """\
-You are a research assistant performing focused web searches about one specific item in
-the broader history of {story_title}{context_clause}.
-
-Search query: {parent_source_title} {mode_query}
-
-Anchor item being expanded:
-- when: {when}
-- source / event: "{parent_source_title}"
-- claim: {parent_claim}
-
-{search_doctrine}
-
-WHAT TO LOOK FOR — this expansion is aimed at one axis, not at "anything nearby":
-
-{mode_search}
-
-ALREADY ON THE TIMELINE. These are shown to the user already, so finding them again
-adds nothing. Search past them:
+# The wrapper, and everything in it earns its line.
+#
+# `Search query:` — the DeepSeek client reads this line to build its web query
+# (_derive_queries). Without it the client falls back to the first QUOTED string in the
+# prompt, which in a body ending in a JSON template is the word "events". Gemini elects
+# its own queries and ignores this line.
+#
+# The anchor is QUOTED there for the same reason: _derive_queries takes the first quoted
+# string as a second search angle, and an unquoted anchor leaves "events" as the first
+# quoted string in the prompt. So the quotes buy two things — a phrase search on the
+# subject, and a second angle that is the subject rather than a JSON key.
+#
+# The exclusions come BEFORE the body, not after it: the body ends with the JSON
+# template, and the last instruction in a prompt is the one that gets followed.
+#
+# `{context_line}` carries the dashboard's context box, so "Mercury" the planet stays
+# distinct from "Mercury" the god. Empty when the box is.
+EXPAND_PROMPT = """\
+Search query: "{parent_source_title}" {mode_query}
+{context_line}
+ALREADY ON THE TIMELINE. These are shown to the user already, so returning one costs a
+call and shows a card that has already been read. Do not return any of these:
 {existing_block}
 
-Write a concise (<= 350 words) factual summary naming specific dates, titles, authors,
-places and cultures whenever the sources do — and whatever else identifies a thing of this
-kind: a shelfmark and repository for a manuscript, a patent number, a catalogue or
-accession number, a site, an edition. Do not speculate beyond the cited sources.
-"""
-
-
-EXPAND_EXTRACT_PROMPT = """\
-From the research material below, extract distinct dated sub-events for ONE named axis
-of this anchor in the history of "{story_title}".
-
-WHAT THIS EXPANSION IS FOR — {mode_label}:
-{mode_extract}
-
-A BRANCH MAY BE AN EVENT. The main chain admits only surviving objects, because a
-chain asserts what exists. A branch does a different job — it explains the node it hangs
-from — so a dated, cited happening is a legitimate answer here: a discovery, an
-excavation, a publication, a decipherment, a test. Prefer the object when there is one
-(name the excavation report rather than the dig), but do not return nothing merely
-because the honest answer is something that happened.
-
-EVERY SUB-EVENT CARRIES A DATE. "year", or "year"+"year_end" for something produced over
-a period. A branch takes a position on the timeline exactly as a step does, so an undated
-one has nowhere to sit and is DISCARDED before it reaches the board — an estimate with a
-range beats a correct answer with no date on it. Date the RECORD, not the thing it
-records: an excavation report is dated to its publication.
-
-An expansion exists to GROW the timeline. These are already on it, and returning any of
-them costs the user a call and shows them a card they have already read:
-{existing_block}
-
-Do not return anything already listed above. If this axis genuinely has nothing beyond
-what is listed, returning nothing is correct — but look properly first: most axes have
-surviving records that simply have not been asked for yet, and an empty answer given
-too readily is the same failure as a padded one.
-
-Anchor (its id is "{parent_id}"):
-- when: {when}
-- source / event: {parent_source_title}
-- claim: {parent_claim}
-
-Research notes:
----
-{notes}
----
-{pages_block}
-Available citations (use these URLs verbatim):
-{citations_block}
-
-Return JSON:
-{{
-  "events": [
-    {{
-      "id": "e1",                              // unique, referenced by connections
-      "year": <signed integer or null>,        // the COMPOSITION date
-      "era_label": <string or null>,
-      "precision": "exact|year|decade|century|millennium|era|unknown",
-      "node_type": "text|manuscript|scroll|letter|inscription|document|record|artifact|
-                    archaeological_find|event",
-      // The nine object kinds, OR "event" — and event is allowed HERE and not in the
-      // main chain. A branch explains an anchor; the chain asserts what survives. "A
-      // farmer turned it up while ploughing" can be the true answer to how something was
-      // discovered, and refusing it because a farmer is not an artefact makes the
-      // question unanswerable. Use an object kind whenever the thing
-      // IS one — the excavation report, the first edition — and "event" when the honest
-      // answer is something that happened.
-      "is_evidence": <true if this is a surviving object; false for an event or an account>,
-      "attribution": "established|attributed|disputed|anonymous|not_applicable",
-      "source_title": <string>,
-      "claim": <one sentence explaining how this sub-event relates to the anchor>,
-      "citations": [<url>, ...],
-      "confidence": <0..1>,
-      "evidence": {{
-        "claim": <the claim restated as ONE testable proposition>,
-        "earliest_supporting_source": <named source + what it is, or "None identified">,
-        "estimated_source_date": <when it was COMPOSED, or "Unknown">,
-        "earliest_surviving_copy": <oldest existing copy + date + repository, or "None identified">,
-        "provenance": <holding institution + shelfmark, or "None identified">,
-        "contemporary_evidence": <evidence from the time of the event, or "None identified">,
-        "independent_corroboration": <support from a different information chain, or "None identified">,
-        "contradictory_evidence": <disputing sources, or "None identified">,
-        "scholarly_dispute": <disagreement among scholars, or "None identified">,
-        "evidence_type": "primary_document|archaeological|contemporary_record|near_contemporary_account|later_historical_account|scholarly_inference|tradition|disputed|absent",
-        "confidence_label": "high|moderate|low|speculative",
-        "why": <1-2 plain sentences>,
-        "missing_piece": <the absent evidence that most limits this claim>
-      }}
-    }}
-  ],
-  "connections": [
-    // ONE per sub-event, stating why it belongs under this anchor at all.
-    {{
-      "from_id": "{parent_id}",
-      "to_id": <the sub-event's id>,
-      "relation": "derives_from|retells|translates|responds_to|contradicts|contemporaneous|attests|
-                   provides_context|no_established_link",
-      "citations": [<url>, ...],
-      "evidence": {{
-        "mechanism": <ONE sentence: how does the anchor lead to, or relate to, this sub-event?>,
-        "supporting_evidence": <what evidences the link, or "None identified">,
-        "contradictory_evidence": <evidence against it, or "None identified">,
-        "independent_corroboration": <support from a different chain, or "None identified">,
-        "scholarly_dispute": <disagreement among scholars about the link, or "None identified">,
-        "evidence_type": <same vocabulary, applied to the LINK>,
-        "confidence": <0..1>,
-        "confidence_label": "high|moderate|low|speculative",
-        "why": <1-2 sentences on how strong the link is>,
-        "missing_piece": <what would settle it>
-      }}
-    }}
-  ]
-}}
-
-Rules:
-- Return AT MOST {max_events} events.
-- Every event must be supported by the material and cite at least one URL.
-- Do NOT repeat the anchor itself.
-- Fill the evidence dossier from the material only. "None identified" is correct and expected
-  when it does not establish something; never invent a source or a date to fill a field.
-- A historian's conclusion is "scholarly_inference", not a record; a transmitted belief with no
-  documentary trail is "tradition".
-- Where a SOURCE PAGE is provided, prefer what it actually says over the search summaries.
-- Sources that repeat one upstream report are ONE source, not corroboration.
-- Being near the anchor in time is NOT a connection. If you cannot name a mechanism, use
-  "no_established_link" and say so — a sub-event shown under a false relationship is worse
-  than one shown with none. Background that merely predates the anchor is "provides_context".
-- A text and its surviving copies are TWO events: the work as "text" carries the composition
-  date, the physical copy as "manuscript" or "scroll" carries its own date and its repository. A
-  text is evidence that the text existed, not evidence for the events it narrates.
-- SUB-EVENTS ARE SURVIVING EVIDENCE TOO. Expanding a step means naming the next surviving objects
-  underneath it, not the story around it. If a sub-event is not something someone could go and
-  examine, it does not belong here.
-- Order events chronologically, oldest first.
-- Return ONLY JSON.
+{mode_body}
 """

@@ -300,14 +300,34 @@ def test_the_three_modes_are_the_ones_the_dialog_offers():
     assert set(EXPAND_MODES) == ids, "model vocabulary and prompt directives have drifted"
 
 
-def test_every_mode_aims_both_stages():
-    """A search can only be pointed at a topic; extraction can be told what to reject."""
-    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
+def test_every_mode_is_one_body_that_names_its_subject():
+    """One call, so one body — and it has to be about the node, not about nothing.
+
+    The axis used to be split across a search directive and an extraction directive with
+    a summary in between, and the summary is where the aim went missing: asked for the
+    earlier parallels of a subject, the chain returned old documents from roughly the
+    right part of the world and none of the counterparts anyone would name.
+    """
+    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES, expand_body
 
     for name, spec in EXPAND_MODES.items():
         assert spec["label"], name
-        assert len(spec["search"]) > 40, f"{name} has no search directive"
-        assert len(spec["extract"]) > 40, f"{name} has no extraction directive"
+        assert len(spec["body"]) > 200, f"{name} has no body"
+        assert "{subject}" in spec["body"], f"{name} never names the node it expands"
+        assert "search" not in spec and "extract" not in spec, f"{name} still has two stages"
+        filled = expand_body(spec, "Hebrew scriptures")
+        assert "Hebrew scriptures" in filled
+        assert "{subject}" not in filled
+        # The body ends in the JSON template, and the template's braces must survive:
+        # a body run through .format() instead of .replace() would raise or mangle them.
+        assert '"events"' in filled
+
+
+def test_a_body_without_a_subject_still_reads():
+    from phansora.products.chrono_origin.pipeline.prompts import expand_body, expand_mode
+
+    filled = expand_body(expand_mode("earlier"), "")
+    assert "{subject}" not in filled and "this subject" in filled
 
 
 def test_an_expansion_keeps_a_kind_its_vocabulary_has_no_word_for():
@@ -366,19 +386,19 @@ def test_the_existing_list_is_bounded():
 # ------------------------------------------- the expand search must state its query
 # A real expansion came back with queries_run == ["jesus christ"] and citations full
 # of wallpaper pages and an article about basilisk lizards. The web query is scraped
-# out of the prompt by _derive_queries: it reads a "Search query:" line, and
-# EXPAND_SEARCH_PROMPT never had one, so it fell through to "first quoted string" —
-# the story title. Every expansion ever run searched the bare subject.
+# out of the prompt by _derive_queries: it reads a "Search query:" line, and the
+# expand prompt never had one, so it fell through to "first quoted string" — the
+# story title. Every expansion ever run searched the bare subject. The one-call
+# prompt ends in a JSON template, so the first quoted string there is "events".
 def test_the_expand_prompt_states_a_query_the_client_can_find():
     from phansora.products.chrono_origin.pipeline import prompts as P
     from phansora.shared.ai.deepseek_research import _QUERY_LINE
 
     m = P.expand_mode("discovery")
-    out = P.EXPAND_SEARCH_PROMPT.format(
-        story_title="Jesus Christ", context_clause="", when="1200-400 BC",
-        parent_source_title="Hebrew scriptures", parent_claim="c",
-        search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
-        mode_query=m["query"], existing_block=P.format_existing_block([]),
+    out = P.EXPAND_PROMPT.format(
+        parent_source_title="Hebrew scriptures", mode_query=m["query"],
+        context_line="", existing_block=P.format_existing_block([]),
+        mode_body=P.expand_body(m, "Hebrew scriptures"),
     )
     found = _QUERY_LINE.search(out)
     assert found, "no 'Search query:' line — the search falls back to the story title"
@@ -394,10 +414,10 @@ def test_the_expand_query_is_aimed_by_the_mode():
 
     def query_for(mode):
         m = P.expand_mode(mode)
-        out = P.EXPAND_SEARCH_PROMPT.format(
-            story_title="S", context_clause="", when="", parent_source_title="Anchor",
-            parent_claim="c", search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
-            mode_query=m["query"], existing_block=P.format_existing_block([]),
+        out = P.EXPAND_PROMPT.format(
+            parent_source_title="Anchor", mode_query=m["query"], context_line="",
+            existing_block=P.format_existing_block([]),
+            mode_body=P.expand_body(m, "Anchor"),
         )
         return _QUERY_LINE.search(out).group(1).strip()
 
@@ -424,12 +444,208 @@ def test_the_anchor_is_what_the_fallback_angle_picks_up():
     from phansora.shared.ai.deepseek_research import _QUOTED
 
     m = P.expand_mode("context")
-    out = P.EXPAND_SEARCH_PROMPT.format(
-        story_title="Jesus Christ", context_clause="", when="", parent_source_title="Dead Sea Scrolls",
-        parent_claim="c", search_doctrine=P.SEARCH_DOCTRINE, mode_search=m["search"],
-        mode_query=m["query"], existing_block=P.format_existing_block([]),
+    out = P.EXPAND_PROMPT.format(
+        parent_source_title="Dead Sea Scrolls", mode_query=m["query"], context_line="",
+        existing_block=P.format_existing_block([]),
+        mode_body=P.expand_body(m, "Dead Sea Scrolls"),
     )
-    assert _QUOTED.search(out).group(1).strip() == "Dead Sea Scrolls"
+    first = _QUOTED.search(out).group(1).strip()
+    assert first == "Dead Sea Scrolls"
+    # Specifically NOT "events": every body now ends in a JSON template, so an unquoted
+    # anchor leaves a schema key as the first quoted string in the prompt, and the second
+    # search angle becomes the word "events".
+    assert first != "events"
+
+
+# ------------------------------------------------ the flat answer becomes a board
+# One call means the model both searches and answers, and a grounded call cannot be
+# pinned to a response format — so the answer arrives in whatever shape the prompt asked
+# for, in six flat fields, and everything between that and the board's graded events
+# lives in adapt_expand_events. The prompt is the part a person tunes by hand; it should
+# not also have to carry a schema.
+def _cites(urls):
+    from phansora.products.chrono_origin.models import Citation
+
+    return [Citation(url=u) for u in urls]
+
+
+def _adapt(entries, **kw):
+    from phansora.products.chrono_origin.pipeline.orchestrator import adapt_expand_events
+
+    kw.setdefault("parent_id", "__present")
+    kw.setdefault("max_events", 25)
+    kw.setdefault("to_citations", _cites)
+    return adapt_expand_events(entries, **kw)
+
+
+# The exact answer the first live run produced, kept as the fixture because a shape that
+# actually came back off the wire is worth more than one invented to pass.
+_LIVE_ANSWER = [
+    {"name": "Pyramid Texts of Unas", "year": -2350, "group": "parallel",
+     "relation": "provides_context", "shared": "", "url": "https://en.wikipedia.org/wiki/Pyramid_Texts"},
+    {"name": "Epic of Gilgamesh", "year": -2100, "group": "parallel",
+     "relation": "no_established_link", "shared": "", "url": "https://en.wikipedia.org/wiki/Epic_of_Gilgamesh"},
+]
+
+
+def test_the_flat_answer_reaches_the_board():
+    events, connections = _adapt(_LIVE_ANSWER)
+    assert [e.source_title for e in events] == ["Pyramid Texts of Unas", "Epic of Gilgamesh"]
+    assert [e.year for e in events] == [-2350, -2100]
+    assert len(connections) == len(events)
+    assert {c.from_id for c in connections} == {"__present"}
+    assert {c.to_id for c in connections} == {e.id for e in events}
+    assert events[0].citations[0].url.endswith("Pyramid_Texts")
+
+
+def test_each_classification_draws_the_line_it_earns():
+    """The edge must assert no MORE than the model's own word does."""
+    words = {
+        "direct_source": "derives_from",
+        "probable_influence": "retells",
+        "possible_influence": "no_established_link",
+        "independent_parallel": "retells",
+        "disputed_parallel": "no_established_link",
+        "records": "attests",
+        "contemporaneous": "contemporaneous",
+        "context": "provides_context",
+    }
+    for word, expected in words.items():
+        _, conns = _adapt([{"name": "X", "year": -100, "relation": word, "shared": "s"}])
+        assert conns[0].relation == expected, word
+
+
+def test_a_relation_the_board_already_knows_passes_through():
+    """The first live answer said "provides_context" — a real edge, and it was downgraded.
+
+    Keyed only on the prompt's own vocabulary, the table turned an answer that had landed
+    in the target vocabulary by itself into "no established link", which says less than
+    the model did.
+    """
+    for word in ("provides_context", "no_established_link", "attests", "contemporaneous"):
+        _, conns = _adapt([{"name": "X", "year": -100, "relation": word}])
+        assert conns[0].relation == word, word
+
+
+def test_an_unknown_classification_claims_nothing():
+    # Including the shape of a word the prompt never offered: a made-up relation must not
+    # become a causal arrow by accident.
+    _, conns = _adapt([{"name": "X", "year": -100, "relation": "definitely_caused_it"}])
+    assert conns[0].relation == "no_established_link"
+    _, conns = _adapt([{"name": "X", "year": -100}])
+    assert conns[0].relation == "no_established_link"
+
+
+def test_the_shared_feature_is_the_claim_and_the_mechanism():
+    """`shared` is the whole finding: what these two actually have in common."""
+    events, conns = _adapt([{
+        "name": "Isis nursing Horus", "year": -664, "group": "parallel",
+        "relation": "disputed_parallel",
+        "shared": "Enthroned mother nursing a divine child, the Isis lactans pose.",
+    }])
+    assert "Isis lactans" in events[0].claim
+    assert "Isis lactans" in conns[0].evidence.mechanism
+    assert "Isis lactans" in events[0].evidence.claim
+
+
+def test_a_disputed_parallel_says_so_rather_than_being_dropped():
+    """A contested comparison is a finding, not a reason to return nothing."""
+    events, conns = _adapt([{
+        "name": "X", "year": -300, "relation": "disputed_parallel", "shared": "s",
+        "url": "https://www.jstor.org/stable/123",
+    }])
+    assert len(events) == 1
+    assert events[0].evidence.evidence_type == "disputed"
+    assert events[0].evidence.disputed is True
+    assert conns[0].evidence.scholarly_dispute != "None identified"
+    assert conns[0].relation == "no_established_link"
+
+
+def test_the_dispute_survives_a_source_too_weak_to_grade():
+    """On a general-web citation the dossier is forced to "absent" — and still says disputed.
+
+    Which is the honest pair: nothing here was verified, AND the comparison is contested.
+    Losing the second half to the first would turn a live scholarly argument into a blank.
+    """
+    events, conns = _adapt([{
+        "name": "X", "year": -300, "relation": "disputed_parallel", "shared": "s",
+        "url": "https://en.wikipedia.org/wiki/Isis",
+    }])
+    assert events[0].evidence.evidence_type == "absent"
+    assert events[0].evidence.disputed is True
+    assert conns[0].evidence.evidence_type == "disputed"
+
+
+def test_a_card_with_no_source_grades_itself_absent():
+    """An uncited claim is not a weak claim, it is an unevidenced one, and says so.
+
+    The grading is code, not prompt: verification_for sees no citations, and the dossier's
+    evidence_type is forced to "absent" — which is the value claim_class derives from, so
+    the marker on the board changes without the renderer knowing anything about it.
+    """
+    events, _ = _adapt([{"name": "X", "year": -300, "relation": "direct_source", "shared": "s"}])
+    assert events[0].citations == []
+    assert events[0].evidence.evidence_type == "absent"
+    assert events[0].evidence.verification == "unknown"
+
+
+def test_the_two_gates_the_trace_also_applies():
+    events, conns = _adapt([
+        {"name": "No year here", "relation": "independent_parallel"},
+        {"year": -100, "relation": "independent_parallel"},
+        {"name": "Kept", "year": -100, "relation": "independent_parallel"},
+        "not a dict",
+    ])
+    assert [e.source_title for e in events] == ["Kept"]
+    assert len(conns) == 1
+
+
+def test_year_zero_is_not_a_way_in():
+    """The template used to show "year": 0, which is a real int and not a real year."""
+    events, _ = _adapt([{"name": "X", "year": 0, "relation": "records"}])
+    assert events and events[0].year == 0  # an explicit 0 is still the model's answer
+    events, _ = _adapt([{"name": "X", "year": None, "relation": "records"}])
+    assert events == []
+
+
+def test_the_model_may_answer_in_the_older_shape():
+    """A prompt is a request, not a schema. An answer in the extract-era keys still lands."""
+    events, _ = _adapt([{
+        "source_title": "X", "year": -50, "claim": "c",
+        "citations": ["https://example.org/a"], "classification": "direct_source",
+    }])
+    assert events[0].source_title == "X" and events[0].claim == "c"
+    assert events[0].citations[0].url == "https://example.org/a"
+
+
+def test_the_ceiling_is_the_requested_one():
+    entries = [{"name": f"n{i}", "year": -i - 1, "relation": "records"} for i in range(30)]
+    events, conns = _adapt(entries, max_events=25)
+    assert len(events) == 25 and len(conns) == 25
+
+
+def test_the_models_own_words_stay_on_the_card():
+    """The board's nine relations cannot tell a disputed parallel from an independent one."""
+    events, _ = _adapt([{
+        "name": "X", "year": -100, "group": "parallel", "relation": "disputed_parallel", "shared": "s",
+    }])
+    pairs = {d.label: d.value for d in events[0].details}
+    assert pairs["Category"] == "parallel"
+    assert pairs["Classification"] == "disputed parallel"
+
+
+def test_events_come_back_oldest_first():
+    events, _ = _adapt([
+        {"name": "later", "year": -100, "relation": "records"},
+        {"name": "older", "year": -2000, "relation": "records"},
+    ])
+    assert [e.source_title for e in events] == ["older", "later"]
+
+
+def test_nothing_at_all_is_not_a_crash():
+    for junk in (None, {}, "", [], [None]):
+        events, conns = _adapt(junk)
+        assert events == [] and conns == []
 
 
 # --------------------------------------------- the executor must not leak workers
@@ -619,7 +835,8 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
 
     monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)
-    monkeypatch.setattr(orch, "read_best", lambda *a, **k: [])
+    # `read_best` used to be stubbed here. The expand path was its last caller and the
+    # merge to one call took it with them, so patching it now raises rather than no-ops.
 
     client = Client()
     o = orch.TraceOrchestrator(client=client)

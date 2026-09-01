@@ -25,7 +25,7 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, get_args
 
 from ..config import get_settings
 
@@ -44,6 +44,7 @@ from ..models import (
     EvidenceChain,
     EvidenceDossier,
     OriginResult,
+    RelationType,
     TimelineEvent,
     TokenUsage,
     TraceRequest,
@@ -57,14 +58,14 @@ from . import source_policy as sp
 from .dated_list import SIGNIFICANCE_LABEL, parse_dated_list
 from .prompts import (
     RESEARCH_PROMPT,
-    EXPAND_EXTRACT_PROMPT,
-    EXPAND_SEARCH_PROMPT,
+    EXPAND_PROMPT,
+    expand_body,
     expand_mode,
     format_existing_block,
-    SEARCH_DOCTRINE,
     SYNTHESIZE_PROMPT,
 )
-from .reader import PageRead, format_reads_block, read_best
+from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_json
+from .reader import PageRead, format_reads_block
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,196 @@ def _build_conclusions(raw: Any, *, valid_ids: set) -> List[Conclusion]:
         )
 
     return out
+
+
+# ------------------------------------------------------------------- expansions
+# An expansion answers in six flat fields — name, year, group, relation, shared, url —
+# and the board wants a graded TimelineEvent with an edge hanging off the anchor. Every
+# difference between the two lives here, not in the prompt: the prompt is the part a
+# person tunes by hand, and it should not also have to carry a schema.
+#
+# `relation` is the model's own word for the strength of the link, and the vocabulary
+# differs by axis — "direct_source" is the wrong word for a discovery record, "records"
+# is the wrong word for a parallel. Each maps to the edge that asserts no MORE than the
+# word does: a probable influence is not a demonstrated descent, so it draws as a
+# retelling and not an arrow, and a disputed parallel asserts nothing but the
+# resemblance. Anything unrecognised lands on no_established_link, the claim that costs
+# the reader least if it is wrong.
+# A word the board already knows is taken at face value. The first live answer came back
+# saying "provides_context" — a real RelationType, and the honest one for what it had
+# found — and a table keyed only on the prompt's own vocabulary turned it into
+# "no_established_link". A prompt is a request, not a schema: an answer that lands in the
+# target vocabulary by itself must not be downgraded for arriving early.
+_BOARD_RELATIONS = frozenset(get_args(RelationType))
+
+_RELATION_WORDS: Dict[str, str] = {
+    "direct_source": "derives_from",
+    "probable_influence": "retells",
+    "possible_influence": "no_established_link",
+    "independent_parallel": "retells",
+    "disputed_parallel": "no_established_link",
+    "records": "attests",
+    "contemporaneous": "contemporaneous",
+    "context": "provides_context",
+}
+
+# How sure the link is, from the same word. A flat 0.5 made confidence meaningless on
+# branches — every card on the board said the same thing about itself.
+_RELATION_CONFIDENCE: Dict[str, float] = {
+    "direct_source": 0.8,
+    "records": 0.75,
+    "contemporaneous": 0.65,
+    "probable_influence": 0.6,
+    "independent_parallel": 0.5,
+    "context": 0.5,
+    "possible_influence": 0.45,
+    "disputed_parallel": 0.35,
+}
+
+
+def _text_of_keys(entry: Dict[str, Any], *keys: str) -> str:
+    """The first of these keys the model actually filled.
+
+    Several keys per value because a prompt is a request, not a schema: a grounded call
+    cannot be pinned to a response format, so an answer that says "source_title" where
+    the template said "name" is a normal event rather than a failure.
+    """
+    for key in keys:
+        val = entry.get(key)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            val = str(val)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def adapt_expand_events(
+    raw_events: Any,
+    *,
+    parent_id: str,
+    max_events: int,
+    to_citations,
+) -> Tuple[List[TimelineEvent], List[Connection]]:
+    """Flat answer in, (events, connections) out.
+
+    Two gates, the same two the trace applies: an entry with no name is nothing, and an
+    undated one has nowhere to sit on a timeline — dropped here rather than parked at
+    year zero, which is both a real-looking date and not a year that exists.
+    """
+    events: List[TimelineEvent] = []
+    connections: List[Connection] = []
+    used_ids = {parent_id}
+    entries = raw_events if isinstance(raw_events, list) else []
+
+    for i, entry in enumerate(entries[: max(1, int(max_events or 1))]):
+        if not isinstance(entry, dict):
+            continue
+        title = _text_of_keys(entry, "name", "source_title", "title")
+        if not title:
+            logger.info("Expand: dropped an entry with no name")
+            continue
+
+        year = entry.get("year") if isinstance(entry.get("year"), int) else None
+        year_end = entry.get("year_end") if isinstance(entry.get("year_end"), int) else None
+        if year is None and year_end is None:
+            logger.info("Expand: dropped undated %r", title)
+            continue
+
+        word = _text_of_keys(entry, "relation", "classification", "link").lower()
+        relation = (
+            word if word in _BOARD_RELATIONS
+            else _RELATION_WORDS.get(word, "no_established_link")
+        )
+        confidence = _RELATION_CONFIDENCE.get(word, 0.5)
+        shared = _text_of_keys(entry, "shared", "claim", "feature", "summary")
+        disputed = word == "disputed_parallel"
+
+        raw_urls = [_text_of_keys(entry, "url", "source_url")] + [
+            u for u in (entry.get("citations") or []) if isinstance(u, str)
+        ]
+        urls: List[str] = []
+        for u in raw_urls:
+            u = (u or "").strip()
+            if u and u not in urls:
+                urls.append(u)
+
+        event_id = f"e{i + 1}"
+        while event_id in used_ids:
+            event_id += "_"
+        used_ids.add(event_id)
+
+        # The model's own two words, kept verbatim on the card. They carry a distinction
+        # the board's nine relations cannot: "disputed parallel" and "independent
+        # parallel" draw the same line and are not the same finding.
+        details: List[DetailField] = []
+        group = _text_of_keys(entry, "group", "category")
+        if group:
+            details.append(DetailField(label="Category", value=group.replace("_", " ")))
+        if word:
+            details.append(DetailField(label="Classification", value=word.replace("_", " ")))
+
+        # What each citation is worth under this claim. Without it every URL falls back to
+        # WORST_RANK, verification comes out "unknown", and the dossier is forced to
+        # "absent" — so a card standing on a museum catalogue graded exactly the same as
+        # one standing on a forum post. The flat answer names no earliest supporting
+        # source, which is the other half of that calculation, so the URL is all there is
+        # to judge by and it has to actually be judged.
+        ranks = {u: sp.rank_for(sp.default_tier(u), url=u) for u in urls}
+
+        dispute_note = "Reported as a disputed comparison." if disputed else "None identified"
+        dossier = {
+            "claim": shared or title,
+            "evidence_type": "disputed" if disputed else "scholarly_inference",
+            "why": shared,
+            "scholarly_dispute": dispute_note,
+        }
+        raw_kind = entry.get("node_type")
+
+        events.append(
+            TimelineEvent(
+                id=event_id,
+                year=year,
+                year_end=year_end,
+                precision="year" if year is not None else "unknown",
+                node_type=raw_kind if is_node_kind(raw_kind) else "event",
+                source_title=title,
+                claim=shared,
+                citations=to_citations(urls),
+                confidence=confidence,
+                details=details,
+                evidence=_coerce_dossier(
+                    dossier,
+                    fallback_claim=shared or title,
+                    confidence=confidence,
+                    citations=urls,
+                    citation_ranks=ranks,
+                ),
+            )
+        )
+        connections.append(
+            Connection(
+                from_id=parent_id,
+                to_id=event_id,
+                relation=relation,
+                citations=to_citations(urls),
+                evidence=ConnectionEvidence(
+                    mechanism=shared or f"{title} is offered as {word.replace('_', ' ') or 'related'}.",
+                    scholarly_dispute=dispute_note,
+                    evidence_type="disputed" if disputed else "scholarly_inference",
+                    confidence=confidence,
+                    confidence_label=(
+                        "high" if confidence >= 0.75
+                        else "moderate" if confidence >= 0.5
+                        else "low" if confidence >= 0.3
+                        else "speculative"
+                    ),
+                    why=shared,
+                ),
+            )
+        )
+
+    events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+    return events, connections
 
 
 def _coerce_dossier(
@@ -1108,34 +1299,29 @@ class TraceOrchestrator:
         started = time.time()
         usage.start()
 
-        when = (
-            f"{req.parent_year} ({'BCE' if req.parent_year < 0 else 'CE'})"
-            if isinstance(req.parent_year, int)
-            else (req.parent_era_label or "unknown")
-        )
-        context_clause = f" (context: {req.context})" if req.context else ""
         parent_id = (req.parent_id or "parent").strip() or "parent"
 
-        # Stage 1 - grounded search around the anchor.
         usage.stage("search")
         # The axis this expansion was asked for. Unaimed, an expansion mostly returns
         # the anchor's own neighbours — which are already on the board.
         mode = expand_mode(req.mode)
         existing_block = format_existing_block(req.existing)
 
-        search_prompt = EXPAND_SEARCH_PROMPT.format(
-            story_title=req.story_title,
-            context_clause=context_clause,
-            when=when,
+        # One call: it searches and answers in the same breath, so the body below is the
+        # whole instruction. There is no summary in the middle to lose half of it, which
+        # is how an axis aimed at earlier parallels used to come back with old documents.
+        prompt = EXPAND_PROMPT.format(
             parent_source_title=req.parent_source_title,
-            parent_claim=req.parent_claim or "(no prior claim recorded)",
-            search_doctrine=SEARCH_DOCTRINE,
-            mode_search=mode["search"],
             mode_query=mode["query"],
+            context_line=(
+                f"\nThe subject is understood in this context: {req.context}\n"
+                if req.context else ""
+            ),
             existing_block=existing_block,
+            mode_body=expand_body(mode, req.parent_source_title),
         )
         try:
-            answer = self.client.grounded_search(search_prompt)
+            answer = self.client.grounded_search(prompt)
         except Exception as exc:
             logger.warning("Expand grounded search failed: %s", exc)
             answer = GroundedAnswer(text="", citations=[], queries=[])
@@ -1176,46 +1362,29 @@ class TraceOrchestrator:
                 duration_seconds=round(time.time() - started, 2),
             )
 
-        # Stage 2 - read the best source behind this anchor, same reasoning as the
-        # main trace: an expansion that cannot cite read text is asserting, not tracing.
-        want_reads = self.settings.chrono_expand_read_sources
-        to_read = ev.select_for_reading(
-            citations, [], lambda u: _default_tier(u), limit=want_reads * 2
-        )
-        reads = read_best(to_read, want=want_reads, max_chars=self.settings.chrono_read_chars)
-        read_urls = {r.url for r in reads if r.ok}
-        pages_block = ""
-        if reads:
-            pages_block = (
-                "\nSOURCE PAGES actually read (prefer these over any summary of them):\n"
-                f"{format_reads_block(reads)}\n"
+        # The answer IS the JSON. A grounded call cannot be pinned to a response format
+        # — the API refuses a forced JSON mime type alongside the search tool — so the
+        # shape is a request rather than a guarantee, and reading it has to survive a
+        # markdown fence, prose on either side, and a tail cut off at the token cap.
+        data: Any = None
+        for candidate in (answer.text or "", repair_truncated_json(answer.text or "") or ""):
+            if not candidate:
+                continue
+            try:
+                parsed = parse_json_loose(candidate)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                data = parsed
+                break
+        if data is None:
+            logger.warning(
+                "Expand: no readable answer for %r in %d characters.",
+                req.parent_source_title, len(answer.text or ""),
             )
-
-        # Stage 3 - extract structured sub-events plus their links to the anchor.
-        usage.stage("extract")
-        extract_prompt = EXPAND_EXTRACT_PROMPT.format(
-            story_title=req.story_title,
-            when=when,
-            parent_id=parent_id,
-            parent_source_title=req.parent_source_title,
-            parent_claim=req.parent_claim or "(no prior claim recorded)",
-            notes=answer.text,
-            pages_block=pages_block,
-            citations_block=_format_citations_block(citations),
-            max_events=req.max_events,
-            mode_label=mode["label"],
-            mode_extract=mode["extract"],
-            existing_block=existing_block,
-        )
-        try:
-            # Light path — same reason as _extract: mechanical event extraction, and
-            # the reasoning path returns empty JSON on large note prompts.
-            data = self.client.reason_json(extract_prompt, use_reasoning_model=False)
-            raw_events = data.get("events") or []
-            raw_connections = data.get("connections") or []
-        except Exception as exc:
-            logger.warning("Expand extract failed: %s", exc)
-            raw_events, raw_connections = [], []
+            data = {}
+        raw_events = data.get("events") or []
+        read_urls: set = set()
 
         url_lookup = {c["url"]: c for c in citations if c.get("url")}
         chain_of, _ = ev.build_chains(citations, [], lambda u: _default_tier(u))
@@ -1235,77 +1404,11 @@ class TraceOrchestrator:
                 )
             return out
 
-        events: List[TimelineEvent] = []
-        used_ids = {parent_id}
-        for i, entry in enumerate(raw_events[: req.max_events]):
-            try:
-                # The same two gates the trace itself applies. Expanding had neither, so
-                # a node could sprout children the chain rule would have refused — an
-                # undated press headline came back as a step under the Dead Sea Scrolls.
-                # A branch is part of the timeline; it is held to the timeline's rules.
-                # A branch may be an event; the chain may not. Expanding explains a
-                # node, and "in 1947 shepherds found jars in a cave" is the true answer
-                # to how the scrolls were discovered — refusing it because a shepherd is
-                # not an artefact is what made three of the six modes unanswerable.
-                # An unrecognised kind is RELABELLED, not dropped — the same rule the
-                # chain uses. node_type is a display label backed by a pydantic Literal,
-                # and its nine values are documentary: text, manuscript, scroll, letter,
-                # inscription, document, record, artifact, archaeological_find. Expand a
-                # subject those words were not written for — a kite, an alloy, a piece of
-                # music — and the honest label is "invention" or "technique", which is not
-                # in the list. Dropping meant the further a subject sat from a manuscript,
-                # the less an expansion returned, and it returned it silently.
-                raw_kind = entry.get("node_type")
-                if not is_node_kind(raw_kind):
-                    logger.info("Expand: relabelled unknown kind %r as event for %r", raw_kind, entry.get("source_title"))
-                kind = raw_kind if is_node_kind(raw_kind) else "event"
-
-                if not isinstance(entry.get("year"), int) and not isinstance(entry.get("year_end"), int):
-                    logger.info("Expand: dropped undated %r", entry.get("source_title"))
-                    continue
-                conf = float(entry.get("confidence", 0.5) or 0.5)
-                raw_id = str(entry.get("id") or "").strip()
-                event_id = raw_id if raw_id and raw_id not in used_ids else f"e{i + 1}"
-                while event_id in used_ids:
-                    event_id = f"{event_id}_{i + 1}"
-                used_ids.add(event_id)
-                entry_cites = entry.get("citations", []) or []
-                events.append(
-                    TimelineEvent(
-                        id=event_id,
-                        year=entry.get("year"),
-                        year_end=entry.get("year_end") if isinstance(entry.get("year_end"), int) else None,
-                        era_label=entry.get("era_label"),
-                        precision=entry.get("precision", "unknown"),
-                        # Carried through. It was computed and then thrown away, so every
-                        # branch on the board arrived as the field's default, "text" — a
-                        # Han-dynasty kite and the excavation report that describes it drew
-                        # the same icon and read as the same kind of thing.
-                        node_type=kind,
-                        attribution=_attribution(entry.get("attribution")),
-                        source_title=entry.get("source_title", "Unknown"),
-                        claim=entry.get("claim", ""),
-                        citations=to_citations(entry_cites),
-                        confidence=conf,
-                        evidence=_coerce_dossier(
-                            entry.get("evidence"),
-                            fallback_claim=entry.get("claim", ""),
-                            confidence=conf,
-                            read_urls=read_urls,
-                            citations=entry_cites,
-                        ),
-                    )
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Skipping malformed expand event: %s", exc)
-
-        events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
-
-        connections = self._build_connections(
-            raw=raw_connections,
-            valid_ids=used_ids,
+        events, connections = adapt_expand_events(
+            raw_events,
+            parent_id=parent_id,
+            max_events=req.max_events,
             to_citations=to_citations,
-            read_urls=read_urls,
         )
 
         snap = usage.snapshot()

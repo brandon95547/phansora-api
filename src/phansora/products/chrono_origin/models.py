@@ -497,7 +497,10 @@ class ExpandRequest(BaseModel):
     parent_claim: Optional[str] = Field(default=None, description="Existing claim text for the parent item.")
     parent_id: str = Field(default="parent", description="id the returned connections should hang off.")
     context: Optional[str] = Field(default=None, description="Optional disambiguating context for the overall story.")
-    max_events: int = Field(default=6, ge=1, le=12, description="Max sub-events to return.")
+    # The ceiling rose with the one-call expand, whose prompt asks for "every qualifying
+    # result" rather than the strongest few. At 12 that instruction was answered and then
+    # silently truncated by the parser, which is the worst of both: paid for, not shown.
+    max_events: int = Field(default=6, ge=1, le=40, description="Max sub-events to return.")
     mode: ExpandMode = Field(
         default="discovery",
         description="Which axis to expand along. See ExpandMode.",
