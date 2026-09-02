@@ -28,7 +28,7 @@ import os
 import re
 from difflib import SequenceMatcher
 from threading import Lock
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("narrava-studio.align")
 
@@ -291,6 +291,29 @@ def word_times(
     The result is positional: element i belongs to the i-th match of the word pattern over
     ``full_text``, which is the same walk the storyboard uses to locate its scenes.
     """
+    return aligned_words(
+        audio_path, full_text, language=language, total_duration_sec=total_duration_sec,
+    )["words"]
+
+
+def aligned_words(
+    audio_path: str,
+    full_text: str,
+    *,
+    language: Optional[str] = None,
+    total_duration_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """``word_times`` plus which of those times were heard and which were placed.
+
+    Between the 60% floor and a perfect match, the words the transcript missed are
+    interpolated between the ones it caught — bounded, and usually close, but a guess. The
+    caller used to get the two kinds mixed together with no way to tell them apart, so a
+    caption sitting on a stretch of guessed timing looked exactly as certain as one on a
+    measured word. ``guessed`` is one boolean per word, positional like ``words``, and the
+    UI marks a cue built on any of them. The pair travels as two parallel lists rather than
+    a wider tuple because ``words`` is round-tripped into the storyboard request, whose
+    model pins each entry to exactly two floats.
+    """
     said = [normalize(m.group(0)) for m in _WORD_RE.finditer(full_text or "")]
     if not said:
         raise AlignmentFailed("There are no words in this narration script to time.")
@@ -321,7 +344,11 @@ def word_times(
     if filled is None:
         raise AlignmentFailed("The narration audio produced no usable word timings.")
     logger.info("Narration aligned: %d words, %.0f%% heard directly", len(said), ratio * 100)
-    return filled
+    return {
+        "words": filled,
+        "guessed": [t is None for t in times],
+        "heard_ratio": ratio,
+    }
 
 
 def _fill_gaps(

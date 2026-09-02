@@ -299,9 +299,9 @@ async def align_narration(
         with os.fdopen(fd, "wb") as out:
             while chunk := await file.read(1 << 20):
                 out.write(chunk)
-        times = await asyncio.get_running_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None,
-            lambda: align.word_times(
+            lambda: align.aligned_words(
                 temp_path,
                 full_text,
                 language=language,
@@ -319,7 +319,15 @@ async def align_narration(
             os.unlink(temp_path)
         except OSError:
             pass
-    return {"aligned": True, "words": times}
+    # `guessed` is positional with `words`: which of them the transcript placed rather than
+    # heard. Separate list, not a wider tuple — `words` is posted back into /storyboard,
+    # whose model pins each entry to two floats.
+    return {
+        "aligned": True,
+        "words": result["words"],
+        "guessed": result["guessed"],
+        "heard_ratio": result["heard_ratio"],
+    }
 
 
 @app.post("/storyboard", response_model=StoryboardResponse)

@@ -129,3 +129,34 @@ def test_interpolation_shares_a_gap_by_word_length():
     # The pieces tile the gap exactly.
     assert out[1][0] == pytest.approx(1.0)
     assert out[2][1] == pytest.approx(5.0)
+
+
+# ── heard versus placed ───────────────────────────────────────────────────────
+
+def test_aligned_words_says_which_timings_were_placed(monkeypatch):
+    """Between the 60% floor and a perfect match the gaps are interpolated, and the caller
+    used to get the two kinds mixed together. A caption sitting on a guessed stretch looked
+    exactly as certain as one on a measured word."""
+    from phansora.products.narrava_studio.services import align
+
+    script = "the moon landing was watched by millions"
+    # The transcript misses "watched" and "by": four heard, two placed.
+    heard = _heard(["the", "moon", "landing", "was", "millions"])
+    monkeypatch.setattr(align, "_heard", lambda *a, **k: heard)
+
+    out = align.aligned_words("audio.mp3", script, total_duration_sec=4.0)
+    assert len(out["words"]) == 7
+    assert out["guessed"] == [False, False, False, False, True, True, False]
+    # The placed words still carry real, bounded, monotonic times.
+    starts = [s for s, _ in out["words"]]
+    assert starts == sorted(starts)
+    assert 0 < out["heard_ratio"] < 1
+
+
+def test_word_times_is_unchanged_by_the_detailed_variant(monkeypatch):
+    """Every existing caller gets exactly the list it always got."""
+    from phansora.products.narrava_studio.services import align
+
+    script = "one two three"
+    monkeypatch.setattr(align, "_heard", lambda *a, **k: _heard(["one", "two", "three"]))
+    assert align.word_times("audio.mp3", script) == align.aligned_words("audio.mp3", script)["words"]
