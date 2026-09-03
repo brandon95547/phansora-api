@@ -39,12 +39,40 @@
 # minute sshd gaps are routine, not evidence of anything. nginx is no better:
 # this box is low-traffic and idles for up to 28 minutes at a time.
 #
-# So the trigger is now the measurement that was always the ground truth: the
-# NIC RX packet counter. If fewer than RX_FLOOR_PKTS packets arrive per cycle
-# for RX_DARK_SECS, then nothing is reaching the interface — no ARP, no
-# scanners, no traffic of any kind. That is a blackout by definition and it
-# cannot be faked by a quiet log. sshd and nginx silence are still recorded in
-# every report as corroborating detail; they just no longer decide anything.
+# v1.1 replaced that with the NIC RX packet counter: if fewer than
+# RX_FLOOR_PKTS packets arrive per cycle for RX_DARK_SECS, nothing is reaching
+# the interface — no ARP, no scanners, no traffic of any kind — and that is a
+# blackout by definition. The reasoning is sound and the trigger still stands,
+# but on its own it turned out to be blind here, in the opposite direction from
+# v1.0.
+#
+# On 2026-09-02 the host was confirmed from an unrelated outside network to be
+# unreachable on tcp/22, tcp/80, tcp/443 and ICMP for at least 175 seconds,
+# with traceroute dying inside the provider's own network. Across the hour
+# containing that event this daemon recorded a MINIMUM of 77 rx packets per
+# cycle and logged "NIC never went dark". In eight days of v1.1 it opened zero
+# events, against a documented rate of several per week.
+#
+# The flaw is a converse error. "No packets arriving ⇒ blackout" is true.
+# "Packets arriving ⇒ no blackout" is false, and it is the one v1.1 relied on:
+# public inbound was being discarded upstream while ARP and intra-datacentre
+# traffic held the counter at completely normal levels.
+#
+# So v1.2 adds a second, independent trigger — can this box reach the internet
+# at all? Zero of PING_TARGETS answering for PROBE_DARK_SECS opens an event,
+# whatever the counters say. Either signal is sufficient; recovery requires
+# both to be healthy, because a probe-triggered event never had flat counters
+# to recover from.
+#
+# The objection this file used to raise against ping still holds and is simply
+# aimed at the wrong stage. A failed echo cannot distinguish "nothing left"
+# from "nothing returned" — true, and that is a DIAGNOSIS question. DETECTION
+# only asks whether reachability is gone. The RX/TX counters then answer the
+# direction question inside the report, which is the thing the provider's own
+# logs cannot settle and the reason this daemon exists.
+#
+# Three independent targets must all fail, so one resolver having a bad day is
+# not an event. sshd and nginx silence remain corroborating detail only.
 #
 # Requires: bash, ping, ip, journalctl, python3. Uses tracepath if present
 # (prod has no mtr or traceroute). Everything else degrades to a noted absence
@@ -52,7 +80,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail          # deliberately no -e: a failed probe must not kill the daemon
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # ── Config (all overridable from the systemd unit) ───────────────────────────
 SAMPLE_SECS="${SAMPLE_SECS:-15}"          # how often we take a reading
@@ -61,6 +89,9 @@ SAMPLE_SECS="${SAMPLE_SECS:-15}"          # how often we take a reading
 # sits ~5x below normal and well above blackout-level chatter.
 RX_FLOOR_PKTS="${RX_FLOOR_PKTS:-15}"      # rx at/below this per cycle ⇒ NIC is dark
 RX_DARK_SECS="${RX_DARK_SECS:-90}"        # dark this long ⇒ declare an event
+# Second trigger, added in 1.2.0. Zero of the outbound targets answering means
+# this box cannot reach the internet, whatever its own NIC counters say.
+PROBE_DARK_SECS="${PROBE_DARK_SECS:-90}"  # all targets unreachable this long ⇒ event
 SILENCE_SECS="${SILENCE_SECS:-180}"       # sshd quiet: recorded as context, NOT a trigger
 RECOVER_SECS="${RECOVER_SECS:-60}"        # retained for the context lines only
 MIN_EVENT_SECS="${MIN_EVENT_SECS:-60}"    # shorter blips are logged, not emailed
@@ -352,6 +383,7 @@ case "${1:-}" in
 esac
 
 # ── Main loop ────────────────────────────────────────────────────────────────
+PING_TARGET_COUNT="$(echo $PING_TARGETS | wc -w | tr -d " ")"
 IFACE="$(detect_iface)"
 [ -n "$IFACE" ] || { log "FATAL: no default-route interface found"; exit 1; }
 log "net-watchdog ${VERSION} starting: iface=${IFACE} sample=${SAMPLE_SECS}s silence=${SILENCE_SECS}s"
@@ -361,9 +393,12 @@ event_start=0
 event_file=""
 first_cycle=1             # the first delta spans no real interval — discard it
 rx_dark_since=0           # ts at which rx first fell to/below the floor (0 = not dark)
+probe_dark_since=0        # ts at which the last outbound target stopped answering
+event_trigger=""          # which signal opened the current event
 hour_start="$(now)"       # rolling window for the hourly reachability summary
 hour_cycles=0
 hour_dark_cycles=0
+hour_probe_dark_cycles=0
 hour_min_rx=-1
 prev_counters="$(nic_counters "$IFACE")"
 prev_sample_ts="$(now)"
@@ -410,34 +445,86 @@ while true; do
   inbound_dark=0
   [ "$rx_dark_secs" -ge "$RX_DARK_SECS" ] 2>/dev/null && inbound_dark=1
 
+  # ── Can we reach the internet at all? ────────────────────────────────────
+  # Added in 1.2.0, because the RX floor above proved unable to see the real
+  # events. On 2026-09-02 the box was confirmed unreachable from an outside
+  # network on tcp/22, tcp/80, tcp/443 and ICMP for at least 175s, while this
+  # daemon recorded a minimum of 77 rx packets per cycle across the whole hour
+  # containing it and never came near the floor of 15. Public inbound was being
+  # discarded upstream while ARP and intra-datacentre traffic kept the counter
+  # at normal levels, so "packets are arriving" simply does not imply "we are
+  # reachable" on this network.
+  #
+  # The header used to argue ping was too ambiguous to trigger on, since a lost
+  # echo cannot distinguish "nothing left" from "nothing returned". That is
+  # correct for DIAGNOSIS and irrelevant for DETECTION: to open an event we only
+  # need to know reachability is gone, not which direction failed. The RX/TX
+  # counters then answer the direction question inside the report, which is what
+  # they are actually good at and what the provider cannot get from their side.
+  #
+  # Three independent targets must ALL fail before this counts, so a single
+  # resolver having a bad day is not an event.
+  probe_up="$(outbound_up_count)"
+  probe_dark_now=0
+  [ "$probe_up" -eq 0 ] 2>/dev/null && probe_dark_now=1
+  if [ "$probe_dark_now" -eq 1 ]; then
+    [ "$probe_dark_since" -eq 0 ] && probe_dark_since=$(( ts - d_secs ))
+  else
+    probe_dark_since=0
+  fi
+  probe_dark_secs=0
+  [ "$probe_dark_since" -ne 0 ] && probe_dark_secs=$(( ts - probe_dark_since ))
+
+  outbound_dark=0
+  [ "$probe_dark_secs" -ge "$PROBE_DARK_SECS" ] 2>/dev/null && outbound_dark=1
+
+  sample_line="${sample_line} outbound=${probe_up}/${PING_TARGET_COUNT}"
+
   # Rolling hourly evidence that the interface stayed reachable. Being able to
   # show the provider a continuous record of "never went dark" is as much of
   # the test they asked for as reporting an outage would be.
   hour_cycles=$(( hour_cycles + 1 ))
   [ "$rx_dark_now" -eq 1 ] && hour_dark_cycles=$(( hour_dark_cycles + 1 ))
+  [ "$probe_dark_now" -eq 1 ] && hour_probe_dark_cycles=$(( hour_probe_dark_cycles + 1 ))
   { [ "$hour_min_rx" -lt 0 ] || [ "$d_rxp" -lt "$hour_min_rx" ]; } && hour_min_rx="$d_rxp"
   if [ $(( ts - hour_start )) -ge "$HOURLY_SUMMARY_SECS" ]; then
-    if [ "$hour_dark_cycles" -eq 0 ]; then
-      log "REACHABILITY OK last $(( ts - hour_start ))s: ${hour_cycles} cycles, min rx=${hour_min_rx} pkts/cycle (floor ${RX_FLOOR_PKTS}) — NIC never went dark"
+    if [ "$hour_dark_cycles" -eq 0 ] && [ "$hour_probe_dark_cycles" -eq 0 ]; then
+      log "REACHABILITY OK last $(( ts - hour_start ))s: ${hour_cycles} cycles, min rx=${hour_min_rx} pkts/cycle (floor ${RX_FLOOR_PKTS}), outbound reachable every cycle"
     else
-      log "REACHABILITY last $(( ts - hour_start ))s: ${hour_cycles} cycles, ${hour_dark_cycles} at/below floor, min rx=${hour_min_rx} pkts/cycle"
+      log "REACHABILITY last $(( ts - hour_start ))s: ${hour_cycles} cycles, ${hour_dark_cycles} at/below rx floor, ${hour_probe_dark_cycles} with 0/${PING_TARGET_COUNT} outbound, min rx=${hour_min_rx} pkts/cycle"
     fi
-    hour_start="$ts"; hour_cycles=0; hour_dark_cycles=0; hour_min_rx=-1
+    hour_start="$ts"; hour_cycles=0; hour_dark_cycles=0; hour_probe_dark_cycles=0; hour_min_rx=-1
   fi
 
   if [ "$in_event" -eq 0 ]; then
-    if [ "$inbound_dark" -eq 1 ]; then
+    if [ "$inbound_dark" -eq 1 ] || [ "$outbound_dark" -eq 1 ]; then
       in_event=1
-      event_start="$rx_dark_since"    # backdate to when the NIC actually went dark
+      # Backdate to whichever signal went first, so the reported duration covers
+      # the whole event rather than starting at the slower of the two.
+      event_start="$ts"
+      if [ "$inbound_dark" -eq 1 ] && [ "$rx_dark_since" -ne 0 ]; then
+        event_start="$rx_dark_since"
+      fi
+      if [ "$outbound_dark" -eq 1 ] && [ "$probe_dark_since" -ne 0 ] \
+         && { [ "$inbound_dark" -eq 0 ] || [ "$probe_dark_since" -lt "$event_start" ]; }; then
+        event_start="$probe_dark_since"
+      fi
+      if [ "$inbound_dark" -eq 1 ] && [ "$outbound_dark" -eq 1 ]; then
+        event_trigger="NIC dark ${rx_dark_secs}s AND no outbound reachability ${probe_dark_secs}s"
+      elif [ "$inbound_dark" -eq 1 ]; then
+        event_trigger="NIC received <=${RX_FLOOR_PKTS} pkts/cycle for ${rx_dark_secs}s (threshold ${RX_DARK_SECS}s)"
+      else
+        event_trigger="0/${PING_TARGET_COUNT} outbound targets reachable for ${probe_dark_secs}s (threshold ${PROBE_DARK_SECS}s); NIC still receiving ${d_rxp} pkts/cycle"
+      fi
       event_file="${EVENT_DIR}/event-$(date -u -d "@$ts" +%Y%m%dT%H%M%SZ).txt"
-      ob="$(outbound_up_count)"
+      ob="$probe_up"
       {
         echo "NETWORK BLACKOUT DETECTED"
         echo "  detected at:  $(iso "$ts") UTC / $(local_ts "$ts")"
         echo "  host:         $(hostname 2>/dev/null)"
         echo "  public IP:    $(ip -4 route get 8.8.8.8 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}')"
         echo "  interface:    ${IFACE}"
-        echo "  trigger:      NIC received <=${RX_FLOOR_PKTS} pkts/cycle for ${rx_dark_secs}s (threshold ${RX_DARK_SECS}s)"
+        echo "  trigger:      ${event_trigger}"
         echo "  corroborating: sshd quiet ${sshd_q}s, nginx quiet ${nginx_q}s"
         echo "  outbound:     ${ob}/$(echo $PING_TARGETS | wc -w) ping targets responding at detection"
         echo
@@ -445,12 +532,14 @@ while true; do
         echo
         echo "PER-CYCLE READINGS (every ${SAMPLE_SECS}s from detection):"
       } > "$event_file" 2>/dev/null
-      log "EVENT START rx_dark=${rx_dark_secs}s sshd_quiet=${sshd_q}s outbound=${ob} → ${event_file}"
+      log "EVENT START ${event_trigger} | sshd_quiet=${sshd_q}s outbound=${ob}/${PING_TARGET_COUNT} → ${event_file}"
     fi
   else
     echo "  $sample_line" >> "$event_file" 2>/dev/null
-    # Recovery: packets are arriving at the interface again.
-    if [ "$rx_dark_now" -eq 0 ]; then
+    # Recovery needs BOTH signals healthy. Requiring only the NIC would end a
+    # probe-triggered event on its very next cycle, since in that failure mode
+    # the counters never stopped climbing in the first place.
+    if [ "$rx_dark_now" -eq 0 ] && [ "$probe_dark_now" -eq 0 ]; then
       dur=$(( ts - event_start ))
       {
         echo
