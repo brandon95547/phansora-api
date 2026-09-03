@@ -29,6 +29,14 @@ _API_BASE = os.getenv("PHANSORA_API_BASE", "http://127.0.0.1:8000").rstrip("/")
 _HTTP_TIMEOUT_S = float(os.getenv("BOOK_ALCHEMY_TTS_HTTP_TIMEOUT_S", "3600"))
 
 
+class VoiceServiceBusy(RuntimeError):
+    """The voice service refused a slot. Retryable, unlike every other failure here."""
+
+    def __init__(self, retry_after: int = 60) -> None:
+        super().__init__("The voice service is busy.")
+        self.retry_after = retry_after
+
+
 def _internal_headers() -> dict:
     """Credentials for the API's AuthGate (shared/auth).
 
@@ -78,7 +86,19 @@ async def render_script_to_audio(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, data=form, headers=_internal_headers()) as resp:
+        # Declare this as BATCH. A book is hundreds of these, and without the header the
+        # endpoint has no way to tell them apart from a person waiting on a narration —
+        # they arrive through the same door, from the same host, with the same shape. The
+        # gate on the other side reserves a slot for interactive work and will make this
+        # wait instead; see spokenverse/admission.py.
+        headers = {**_internal_headers(), "X-Phansora-Priority": "batch"}
+        async with session.post(url, data=form, headers=headers) as resp:
+            if resp.status == 503:
+                # Busy, not broken. Surfaced as its own error so the job runner can back
+                # off and retry rather than failing a session that would have worked a
+                # minute later.
+                retry_after = resp.headers.get("Retry-After") or "60"
+                raise VoiceServiceBusy(int(retry_after) if retry_after.isdigit() else 60)
             if resp.status >= 400:
                 body = await resp.text()
                 raise RuntimeError(f"txt-to-audio HTTP {resp.status}: {body[:800]}")

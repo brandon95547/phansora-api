@@ -27,6 +27,7 @@ every prompt byte-for-byte identical.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 from . import db, prompts
-from .audio import render_script_to_audio
+from .audio import VoiceServiceBusy, render_script_to_audio
 from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
 from .parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_source
@@ -47,6 +48,8 @@ log = logging.getLogger("book_alchemy.pipeline")
 
 KINDS = ["concept", "definition", "framework", "example", "conclusion"]
 MAX_REGEN = 2                 # re-script attempts before flagging a session
+_BUSY_RETRIES = 20            # how many times a lesson waits out a busy voice service
+_BUSY_MAX_WAIT_S = 60         # ceiling on one back-off, so a long Retry-After cannot stall a job
 
 # --- Listening budget ---------------------------------------------------------
 # Book Alchemy adapts a work; it does not expand it. Lesson count is therefore a
@@ -1232,11 +1235,32 @@ async def _phase_audio(project: dict) -> None:
     # (ref_text -> prompt_text). (Resolving to a path here would make the endpoint
     # fall back to the default voice.)
     out_path: Path = session_audio_path(project["user_id"], pid, sess["ordinal"], "mp3")
-    seconds = await render_script_to_audio(
-        script=sess["script"], out_path=out_path,
-        user_id=project["user_id"], voice=voice,
-        instruct_text=instruct_text,
-    )
+
+    # Wait for the voice service rather than failing the session.
+    #
+    # Batch work now yields to anyone waiting on a narration in the app (see
+    # spokenverse/admission.py), so a busy 503 here is the SYSTEM WORKING, not a fault —
+    # it means a person got the slot. Treating it as a failure would abandon a lesson that
+    # would have rendered a minute later, which is the wrong trade for a job nobody is
+    # watching. Every other error still fails immediately: only this one is retried, and
+    # only for as long as the service keeps saying "busy" rather than "broken".
+    for attempt in range(_BUSY_RETRIES):
+        try:
+            seconds = await render_script_to_audio(
+                script=sess["script"], out_path=out_path,
+                user_id=project["user_id"], voice=voice,
+                instruct_text=instruct_text,
+            )
+            break
+        except VoiceServiceBusy as busy:
+            if attempt == _BUSY_RETRIES - 1:
+                raise
+            wait = min(busy.retry_after, _BUSY_MAX_WAIT_S)
+            log.info(
+                "voice service busy, backing off %ss (session %s, attempt %d/%d)",
+                wait, sess["id"], attempt + 1, _BUSY_RETRIES,
+            )
+            await asyncio.sleep(wait)
 
     await db.set_session(
         sess["id"], status="complete", audio_path=str(out_path),

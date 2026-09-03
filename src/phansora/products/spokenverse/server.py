@@ -25,7 +25,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+
+from . import admission
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from phansora.shared.auth import enforce_user_scope
@@ -355,6 +357,7 @@ async def pdf_to_txt(
 
 @app.post("/txt-to-audio", response_model=None)
 async def txt_to_audio(
+    request: Request,
     file: UploadFile = File(...),
     user_id: str = Form(...),
     voice: str = Form("default"),
@@ -425,11 +428,24 @@ async def txt_to_audio(
         instruct_text=instruct_text,
     )
 
+    priority = admission.priority_from_headers(request.headers)
     try:
-        converter = BatchConverter(cfg)
-        rc = await converter.convert_folder(tmp_in_dir, user_audio_dir)
+        # One model, one process, and Book Alchemy calling in over HTTP for every chunk of
+        # a book — so who runs is decided here rather than by who asked first. Batch can
+        # never take the last slot; see admission.py.
+        async with admission.slot(priority):
+            converter = BatchConverter(cfg)
+            rc = await converter.convert_folder(tmp_in_dir, user_audio_dir)
         if rc != 0:
             raise RuntimeError(f"TTS conversion returned non-zero status: {rc}")
+    except admission.Busy as busy:
+        # 503 with Retry-After, immediately. The alternative — holding the connection until
+        # a slot appears — is what made a busy service look like an unreachable one.
+        raise HTTPException(
+            status_code=503,
+            detail="The voice service is busy. Try again in a moment.",
+            headers={"Retry-After": str(busy.retry_after)},
+        ) from busy
     except Exception as e:
         raise fail(500, "Generating that audio failed.", e, logger=logger, context="TXT->Audio failed") from e
     finally:
