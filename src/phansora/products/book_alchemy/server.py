@@ -406,7 +406,14 @@ if _BOOK_ALCHEMY_OK:
 
         tmp = tempfile.NamedTemporaryFile(prefix="ba_zip_", suffix=".zip", delete=False)
         tmp.close()
-        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zf:
+        # STORED, not DEFLATED. The payload is mp3, which is already compressed, so deflate
+        # spends its time re-compressing incompressible data: measured on a real 71-track,
+        # 603MB course, DEFLATED took 29.3s to save 1.08% where STORED took 3.2s and saved
+        # nothing. Nine times the wait for six megabytes in six hundred — and the wait is
+        # paid before the download starts at all, because the whole zip is built to this
+        # temp file before FileResponse sends its first byte. The transcript below is text
+        # and would compress well, but it is a few kilobytes against hundreds of megabytes.
+        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as zf:
             for ordinal, title, path, _script in items:
                 ext = path.suffix or ".mp3"
                 arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
