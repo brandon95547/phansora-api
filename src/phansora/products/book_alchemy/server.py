@@ -19,10 +19,12 @@ import os
 import re
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import quote as urlquote
+import zipfile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from phansora.shared.auth import enforce_user_scope
 
 from phansora.shared.utils.uploads import (
@@ -398,6 +400,99 @@ if _BOOK_ALCHEMY_OK:
             return ""
         return f"{course_name}\n\n\n" + "\n\n\n".join(blocks) + "\n"
 
+    class _ZipSink:
+        """A write-only, UNSEEKABLE target for zipfile.
+
+        Unseekable is the whole point. zipfile normally rewinds to patch each entry's
+        header with the CRC and size once it knows them, which is only possible when the
+        output is a file. With no `tell` to call it switches to data descriptors — the
+        sizes are written AFTER the data instead of before it — and that is what lets the
+        archive be produced in one forward pass and handed out as it is made.
+        """
+
+        def __init__(self) -> None:
+            self._buf = bytearray()
+
+        def write(self, b) -> int:
+            self._buf += b
+            return len(b)
+
+        def flush(self) -> None:
+            pass
+
+        def take(self) -> bytes:
+            if not self._buf:
+                return b""
+            out = bytes(self._buf)
+            self._buf.clear()
+            return out
+
+    # Past this an archive needs zip64, whose headers are a different size — which would
+    # make the exact length below a lie. Courses are nowhere near it (a 71-track course is
+    # ~600MB), and the staged builder still handles anything that is.
+    _ZIP64_FLOOR = 0xFFFFFFFF
+
+    def _ba_zip_plan(items, course_name: str):
+        """What the zip will contain, and EXACTLY how many bytes it will be.
+
+        The size is computable in advance only because the entries are stored rather than
+        deflated: every part of the archive is then a known quantity — 30 bytes of local
+        header and 46 of central directory per entry, both plus the name, a 16-byte data
+        descriptor, the file itself, and 22 bytes to close. Verified against zipfile's own
+        output rather than trusted from the spec.
+
+        It buys the download a Content-Length, which is the difference between a progress
+        bar that fills and a browser that can only say how many megabytes have arrived.
+        """
+        narration = _ba_narration_txt(items, course_name)
+        narration_bytes = narration.encode("utf-8") if narration else b""
+
+        entries = []  # (arcname, path or None, size)
+        for ordinal, title, path, _script in items:
+            ext = path.suffix or ".mp3"
+            arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
+            entries.append((arcname, path, path.stat().st_size))
+        if narration_bytes:
+            entries.append((f"{course_name} - Narration.txt", None, len(narration_bytes)))
+
+        total = 22
+        for arcname, _p, size in entries:
+            n = len(arcname.encode("utf-8"))
+            total += 30 + n + size + 16 + 46 + n
+        return entries, narration_bytes, total
+
+    def _ba_stream_zip(entries, narration_bytes: bytes, chunk: int = 262144):
+        """Yield the archive as it is built. Blocking; Starlette runs it in a thread.
+
+        The staged builder this replaces read every track, wrote a whole second copy to a
+        temp file, then read THAT back to send it — three passes over the data, all of them
+        finished before the browser received a single byte. On a 600MB course that is a
+        button that appears to do nothing for half a minute. This is one pass, and the
+        first bytes leave while the rest is still being read.
+        """
+        sink = _ZipSink()
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+            for arcname, path, _size in entries:
+                if path is None:
+                    zf.writestr(arcname, narration_bytes)
+                else:
+                    with zf.open(arcname, "w") as dest, open(path, "rb") as src:
+                        while True:
+                            buf = src.read(chunk)
+                            if not buf:
+                                break
+                            dest.write(buf)
+                            out = sink.take()
+                            if out:
+                                yield out
+                out = sink.take()
+                if out:
+                    yield out
+        # The central directory and end record, written when the ZipFile closes.
+        out = sink.take()
+        if out:
+            yield out
+
     def _ba_build_zip(items, course_name: str) -> str:
         """Build a zip of session audio (named by session title) plus the course
         transcript. Blocking; run in a thread. Returns the temp zip path."""
@@ -453,12 +548,38 @@ if _BOOK_ALCHEMY_OK:
             raise HTTPException(status_code=404, detail="No audio is available to download yet.")
 
         course_name = _ba_safe_filename(project["name"] or f"course_{project_id}")
-        zip_path = await asyncio.to_thread(_ba_build_zip, items, course_name)
-        return FileResponse(
-            path=zip_path,
+
+        # Sizing the archive touches the filesystem once per track, so it goes to a thread
+        # like the build it replaces.
+        entries, narration_bytes, total = await asyncio.to_thread(
+            _ba_zip_plan, items, course_name
+        )
+
+        filename = f"{course_name}.zip"
+        # Non-ASCII titles are routine — a course is named after its book. The plain
+        # `filename` is the fallback every client understands; `filename*` is the one that
+        # keeps the accents.
+        ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "'")
+        disposition = (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{urlquote(filename)}"
+        )
+
+        if total >= _ZIP64_FLOOR:
+            # Big enough to need zip64, where the header sizes above no longer hold. Rare
+            # enough to be worth the old path rather than a second size calculation.
+            zip_path = await asyncio.to_thread(_ba_build_zip, items, course_name)
+            return FileResponse(
+                path=zip_path,
+                media_type="application/zip",
+                filename=filename,
+                background=BackgroundTask(_ba_unlink_quiet, zip_path),
+            )
+
+        return StreamingResponse(
+            _ba_stream_zip(entries, narration_bytes),
             media_type="application/zip",
-            filename=f"{course_name}.zip",
-            background=BackgroundTask(_ba_unlink_quiet, zip_path),
+            headers={"Content-Disposition": disposition, "Content-Length": str(total)},
         )
 
     @app.post("/projects/{project_id}/sessions/{session_id}/regenerate")
