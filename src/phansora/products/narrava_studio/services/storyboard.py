@@ -197,6 +197,12 @@ def _ask_json(user: str, scene_budget: int, system: str = None, budget: int = No
     budget = budget or min(16000, 1500 + scene_budget * 320)
     try:
         return llm.generate_json(system or _SYSTEM, user, max_output_tokens=budget)
+    except llm.ProviderRejected:
+        # The one failure that is never degraded. Everything else here falls back to
+        # something coarse but honest; this would hand back a storyboard the editor cannot
+        # tell from a real one, over a problem only an account change can fix. The fallback
+        # below is for a model that answered badly, not for one that never answered.
+        raise
     except Exception:  # noqa: BLE001 — any LLM/parse failure degrades to one scene
         logger.exception("Storyboard LLM call failed")
         return None

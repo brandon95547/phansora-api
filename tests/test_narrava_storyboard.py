@@ -176,3 +176,108 @@ def test_suggest_for_span_degrades_when_fewer_ideas_than_asked(monkeypatch):
 
     assert len(out["ideas"]) == 1
     assert out["degraded"] is True
+
+
+# ── Provider refusals ────────────────────────────────────────────────────────
+# A refusal is auth, billing or quota: the provider answered, and said no. Every other
+# failure here degrades to something coarse but honest, and must keep doing so. This one
+# must not, because the coarse answer is indistinguishable from a real storyboard and the
+# only fix is an account change nobody is being told about.
+#
+# Regression: a DeepSeek balance hit zero and returned 402 on every call. The editor was
+# handed a full set of placeholders, correctly timed, with no descriptions on any of them,
+# and said "Could not write more ideas for this scene" — with HTTP 200 at every layer. The
+# real reason existed only in the service log.
+
+
+def _refusal():
+    from phansora.products.narrava_studio.services import llm
+
+    return llm.ProviderRejected(
+        "The DeepSeek API refused the request because the account is out of credit — top it up.",
+        status=402,
+        provider="DeepSeek",
+    )
+
+
+def test_suggest_for_span_does_not_degrade_on_a_refusal(monkeypatch):
+    """It raises. Returning the fallback would report "no ideas" for a billing problem."""
+    import pytest
+
+    from phansora.products.narrava_studio.services import llm, storyboard
+
+    def boom(*a, **k):
+        raise _refusal()
+
+    monkeypatch.setattr(storyboard.llm, "generate_json", boom)
+
+    with pytest.raises(llm.ProviderRejected) as caught:
+        storyboard.suggest_for_span("The port never truly sleeps.", count=2)
+    assert caught.value.status == 402
+    assert "out of credit" in str(caught.value)
+
+
+def test_storyboard_build_stops_on_a_refusal(monkeypatch):
+    """No grammar-split placeholder track standing in for a storyboard nobody wrote."""
+    import pytest
+
+    from phansora.products.narrava_studio.services import llm, storyboard
+
+    def boom(*a, **k):
+        raise _refusal()
+
+    monkeypatch.setattr(storyboard.llm, "generate_json", boom)
+
+    with pytest.raises(llm.ProviderRejected):
+        storyboard.build_storyboard(
+            "Around 1400 BCE, clay tablets were inscribed with stories. "
+            "Lost for thousands of years, they were found again.",
+            total_duration_sec=12.0,
+            word_times=[(float(i), float(i) + 0.5) for i in range(18)],
+        )
+
+
+def test_a_model_that_merely_answers_badly_still_degrades(monkeypatch):
+    """The other side of the line: an unusable answer is still a fallback, not an error."""
+    from phansora.products.narrava_studio.services import storyboard
+
+    monkeypatch.setattr(storyboard.llm, "generate_json", lambda *a, **k: {"ideas": "nonsense"})
+
+    out = storyboard.suggest_for_span("The port never truly sleeps.", count=2)
+    assert out["ideas"] == []
+    assert out["degraded"] is True
+
+
+def test_deepseek_402_becomes_a_refusal(monkeypatch):
+    """The httpx boundary: a 402 must not reach raise_for_status.
+
+    raise_for_status flattens it into an HTTPStatusError, which every caller above treats
+    as "the model misbehaved" — which is how a billing problem came to be reported as a
+    scene with no ideas.
+    """
+    import types
+
+    import httpx
+    import pytest
+
+    from phansora.products.narrava_studio.services import llm
+    from phansora.shared.ai import deepseek as ds
+
+    monkeypatch.setattr(
+        ds.DeepSeekChatConfig, "from_env",
+        classmethod(lambda cls, **k: types.SimpleNamespace(
+            model="deepseek-chat", base_url="https://api.deepseek.com",
+            api_key="test", timeout_s=10,
+        )),
+    )
+    monkeypatch.setattr(
+        httpx, "post",
+        lambda *a, **k: httpx.Response(402, request=httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")),
+    )
+
+    with pytest.raises(llm.ProviderRejected) as caught:
+        llm.generate_json("sys", "user", max_output_tokens=100)
+    assert caught.value.status == 402
+    assert caught.value.provider == "DeepSeek"
+    # The message has to name the remedy — it is the only thing that reaches the operator.
+    assert "out of credit" in str(caught.value)

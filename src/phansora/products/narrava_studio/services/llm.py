@@ -18,6 +18,42 @@ from typing import Any, Dict
 from .. import config
 
 
+class ProviderRejected(RuntimeError):
+    """The provider answered, and what it said was "no".
+
+    Auth, billing and quota — 401, 402, 403, 429. Kept apart from every other failure
+    because the remedy is an ACCOUNT action by whoever runs the service, not a retry, a
+    reword or a smaller budget; and because the callers that degrade gracefully must not
+    degrade for this one.
+
+    Folded in with the rest, a 402 reached the editor as "Could not write more ideas for
+    this scene" while the storyboard quietly fell back to grammar-split placeholders — an
+    answer nobody could tell from a real one without reading the service log.
+    """
+
+    def __init__(self, message: str, *, status: int, provider: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.provider = provider
+
+
+# Each refusal in the only terms that help: what to go and do about it. A message that
+# says "the request failed" sends the reader to the code; these send them to the account.
+_REFUSALS = {
+    401: "rejected the API key — check the key in the environment",
+    402: "refused the request because the account is out of credit — top it up",
+    403: "refused access to the configured model — check the account's permissions",
+    429: "is over its rate limit or quota — wait, or raise the limit on the account",
+}
+
+
+def _rejected(status: int, provider: str) -> ProviderRejected:
+    reason = _REFUSALS.get(status, f"refused the request ({status})")
+    return ProviderRejected(
+        f"The {provider} API {reason}.", status=status, provider=provider
+    )
+
+
 def _provider() -> str:
     return config.get_settings().provider
 
@@ -57,7 +93,15 @@ def _openai_text(system: str, user: str, *, max_output_tokens: int, json_mode: b
     }
     if json_mode:
         kwargs["text"] = {"format": {"type": "json_object"}}
-    resp = client.responses.create(**kwargs)
+    try:
+        resp = client.responses.create(**kwargs)
+    except Exception as exc:  # noqa: BLE001 — re-raised unless it is a refusal
+        # Every openai error class carries the HTTP status; matching on that rather than on
+        # class names keeps this working across SDK versions.
+        status = getattr(exc, "status_code", None)
+        if status in _REFUSALS:
+            raise _rejected(status, "OpenAI") from exc
+        raise
     return (getattr(resp, "output_text", "") or "").strip()
 
 
@@ -96,6 +140,10 @@ def _deepseek_text(system: str, user: str, *, max_output_tokens: int, json_mode:
     if resp.status_code == 400 and "thinking" in resp.text:
         payload.pop("thinking", None)
         resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout_s)
+    # Before raise_for_status, which would flatten this into an HTTPStatusError that every
+    # caller treats as "the model misbehaved". A 402 here is not a model problem at all.
+    if resp.status_code in _REFUSALS:
+        raise _rejected(resp.status_code, "DeepSeek")
     resp.raise_for_status()
     data = resp.json()
     choices = data.get("choices") or []

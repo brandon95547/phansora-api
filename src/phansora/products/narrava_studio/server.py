@@ -98,6 +98,25 @@ def _ensure_llm() -> None:
         )
 
 
+def _provider_error(exc: llm.ProviderRejected) -> HTTPException:
+    """503, not 502: the provider is reachable and answered — it declined.
+
+    502 reads as "the upstream is broken, try again later", which sends whoever is on call
+    to look at the wrong thing and tells the editor to retry something that cannot succeed.
+    503 with the provider's own reason names the account action that actually fixes it, and
+    matches what _ensure_llm answers for a missing key — the same class of problem, one
+    step further along.
+
+    `detail` is an object rather than a string so the layers above can tell this apart from
+    every other 503 (a transcription host being down, most often) without matching on prose.
+    """
+    logger.error("LLM provider refused the request: %s %s", exc.provider, exc.status)
+    return HTTPException(
+        status_code=503,
+        detail={"code": "provider_rejected", "message": str(exc)},
+    )
+
+
 @app.get("/voices")
 def get_voices():
     return {"voices": voices.list_voices()}
@@ -118,6 +137,8 @@ async def generate_script(req: ScriptGenerateRequest):
                 research=req.research,
             ),
         )
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Script generation failed")
         raise fail(502, "Script generation failed.", exc, logger=logger, context="Script generation failed")
@@ -143,6 +164,8 @@ async def enhance_narration(req: ScriptEnhanceRequest):
             None,
             lambda: script.enhance_narration(req.text, style=req.style),
         )
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Narration enhance failed")
         raise fail(502, "Enhancing the narration failed.", exc, logger=logger, context="Narration enhance failed")
@@ -262,6 +285,8 @@ async def suggest_scene(req: SceneSuggestRequest):
                 req.text, count=req.count, have=req.have, style=req.style,
             ),
         )
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Scene suggestion failed")
         raise fail(502, "Scene suggestion failed.", exc, logger=logger, context="Scene suggestion failed")
@@ -350,6 +375,8 @@ async def build_storyboard(req: StoryboardRequest):
         # Placeholders that are only nearly on the voice are the bug, so an untimed
         # narration is refused rather than approximated.
         raise HTTPException(status_code=422, detail=str(exc))
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Storyboard build failed")
         raise fail(502, "Storyboard build failed.", exc, logger=logger, context="Storyboard build failed")
