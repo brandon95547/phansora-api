@@ -25,6 +25,7 @@ SHIPPED = {
     "batch_slots": admission._BATCH_SLOTS,
     "interactive_wait": admission._INTERACTIVE_WAIT_S,
     "batch_wait": admission._BATCH_WAIT_S,
+    "batch_max_yield": admission._BATCH_MAX_YIELD_S,
 }
 
 
@@ -169,3 +170,113 @@ def test_the_shipped_defaults_are_what_the_design_says():
     assert SHIPPED["batch_slots"] == SHIPPED["slots"] - 1, "batch must be capped below the total"
     assert SHIPPED["interactive_wait"] <= 30, "somebody is watching a spinner"
     assert SHIPPED["batch_wait"] >= 300, "nobody is watching a book; let it wait"
+    # Long enough that standing aside is the normal case, bounded so a busy box cannot
+    # stop a course rendering altogether.
+    assert 60 <= SHIPPED["batch_max_yield"] <= 3600, "a book yields for a while, not forever"
+
+
+# ── Rule 3: standing aside ───────────────────────────────────────────────────
+# The guarantee above gets a person a SLOT. It does not get them the GPU, and on one
+# device two syntheses do not run twice as fast — measured on prod, a ~24s narration took
+# 4m24s next to a book. So a book waits for the box rather than merely for a slot.
+
+
+@pytest.mark.asyncio
+async def test_a_book_does_not_start_while_a_person_is_on_the_box():
+    """The free slot is deliberately left alone. This is the whole change."""
+    took_slot = asyncio.Event()
+
+    async def book():
+        async with admission.slot("batch"):
+            took_slot.set()
+
+    async with admission.slot("interactive"):
+        task = asyncio.create_task(book())
+        await asyncio.sleep(0.05)
+        # There IS a slot free — two total, one held. The old gate handed it straight to
+        # the book, and the person's synthesis then ran at half speed alongside it.
+        assert admission.stats()["in_flight"] == 1
+        assert not took_slot.is_set(), "the book took the GPU out from under a person"
+        assert admission.stats()["batch_yields"] == 1
+
+    # ...and it resumes the moment they are done, with nothing to poke it.
+    await asyncio.wait_for(task, timeout=2)
+    assert took_slot.is_set()
+
+
+@pytest.mark.asyncio
+async def test_someone_still_queueing_is_enough_to_hold_a_book_back():
+    """Waiting counts, not just running — by the time they are served it is too late."""
+    release = asyncio.Event()
+
+    async def holder():
+        async with admission.slot("interactive"):
+            await release.wait()
+
+    holders = [asyncio.create_task(holder()) for _ in range(admission._SLOTS)]
+    await asyncio.sleep(0.05)
+
+    async def latecomer():
+        async with admission.slot("interactive"):
+            return "served"
+
+    late = asyncio.create_task(latecomer())
+    await asyncio.sleep(0.05)
+
+    # Two being served and one in the queue: all three hold a book back.
+    assert admission.stats()["interactive_present"] == admission._SLOTS + 1
+
+    release.set()
+    await asyncio.wait_for(late, timeout=2)
+    await asyncio.gather(*holders)
+    assert admission.stats()["interactive_present"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_book_is_never_starved_by_a_box_that_is_never_quiet(monkeypatch):
+    """Standing aside is bounded. A course that never renders is the worse failure."""
+    monkeypatch.setattr(admission, "_BATCH_MAX_YIELD_S", 0.1)
+    took_slot = asyncio.Event()
+
+    async def book():
+        async with admission.slot("batch"):
+            took_slot.set()
+
+    # The person never leaves for the duration of this block.
+    async with admission.slot("interactive"):
+        await asyncio.wait_for(book(), timeout=2)
+
+    assert took_slot.is_set()
+    assert admission.stats()["batch_overrides"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_caller_stops_holding_books_back():
+    """A browser that disconnects mid-wait must not leave the count stuck above zero.
+
+    It would be a quiet, permanent one: every later book stands aside for somebody who
+    left, until the process restarts.
+    """
+    release = asyncio.Event()
+
+    async def holder():
+        async with admission.slot("interactive"):
+            await release.wait()
+
+    holders = [asyncio.create_task(holder()) for _ in range(admission._SLOTS)]
+    await asyncio.sleep(0.05)
+
+    waiter = asyncio.create_task(latecomer_that_gives_up())
+    await asyncio.sleep(0.05)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    release.set()
+    await asyncio.gather(*holders)
+    assert admission.stats()["interactive_present"] == 0
+
+
+async def latecomer_that_gives_up():
+    async with admission.slot("interactive"):
+        pass
