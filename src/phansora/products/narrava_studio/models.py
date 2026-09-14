@@ -163,6 +163,8 @@ class MediaSearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=200)
     media_type: Literal["image", "video"] = "image"
     limit: int = Field(default=48, ge=1, le=60)
+    # "stock" fans out across the free-to-use providers; "web" is DuckDuckGo image search.
+    source: Literal["stock", "web"] = "stock"
 
 
 class MediaSearchResponse(BaseModel):

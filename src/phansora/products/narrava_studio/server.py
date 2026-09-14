@@ -47,7 +47,7 @@ from .models import (  # noqa: E402
     TimelineBuildRequest,
     TimelineBuildResponse,
 )
-from .services import align, animation, llm, media, script, storyboard, timeline, voices  # noqa: E402
+from .services import align, animation, llm, media, script, storyboard, timeline, voices, web_images  # noqa: E402
 
 logger = logging.getLogger("narrava-studio")
 
@@ -237,7 +237,29 @@ async def segment_script(req: SegmentRequest):
 
 @app.post("/media/search", response_model=MediaSearchResponse)
 async def search_media(req: MediaSearchRequest):
-    """Search fair-use media for a query — powers 'replace this clip'."""
+    """Search fair-use media for a query — powers 'replace this clip'.
+
+    ``source="web"`` is the Media panel's "Search Web Images" instead: DuckDuckGo, images
+    only, and none of it free-to-use stock (see services/web_images.py).
+    """
+    if req.source == "web":
+        if req.media_type != "image":
+            raise HTTPException(status_code=400, detail="Web search finds images only.")
+        try:
+            clips = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: web_images.search_web_images(req.query, limit=req.limit),
+            )
+        except web_images.WebSearchUnavailable as exc:
+            # 503 with a code and the reason: the editor shows it in place of the grid, so a
+            # throttled search reads as "wait a minute" — never as "no results", and never as
+            # the generic "service isn't responding" a bare 503 turns into on the client.
+            logger.warning("Web image search unavailable: %s", exc.__cause__ or exc)
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "web_search_unavailable", "message": str(exc)},
+            ) from exc
+        return MediaSearchResponse(clips=clips)
+
     clips = await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: media.search_media(
