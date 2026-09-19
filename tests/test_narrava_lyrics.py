@@ -103,7 +103,7 @@ def test_lyric_words_asks_for_wording_and_the_files_own_timeline(monkeypatch):
             seen.update(kwargs, path=path)
             return iter([_seg((" Run", 0.5, 0.9), (" away", 1.0, 1.6))]), None
 
-    monkeypatch.setattr(align, "_load_lyrics_model", lambda: Model())
+    monkeypatch.setattr(align, "_load_model", lambda: Model())
     out = align.lyric_words("song.m4a", language="en", total_duration_sec=4.0)
 
     assert out["text"] == "Run away"
@@ -123,24 +123,9 @@ def test_a_file_whisper_cannot_read_is_a_user_error_not_a_crash(monkeypatch):
         def transcribe(self, path, **kwargs):
             raise RuntimeError("Invalid data found when processing input")
 
-    monkeypatch.setattr(align, "_load_lyrics_model", lambda: Model())
+    monkeypatch.setattr(align, "_load_model", lambda: Model())
     with pytest.raises(align.AlignmentFailed, match="could not be read"):
         align.lyric_words("broken.mp3")
-
-
-def test_the_lyrics_model_is_its_own_setting(monkeypatch):
-    from phansora.products.narrava_studio.services import align
-
-    loaded = []
-    monkeypatch.setattr(align, "_model_named", lambda name: loaded.append(name) or name)
-    monkeypatch.delenv("NARRAVA_LYRICS_MODEL", raising=False)
-    monkeypatch.setenv("WHISPER_MODEL", "base")
-    align._load_lyrics_model()
-    align._load_model()
-    monkeypatch.setenv("NARRAVA_LYRICS_MODEL", "medium.en")
-    align._load_lyrics_model()
-    # The aligner keeps its small model; lyrics get a large one unless told otherwise.
-    assert loaded == ["large-v3-turbo", "base", "medium.en"]
 
 
 # ── the storyboard of a music video ─────────────────────────────────────────────

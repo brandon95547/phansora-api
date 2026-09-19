@@ -184,10 +184,8 @@ def _anchored(
     return times, ratio
 
 
-# Loaded models, by name. Two can be resident at once — the aligner's small one and the
-# larger one lyrics need (see _load_lyrics_model) — and a narration caption straight after a
-# music-video caption must not unload one to load the other.
-_MODELS: Dict[str, Any] = {}
+_MODEL = None
+_MODEL_NAME: Optional[str] = None
 _MODEL_LOCK = Lock()
 
 # Below this share of the script found in the transcript, the two are not the same
@@ -208,11 +206,19 @@ class AlignmentFailed(ValueError):
     """The audio and the script don't correspond, so no honest timing can come out of it."""
 
 
-def _model_named(name: str):
-    """faster-whisper model ``name``, loaded once per process."""
+def _load_model():
+    """faster-whisper, loaded once per process — for narration and for songs alike.
+
+    Reads the same environment as SpokenVerse's transcriber but through its own name first
+    (``NARRAVA_ALIGN_MODEL``), because the two want different things: transcription wants
+    the best wording it can get, alignment only wants to know where each word sits and can
+    take a smaller, faster model to get it.
+    """
+    global _MODEL, _MODEL_NAME
+    name = (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
     with _MODEL_LOCK:
-        if name in _MODELS:
-            return _MODELS[name]
+        if _MODEL is not None and _MODEL_NAME == name:
+            return _MODEL
         try:
             from faster_whisper import WhisperModel  # lazy — the API still boots without it
         except Exception as exc:  # noqa: BLE001
@@ -229,39 +235,13 @@ def _model_named(name: str):
         if threads.isdigit():
             kwargs["cpu_threads"] = max(1, int(threads))
         try:
-            model = WhisperModel(name, **kwargs)
+            _MODEL = WhisperModel(name, **kwargs)
         except Exception as exc:  # noqa: BLE001 — a bad model name or no download
             raise AlignmentUnavailable(
                 f"The speech model '{name}' could not be loaded on the API host: {exc}"
             ) from exc
-        _MODELS[name] = model
-        return model
-
-
-def _load_model():
-    """The aligner's model.
-
-    Reads the same environment as SpokenVerse's transcriber but through its own name first
-    (``NARRAVA_ALIGN_MODEL``), because the two want different things: transcription wants
-    the best wording it can get, alignment only wants to know where each word sits and can
-    take a smaller, faster model to get it.
-    """
-    return _model_named(
-        (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
-    )
-
-
-def _load_lyrics_model():
-    """The model that transcribes a song — the one job here that needs the best wording.
-
-    Alignment knows the words already and only asks where they fall, so a small model does.
-    Lyrics have no script behind them: the transcript IS the captions and the storyboard's
-    text, and singing over a band is the hardest audio whisper meets. ``base`` mishears it
-    badly, so this has its own setting (``NARRAVA_LYRICS_MODEL``) and a far larger default.
-    large-v3-turbo is large-v3's encoder with a four-layer decoder: close to its accuracy on
-    sung English, a fraction of its decode time, about 1.6 GB at float16.
-    """
-    return _model_named((os.getenv("NARRAVA_LYRICS_MODEL") or "large-v3-turbo").strip())
+        _MODEL_NAME = name
+        return _MODEL
 
 
 def _heard(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
@@ -471,7 +451,9 @@ def lyric_words(
     true where the model was unsure of it. Raises rather than returning nothing: a track
     with no voice on it is the user's to fix, and saying so beats an empty caption track.
     """
-    model = _load_lyrics_model()
+    # The same model narration is aligned with. A larger one would hear singing better, but
+    # this is the one the box already runs; a word it is unsure of is flagged instead.
+    model = _load_model()
     try:
         segments, _ = model.transcribe(
             audio_path,
