@@ -146,12 +146,69 @@ _SYSTEM = (
 )
 
 
+# ── Music videos ─────────────────────────────────────────────────────────────
+# The same machinery with a different editor in the chair. A music video's words are the
+# song's lyrics, transcribed off its music track (align.lyric_words), and the model is told
+# so because it changes the job: cut on the lyric and the music rather than on an argument,
+# expect a chorus to come back, and read a mis-heard word for its sense instead of
+# illustrating it. Everything after the model is shared — every boundary is still a word
+# the singer actually sings, measured.
+
+# Music videos turn over faster than documentaries; this only sets the pacing check the
+# model is shown; the 10-second ceiling below is the same for both.
+_LYRIC_TARGET_SHOT_SEC = 4.0
+
+_LYRIC_EDIT_RULES = (
+    "CUT ON THE LYRIC AND THE MUSIC. Start a new scene where the song's picture changes: a "
+    "line that brings a new image, a new verse, the chorus arriving, a turn in the mood. "
+    "Hold one image across lines that stay with it.\n"
+    "  - Cut at the start of a line or phrase, never inside a phrase the singer carries as "
+    "one breath.\n"
+    "  - A chorus repeats. Its images can return as a motif, but each time it comes back is "
+    "its own scene, and the picture can grow or change with it.\n"
+    "  - The lyrics were transcribed from the recording, so a word can be mis-heard. Read "
+    "them for their sense and mood; never build a scene around one word that makes no "
+    "sense where it sits.\n"
+    "\n"
+    "PACING. Music videos cut often. A scene averages 3-5 seconds; a driving section can "
+    "turn over every 2-3, and a held or emotional moment can stay for 6-8. Nothing may sit "
+    "longer than 10 seconds. Let the pacing follow the song's energy, not the clock.\n"
+)
+
+
+def _as_lyrics(rules: str) -> str:
+    """One of the shared rule blocks, reworded for a song.
+
+    They say "the narration" and "the script" because they were written for documentaries;
+    what they require — spans verbatim and in order, a picture rather than a paraphrase,
+    terms someone would actually search — holds for lyrics unchanged, so they are reworded
+    rather than copied.
+    """
+    return (rules.replace("Example narration:", "Example passage:")
+                 .replace("the original script", "the original lyrics")
+                 .replace("narrate the script", "sing back the lyrics")
+                 .replace("the narration", "the lyrics"))
+
+
+_LYRICS_SYSTEM = (
+    "You are an experienced music video director deciding what the viewer sees while a "
+    "song plays. You are given its lyrics. Break them into visual beats and describe the "
+    "picture for each one: performance, story or imagery, whatever the words call for.\n\n"
+    + _LYRIC_EDIT_RULES + "\n" + _as_lyrics(_FIELDS) + "\n" + _as_lyrics(_VISUAL_RULES)
+    + "\n" + _as_lyrics(_SEARCH_RULES) + "\n"
+    "The first scene must cover the very beginning of the lyrics.\n\n"
+    'Respond with ONLY JSON of the form: {"scenes":[{"text":"...","visual":"...",'
+    '"rationale":"...","media_type":"image|video","search_terms":["..."]}]}'
+)
+
+
 def build_storyboard(
     full_text: str,
     total_duration_sec: float,
     max_scenes: int = 24,
     word_times: Optional[List[Tuple[float, float]]] = None,
     style: Optional[str] = None,
+    source: str = "narration",
 ) -> List[StoryboardScene]:
     """``word_times`` is one (start, end) per word of ``full_text``, measured from the
     rendered audio (see services/align.py). Required: without it, or with a count that does
@@ -160,20 +217,41 @@ def build_storyboard(
     ``style`` is one of STYLES — the documentary's house style, the same one the narration
     was written in. It reaches the model, where it shapes what the pictures show and how
     fast they turn over; it never reaches the layout below, which is arithmetic over the
-    model's spans and the measured clock."""
+    model's spans and the measured clock.
+
+    ``source`` is ``"lyrics"`` for a music video, whose words are a song transcribed off
+    its music track; it swaps the editor the model is asked to be and nothing else."""
     text = (full_text or "").strip()
     total = max(0.1, float(total_duration_sec or 0.0))
     if not text:
         return []
 
-    raw_scenes = _ask_llm(text, max_scenes, total, style)
+    lyrics = source == "lyrics"
+    raw_scenes = _ask_llm(text, max_scenes, total, style, lyrics=lyrics)
     if not raw_scenes:
         raw_scenes = [_fallback_scene(text)]
 
-    return _lay_out(raw_scenes, total, text, word_times, style=style)
+    return _lay_out(raw_scenes, total, text, word_times, style=style, lyrics=lyrics)
 
 
-def _ask_llm(text: str, max_scenes: int, total: float, style: Optional[str] = None) -> List[Dict[str, Any]]:
+def _ask_llm(
+    text: str,
+    max_scenes: int,
+    total: float,
+    style: Optional[str] = None,
+    lyrics: bool = False,
+) -> List[Dict[str, Any]]:
+    if lyrics:
+        target = max(1, min(max_scenes, round(total / _LYRIC_TARGET_SHOT_SEC)))
+        user = _style_block(style) + (
+            f"This song runs about {total:.0f} seconds. At music-video pace that is roughly "
+            f"{target} visual beats (never more than {max_scenes}). Use it as a check on your "
+            f"own pacing, not a quota: cut where the picture changes. Instrumental passages "
+            f"have no words here, so they are held by the scene on either side of them.\n\n"
+            f"LYRICS:\n{text}"
+        )
+        return _scenes_from(_ask_json(user, max_scenes, system=_LYRICS_SYSTEM), max_scenes)
+
     # The model cannot pace beats without knowing how long the narration runs — asked
     # blind it returns a handful of chapter-sized scenes whatever the length. Give it the
     # duration and the beat count that implies, as a sanity check on its own pacing rather
@@ -226,6 +304,20 @@ _REFINE_SYSTEM = (
     '"visual":"...","rationale":"...","media_type":"image|video","search_terms":["..."]}]}]}'
 )
 
+_LYRICS_REFINE_SYSTEM = (
+    "You are an experienced music video director. Each stretch of lyrics below is "
+    "currently covered by a SINGLE image, and has been measured against the recording — "
+    "the exact number of seconds it holds the screen is given. Every one of them holds too "
+    "long. Find the visual beats inside each stretch and break it up.\n\n"
+    + _LYRIC_EDIT_RULES + "\n" + _as_lyrics(_FIELDS) + "\n" + _as_lyrics(_VISUAL_RULES)
+    + "\n" + _as_lyrics(_SEARCH_RULES) + "\n"
+    "Within a stretch your scenes must cover its text completely and in order, verbatim, "
+    "with no gaps or overlaps; the first scene begins at the stretch's first word. Cut at "
+    "the start of a line or phrase.\n\n"
+    'Respond with ONLY JSON of the form: {"stretches":[{"id":1,"scenes":[{"text":"...",'
+    '"visual":"...","rationale":"...","media_type":"image|video","search_terms":["..."]}]}]}'
+)
+
 # Beyond this many over-long stretches, re-asking costs more than it returns and the prompt
 # stops being a focused question. The mechanical splitter takes the rest.
 _MAX_REFINE_STRETCHES = 12
@@ -237,6 +329,7 @@ def _refine_long(
     spans: List[List[int]],
     clock: "_Clock",
     style: Optional[str] = None,
+    lyrics: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[List[int]]]:
     """Re-cut the scenes that measure too long, by asking rather than by regex.
 
@@ -257,7 +350,8 @@ def _refine_long(
         a, b = spans[i]
         parts.append(f"STRETCH {n} ({lengths[i]:.1f} seconds):\n{full_text[a:b].strip()}")
         budget += max(2, round(lengths[i] / _TARGET_SHOT_SEC))
-    data = _ask_json(_style_block(style) + "\n\n".join(parts), budget, system=_REFINE_SYSTEM)
+    data = _ask_json(_style_block(style) + "\n\n".join(parts), budget,
+                     system=_LYRICS_REFINE_SYSTEM if lyrics else _REFINE_SYSTEM)
 
     by_stretch: Dict[int, List[Dict[str, Any]]] = {}
     for entry in (data.get("stretches") if isinstance(data, dict) else None) or []:
@@ -503,6 +597,7 @@ def _lay_out(
     full_text: str,
     word_times: Optional[List[Tuple[float, float]]] = None,
     style: Optional[str] = None,
+    lyrics: bool = False,
 ) -> List[StoryboardScene]:
     """Anchor each scene into the real narration, then read its bounds off the clock.
 
@@ -528,7 +623,8 @@ def _lay_out(
 
     # Anything still holding too long goes back to the editor with its measured duration —
     # finding the beat inside a long stretch is a judgment about meaning.
-    merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock, style=style)
+    merged, merged_spans = _refine_long(full_text, merged, merged_spans, clock, style=style,
+                                        lyrics=lyrics)
 
     # Last resort only. If the re-cut did not happen or did not go far enough, split on
     # grammar so no placeholder sits on screen indefinitely. This cuts on sentences and

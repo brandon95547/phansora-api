@@ -184,8 +184,10 @@ def _anchored(
     return times, ratio
 
 
-_MODEL = None
-_MODEL_NAME: Optional[str] = None
+# Loaded models, by name. Two can be resident at once — the aligner's small one and the
+# larger one lyrics need (see _load_lyrics_model) — and a narration caption straight after a
+# music-video caption must not unload one to load the other.
+_MODELS: Dict[str, Any] = {}
 _MODEL_LOCK = Lock()
 
 # Below this share of the script found in the transcript, the two are not the same
@@ -206,25 +208,17 @@ class AlignmentFailed(ValueError):
     """The audio and the script don't correspond, so no honest timing can come out of it."""
 
 
-def _load_model():
-    """faster-whisper, loaded once per process.
-
-    Reads the same environment as SpokenVerse's transcriber but through its own name first
-    (``NARRAVA_ALIGN_MODEL``), because the two want different things: transcription wants
-    the best wording it can get, alignment only wants to know where each word sits and can
-    take a smaller, faster model to get it.
-    """
-    global _MODEL, _MODEL_NAME
-    name = (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
+def _model_named(name: str):
+    """faster-whisper model ``name``, loaded once per process."""
     with _MODEL_LOCK:
-        if _MODEL is not None and _MODEL_NAME == name:
-            return _MODEL
+        if name in _MODELS:
+            return _MODELS[name]
         try:
             from faster_whisper import WhisperModel  # lazy — the API still boots without it
         except Exception as exc:  # noqa: BLE001
             raise AlignmentUnavailable(
-                "faster-whisper is not installed on the API host, so narration cannot be "
-                "timed. Install the API requirements and restart it."
+                "faster-whisper is not installed on the API host, so audio cannot be "
+                "transcribed. Install the API requirements and restart it."
             ) from exc
 
         kwargs = {
@@ -235,13 +229,39 @@ def _load_model():
         if threads.isdigit():
             kwargs["cpu_threads"] = max(1, int(threads))
         try:
-            _MODEL = WhisperModel(name, **kwargs)
+            model = WhisperModel(name, **kwargs)
         except Exception as exc:  # noqa: BLE001 — a bad model name or no download
             raise AlignmentUnavailable(
                 f"The speech model '{name}' could not be loaded on the API host: {exc}"
             ) from exc
-        _MODEL_NAME = name
-        return _MODEL
+        _MODELS[name] = model
+        return model
+
+
+def _load_model():
+    """The aligner's model.
+
+    Reads the same environment as SpokenVerse's transcriber but through its own name first
+    (``NARRAVA_ALIGN_MODEL``), because the two want different things: transcription wants
+    the best wording it can get, alignment only wants to know where each word sits and can
+    take a smaller, faster model to get it.
+    """
+    return _model_named(
+        (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
+    )
+
+
+def _load_lyrics_model():
+    """The model that transcribes a song — the one job here that needs the best wording.
+
+    Alignment knows the words already and only asks where they fall, so a small model does.
+    Lyrics have no script behind them: the transcript IS the captions and the storyboard's
+    text, and singing over a band is the hardest audio whisper meets. ``base`` mishears it
+    badly, so this has its own setting (``NARRAVA_LYRICS_MODEL``) and a far larger default.
+    large-v3-turbo is large-v3's encoder with a four-layer decoder: close to its accuracy on
+    sung English, a fraction of its decode time, about 1.6 GB at float16.
+    """
+    return _model_named((os.getenv("NARRAVA_LYRICS_MODEL") or "large-v3-turbo").strip())
 
 
 def _heard(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
@@ -404,3 +424,169 @@ def _fill_gaps(
         cleaned.append((start, end))
         floor = start
     return cleaned
+
+
+# ── Lyrics ────────────────────────────────────────────────────────────────────
+# A music video has no script. The words are the song's, and the only record of them is
+# the recording — so this TRANSCRIBES, the one thing the aligner above will not do, and
+# returns the transcript with a time per word in the same positional shape the narration
+# path returns for its script. Everything downstream (caption cards, the storyboard's
+# clock) takes it unchanged.
+#
+# What it cannot know is whether the words were heard right. Singing over a band is the
+# hardest audio whisper meets, so every word it was unsure of comes back marked, through
+# the same `guessed` list the aligner uses for interpolated words. The editor already flags
+# a caption built on one, and here that flag lands on exactly the cards worth reading
+# against the song.
+
+# Below this, whisper's own confidence in a word marks it for checking. Words it heard
+# clearly sit well above it; the misheard ones cluster low.
+_UNSURE_PROBABILITY = 0.5
+
+# Whisper's captions for sound it could not write down as words: "[Music]", "(upbeat
+# music)", "(laughs)", a run of ♪. Right in a subtitle file, wrong here, where they would
+# become caption cards reading "Music" and lyrics for the storyboard to illustrate. A
+# parenthesis is only a note when it names a sound; "(yeah)" is a backing vocal and stays.
+_NOTE_RE = re.compile(
+    r"\[[^\]]*\]"
+    r"|\((?=[^)]*\b(?:music|applause|laugh\w*|instrumental|silence|inaudible|singing|"
+    r"humming|cheer\w*|noise|beat)\b)[^)]*\)"
+    r"|[♪♫]+",
+    re.IGNORECASE,
+)
+_BRACKET_RE = re.compile(r"[\[\]()]")
+
+
+def lyric_words(
+    audio_path: str,
+    *,
+    language: Optional[str] = None,
+    total_duration_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The words sung on a music track, and when each one is sung.
+
+    ``text`` is the transcript as whisper wrote it, cased and punctuated, one sung line per
+    line. ``words`` is one ``(start, end)`` per WORD_RE match over ``text`` — the positional
+    contract the narration path keeps with its script. ``guessed`` is one boolean per word,
+    true where the model was unsure of it. Raises rather than returning nothing: a track
+    with no voice on it is the user's to fix, and saying so beats an empty caption track.
+    """
+    model = _load_lyrics_model()
+    try:
+        segments, _ = model.transcribe(
+            audio_path,
+            word_timestamps=True,
+            # Off, as in the aligner: captions and scenes are laid on the file's own
+            # timeline, gaps and all. Silero's VAD is a speech detector too, and a voice
+            # under a band is exactly where it misfires.
+            vad_filter=False,
+            language=language or None,
+            # Unlike alignment this wants the best WORDING — nothing corrects it afterwards
+            # — so the wider beam earns its time here.
+            beam_size=5,
+            # A song is the worst case for whisper's prompt cascade: choruses repeat, one
+            # hallucinated line becomes the prompt for the next window, and the lyrics walk
+            # off the recording for a verse. Each window is decoded cold.
+            condition_on_previous_text=False,
+        )
+        pieces = _sung_pieces(segments)  # consuming the generator IS the decode
+    except AlignmentUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable file
+        raise AlignmentFailed(
+            f"The music track could not be read for transcription: {exc}"
+        ) from exc
+    result = _transcript(pieces, total_duration_sec)
+    logger.info(
+        "Lyrics transcribed: %d words, %d unsure", len(result["words"]), sum(result["guessed"])
+    )
+    return result
+
+
+def _sung_pieces(segments) -> List[Tuple[str, float, float, float, bool]]:
+    """``(text, start, end, probability, opens_line)`` per word whisper wrote down.
+
+    ``text`` is the word as whisper spelled it, leading space and punctuation included, so
+    the pieces join back into the transcript. A segment is roughly one sung line, so its
+    first word opens a line. A piece with no word in it is dropped unless it could be part
+    of a note: whisper splits "[Music]" into " [", "Music", "]" as readily as it keeps it
+    whole, and a bracket thrown away here would leave "Music" standing as a lyric.
+    """
+    out: List[Tuple[str, float, float, float, bool]] = []
+    for segment in segments:
+        first = True
+        for word in (getattr(segment, "words", None) or []):
+            text = str(getattr(word, "word", "") or "")
+            if not (_WORD_RE.search(text) or _NOTE_RE.search(text) or _BRACKET_RE.search(text)):
+                continue
+            probability = getattr(word, "probability", None)
+            out.append((
+                text,
+                float(word.start),
+                float(word.end),
+                1.0 if probability is None else float(probability),
+                first,
+            ))
+            first = False
+    return out
+
+
+def _join(pieces) -> Tuple[str, List[Tuple[int, int]]]:
+    """The pieces as one transcript, and the character span each piece occupies in it."""
+    text = ""
+    spans: List[Tuple[int, int]] = []
+    for word, _start, _end, _probability, opens_line in pieces:
+        if not text:
+            word = word.lstrip()
+        elif opens_line:
+            word = "\n" + word.lstrip()
+        spans.append((len(text), len(text) + len(word)))
+        text += word
+    return text, spans
+
+
+def _transcript(pieces, total: Optional[float]) -> Dict[str, Any]:
+    """Pieces -> ``{text, words, guessed}``, with words positional over ``text``.
+
+    The time of a word is read off the pieces its characters came from, rather than by
+    tokenizing each piece on its own: whisper splits "I'm" into " I" + "'m", which
+    tokenizes as two words piecewise and as ONE across the joined text. The joined text is
+    what everything downstream tokenizes, so it is what the timings have to follow.
+    """
+    text, spans = _join(pieces)
+    notes = [m.span() for m in _NOTE_RE.finditer(text)]
+    if notes:
+        pieces = [
+            piece for piece, (a, b) in zip(pieces, spans)
+            if not any(a < note_end and note_start < b for note_start, note_end in notes)
+        ]
+        text, spans = _join(pieces)
+
+    words: List[Tuple[float, float]] = []
+    guessed: List[bool] = []
+    k = 0
+    for match in _WORD_RE.finditer(text):
+        a, b = match.span()
+        while k < len(spans) and spans[k][1] <= a:
+            k += 1
+        start = end = None
+        unsure = False
+        j = k
+        while j < len(spans) and spans[j][0] < b:
+            _, piece_start, piece_end, probability, _ = pieces[j]
+            start = piece_start if start is None else min(start, piece_start)
+            end = piece_end if end is None else max(end, piece_end)
+            unsure = unsure or probability < _UNSURE_PROBABILITY
+            j += 1
+        words.append((start, end))
+        guessed.append(unsure)
+
+    if not words:
+        raise AlignmentFailed(
+            "No singing was found on the music track. Captions and the storyboard are made "
+            "from the words that are sung, so they need a song with vocals — an "
+            "instrumental has no words to work from."
+        )
+    # Every word is known here, so this is only the monotonic clean-up and the clamp to
+    # the file's length — whisper's timestamps can still run backwards between windows.
+    return {"text": text, "words": _fill_gaps(words, total), "guessed": guessed}

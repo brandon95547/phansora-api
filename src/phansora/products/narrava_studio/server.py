@@ -377,6 +377,49 @@ async def align_narration(
     }
 
 
+@app.post("/lyrics/transcribe")
+async def transcribe_lyrics(
+    file: UploadFile = File(...),
+    language: Optional[str] = Form(None),
+    total_duration_sec: Optional[float] = Form(None),
+):
+    """The words sung on a music track, each with the second it is sung — for a music
+    video's captions and storyboard, where there is no narration script to align.
+
+    Same contract as /narration/align, plus the words themselves: ``text`` is the
+    transcript and ``words`` is positional over it exactly as /narration/align's is over the
+    script, so the caption builder and /storyboard take either without knowing which it
+    was. 503 means the host cannot transcribe at all; 422 means this audio has no singing
+    on it (or cannot be read) and the user has to pick another track.
+    """
+    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
+    fd, temp_path = tempfile.mkstemp(prefix="narrava_lyrics_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: align.lyric_words(
+                temp_path,
+                language=language,
+                total_duration_sec=total_duration_sec,
+            ),
+        )
+    except align.AlignmentUnavailable as exc:
+        logger.error("Lyrics transcription unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except align.AlignmentFailed as exc:
+        logger.warning("Lyrics transcription failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+    return {"text": result["text"], "words": result["words"], "guessed": result["guessed"]}
+
+
 @app.post("/storyboard", response_model=StoryboardResponse)
 async def build_storyboard(req: StoryboardRequest):
     """AI first visual pass: narration -> media-placeholder scenes at story-flow
@@ -391,6 +434,7 @@ async def build_storyboard(req: StoryboardRequest):
                 max_scenes=req.max_scenes,
                 word_times=req.word_times,
                 style=req.style,
+                source=req.source,
             ),
         )
     except storyboard.NarrationNotTimed as exc:

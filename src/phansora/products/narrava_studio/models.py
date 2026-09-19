@@ -193,6 +193,11 @@ class StoryboardRequest(BaseModel):
     # an unknown name falls back to unstyled, where a Literal would 422 the whole build
     # over a creative preference.
     style: Optional[str] = Field(default=None, max_length=40)
+    # What the words ARE: a voiced narration script, or a song's lyrics transcribed off its
+    # music track (POST /lyrics/transcribe). The timings and layout are identical; the
+    # editor the model is asked to be is not — a documentary cuts on ideas, a music video
+    # on the lyric and the music.
+    source: Literal["narration", "lyrics"] = "narration"
 
 
 class StoryboardScene(BaseModel):
