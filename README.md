@@ -156,7 +156,7 @@ The API boots **without** the TTS engine — every non-TTS route works immediate
 only a voice-generation call needs CosyVoice, and without it you get a clean
 "engine not configured" error instead of a crash.
 
-CosyVoice's fast path (vLLM + TensorRT) is **CUDA-only**, so full-quality TTS is not
+CosyVoice's fast path (vLLM) is **CUDA-only**, so full-quality TTS is not
 available on a Mac. If you must synthesize locally, clone CosyVoice to `~/CosyVoice`,
 install the Mac torch build, and set in `.env`:
 
@@ -212,7 +212,7 @@ COSYVOICE3_REPO=/var/www/CosyVoice
 # COSYVOICE3_MODEL_DIR=/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL  # default
 COSYVOICE3_FP16=1                  # half VRAM + bandwidth (CUDA-only)
 COSYVOICE3_USE_VLLM=1              # vLLM LLM backend — the big speedup (CUDA-only)
-COSYVOICE3_USE_TRT=0               # TensorRT flow estimator — off on v3 (upstream warns)
+COSYVOICE3_USE_TRT=0               # TensorRT flow estimator — off on v3, not installed
 # "Default" voice needs a reference clip AND its transcript (CosyVoice conditions on the
 # transcript). Set both so warmup also kernel-warms and the FIRST request is fast:
 COSYVOICE3_DEFAULT_REF=/path/to/ref.wav
@@ -221,14 +221,15 @@ COSYVOICE3_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
 
 > **Runs on GPU (RTX A4000, 16 GB).** CosyVoice loads at ~3 GB (fp16) with plenty of
 > headroom. The engine loads **once at FastAPI startup** (the model is a per-process
-> singleton) — this pays weights + vLLM CUDA-graph capture (~80 s) and, on the very
-> first boot, a one-time TensorRT engine build (cached to disk after). The startup
+> singleton) — this pays weights + vLLM CUDA-graph capture (~2 min). A Whisper call in
+> the same process during the capture fails and takes the preload down with it, so after
+> a restart wait for "CosyVoice preloaded + kernel-warmed" before transcribing. The startup
 > preload runs off-thread, so `/health` stays responsive; **subsequent requests only pay
 > synthesis time** (sub-real-time). Run the service with a **single worker** (`make run`)
 > — extra workers would each load their own copy, doubling VRAM and warmup.
 
-> **No CUDA toolkit / nvcc needed.** Unlike the old DeepSpeed path, vLLM's and TensorRT's
-> CUDA ops ship precompiled in their wheels — the box needs only the NVIDIA **driver**,
+> **No CUDA toolkit / nvcc needed.** Unlike the old DeepSpeed path, vLLM's CUDA ops
+> ship precompiled in its wheels — the box needs only the NVIDIA **driver**,
 > not the CUDA toolkit. `scripts/install-cuda-toolkit.sh` and the `cuda-env.conf` drop-in
 > are legacy (DeepSpeed) and no longer required for the TTS engine.
 
@@ -366,12 +367,12 @@ or its torch/vLLM pins** — several of these cost real time.
 
 3. **The model loads ONCE at FastAPI startup; don't construct it per request.** It's a
    per-process singleton (`_load_cosy`, lock-guarded, cached). Startup preload (off-thread)
-   pays weights + vLLM CUDA-graph capture (~80 s) + first-run TensorRT build (cached to disk).
+   pays weights + vLLM CUDA-graph capture (~2 min).
    Constructing `CosyVoice` inside a request handler would re-pay all of that every call.
 
 4. **Run a single uvicorn worker (`make run` → `--workers 1`).** vLLM's graph capture is
    per-process and not disk-cached, and each worker holds its own resident engine — extra
-   workers multiply both VRAM and the ~80 s warmup. Scale non-TTS load via replicas/proxy.
+   workers multiply both VRAM and the ~2 min warmup. Scale non-TTS load via replicas/proxy.
 
 5. **CosyVoice needs the reference clip's transcript (`prompt_text`).** Unlike the old engine,
    CosyVoice conditions on the transcript. Cloned voices store it as `ref_text` (auto-whisper
@@ -381,7 +382,7 @@ or its torch/vLLM pins** — several of these cost real time.
 6. **No emotion control.** CosyVoice has no emotion vector/intensity knob (that was IndexTTS2).
    Only `speed` (0.5–2.0×, native) remains. Don't wire emotion sliders back into the UI.
 
-7. **No CUDA toolkit / nvcc required.** vLLM and TensorRT ship precompiled CUDA ops in their
+7. **No CUDA toolkit / nvcc required.** vLLM ships precompiled CUDA ops in its
    wheels; the box needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh` and the
    `cuda-env.conf` systemd drop-in are legacy (DeepSpeed) and no longer needed for TTS.
 

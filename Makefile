@@ -102,8 +102,12 @@ install-tts: ## Clone CosyVoice, install its reqs (torch-stripped) + download th
 	# --no-deps (keeps triton 3.3.0). Its legacy setup.py imports pkg_resources at build, so
 	# pin setuptools<81 + --no-build-isolation. more-itertools is a whisper runtime dep that
 	# --no-deps skips (numba/tiktoken already come from librosa / the base env).
+	#
+	# And strip the tensorrt-cu12 trio (4.4 GB of libraries): they only serve the TensorRT
+	# flow engine, which is off (COSYVOICE3_USE_TRT=0), and CosyVoice imports tensorrt only
+	# when told to load that engine.
 	$(PIP) install "setuptools<81" wheel
-	sed -E '/^(torch|torchaudio|pydantic|openai-whisper)==/d' $(COSYVOICE_REPO)/requirements.txt > $(VENV)/cosy-reqs.txt
+	sed -E '/^(torch|torchaudio|pydantic|openai-whisper|tensorrt-cu12[a-z-]*)==/d' $(COSYVOICE_REPO)/requirements.txt > $(VENV)/cosy-reqs.txt
 	$(PIP) install torch==2.7.0 torchaudio==2.7.0 "pydantic>=2.9" -r $(VENV)/cosy-reqs.txt
 	$(PIP) install --no-deps --no-build-isolation openai-whisper==20231117
 	$(PIP) install more-itertools
@@ -115,13 +119,12 @@ install-tts: ## Clone CosyVoice, install its reqs (torch-stripped) + download th
 	# RL wins on every published CER: 0.81/1.68/5.44 vs 1.21/2.24/6.71 (zh/en/hard).
 	#
 	# speech_tokenizer_v3.batch.onnx (924 MB) is the batched variant; __init__ loads the
-	# non-batch one, so it is skipped. flow.decoder.estimator.fp32.onnx IS kept — it is the
-	# source the TensorRT engine is built from, and re-downloading it to turn TRT on later
-	# would be worse than the 1.3 GB.
+	# non-batch one, so it is skipped. flow.decoder.estimator.fp32.onnx (1.3 GB) is skipped
+	# too: it is only the source the TensorRT engine is built from, and TRT is off.
 	#
 	# NOTE the local_dir basename is cosyvoice3_client.MODEL_DIR_NAME — change both together
 	# or the loader will not find the model.
-	$(PY) -c "from modelscope import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512', local_dir='$(MODEL_DIR)', ignore_file_pattern=['speech_tokenizer_v3.batch.onnx'])"
+	$(PY) -c "from modelscope import snapshot_download; snapshot_download('FunAudioLLM/Fun-CosyVoice3-0.5B-2512', local_dir='$(MODEL_DIR)', ignore_file_pattern=['speech_tokenizer_v3.batch.onnx', 'flow.decoder.estimator.fp32.onnx'])"
 	@# Activate the RL LLM. Idempotent: a re-run finds llm.rl.pt already consumed and skips.
 	@if [ -f "$(MODEL_DIR)/llm.rl.pt" ]; then \
 		mv -f "$(MODEL_DIR)/llm.rl.pt" "$(MODEL_DIR)/llm.pt" && \

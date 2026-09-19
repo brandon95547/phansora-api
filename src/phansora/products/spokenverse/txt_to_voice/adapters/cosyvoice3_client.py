@@ -208,8 +208,9 @@ def _load_cosy():
             use_fp16 = _env_bool("COSYVOICE3_FP16", True) and _cuda_available()
             use_vllm = _env_bool("COSYVOICE3_USE_VLLM", True) and _cuda_available()
             # TRT defaults OFF on v3: upstream warns "DiT tensorRT fp16 engine have some
-            # performance issue, use at caution!" when loading it for CosyVoice3. Flip
-            # COSYVOICE3_USE_TRT=1 once the flow ODE has been measured on this model.
+            # performance issue, use at caution!" when loading it for CosyVoice3. It is not
+            # installed either: make install-tts skips the tensorrt packages and the ONNX the
+            # engine is built from, so COSYVOICE3_USE_TRT=1 fails to load until both are back.
             use_trt = _env_bool("COSYVOICE3_USE_TRT", False) and _cuda_available()
 
             # The LLM is a CUSTOM vLLM architecture — it must be registered with vLLM's
