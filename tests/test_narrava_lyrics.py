@@ -82,6 +82,32 @@ def test_timestamps_that_run_backwards_are_made_monotonic_and_clamped():
     assert max(e for _, e in out["words"]) <= 10.0
 
 
+def test_a_rest_whisper_folded_into_the_next_word_does_not_light_it_early():
+    """Whisper leaves no gap inside a segment, so a musical rest lands in the FRONT of the
+    word after it. That word then starts where the rest starts, and the karaoke highlight —
+    which lights the last word to have STARTED — names it through the whole silence."""
+    out = _transcribe(
+        # "memory" ends at 30.2 and "Holding" runs straight on to 32.18: a two-syllable word
+        # given two seconds, because the rest between the two phrases went into it.
+        _seg((" a", 29.6, 29.68), (" memory", 29.68, 30.2), (" Holding", 30.2, 32.18),
+             (" him", 32.18, 32.42)),
+    )
+    starts = [s for s, _ in out["words"]]
+    # Started near its end instead — measured against forced alignment, the real onset of
+    # that word is 31.83, where whisper's own answer was 1.63s early.
+    assert starts[2] == pytest.approx(31.68, abs=0.01)
+    # Its neighbours are plausibly sized and are left exactly as whisper heard them.
+    assert starts[0] == 29.6 and starts[1] == 29.68 and starts[3] == 32.18
+
+
+def test_a_rest_whisper_reported_is_believed():
+    """A gap the model actually left is one it heard, so the start after it is honest."""
+    out = _transcribe(_seg((" wait", 1.0, 1.4)), _seg((" for", 4.0, 4.9), (" me", 5.0, 5.2)))
+    # "for" is given 0.9s after a three-second gap — long for one syllable, but whisper
+    # placed that silence itself, so the onset is left alone.
+    assert [s for s, _ in out["words"]] == [1.0, 4.0, 5.0]
+
+
 def test_an_instrumental_is_refused_with_a_reason():
     from phansora.products.narrava_studio.services import align
 

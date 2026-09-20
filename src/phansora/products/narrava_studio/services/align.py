@@ -436,6 +436,69 @@ _NOTE_RE = re.compile(
 )
 _BRACKET_RE = re.compile(r"[\[\]()]")
 
+# ── Vocal onsets ──────────────────────────────────────────────────────────────
+# Whisper never leaves a gap between two words of the same segment: word N's end IS word
+# N+1's start. On speech that is harmless, because the words really do run together. On a
+# song it is not. The rests between sung phrases are real, and whisper folds each one into
+# the FRONT of the word that follows it — that word comes back with a span several times
+# longer than it is sung for, starting where the previous word ended. The karaoke highlight
+# lights the last word to have STARTED, so it lights at the beginning of the rest and sits
+# there through the silence, naming a word nobody is singing yet.
+#
+# So a word that whisper ran straight on from the one before it, and gave more time than it
+# could plausibly take to sing, is assumed to have a rest at its front and is started a
+# plausible duration before its end instead.
+#
+# Only where there was NO gap. A rest whisper DID report is one it actually heard, and that
+# start is honest — on the song below just 34 of 428 words had a real gap in front of them,
+# so this costs almost nothing and keeps the model's own answer wherever it gave one.
+#
+# MEASURED on a 4:52 song (428 words) against torchaudio forced alignment: "Holding" came
+# back as 30.20-32.18 when it is sung at 31.83; this puts it at 31.68, which is 0.15s out
+# instead of 1.63s. Over the whole song it moves the share of words landing within 0.3s of
+# their true onset from 77% to 83%, and the median error from 0.13s to 0.10s.
+#
+# What it cannot do is tell a rest from a genuinely sustained note, where the onset really
+# is at the start and the long span is honest. That is the case it makes worse — the worst
+# single word went from 1.90s out to 2.85s. Reading the audio is the only way to know the
+# difference, which is what a forced aligner does; raising the threshold so this fires only
+# on the longest spans was measured and does NOT help (it costs more than it saves).
+_SEC_PER_SYLLABLE = 0.25
+# Whisper's timestamps are quantised to 20ms, so "ran straight on" needs that much room.
+_CONTIGUOUS_EPS = 0.02
+_VOWEL_RUN_RE = re.compile(r"[aeiouy]+")
+_NOT_LETTER_RE = re.compile(r"[^a-z]")
+
+
+def _syllables(word: str) -> int:
+    """Roughly how many syllables ``word`` has — enough to say how long it takes to sing."""
+    letters = _NOT_LETTER_RE.sub("", word.lower())
+    if not letters:
+        return 1
+    runs = len(_VOWEL_RUN_RE.findall(letters))
+    # A trailing silent "e" is not a syllable ("time"), unless it is the only vowel run
+    # ("the") or part of one that is always sounded ("little", "free", "bye").
+    if letters.endswith("e") and not letters.endswith(("le", "ee", "ye")) and runs > 1:
+        runs -= 1
+    return max(1, runs)
+
+
+def _onsets(
+    times: List[Tuple[float, float]], words: List[str]
+) -> List[Tuple[float, float]]:
+    """Start each word at its likely onset rather than at the end of the one before it."""
+    out: List[Tuple[float, float]] = []
+    for i, ((start, end), word) in enumerate(zip(times, words)):
+        # The previous END as whisper gave it. Only `start` is ever moved below, so reading
+        # the original list rather than `out` cannot matter — but it says which it means.
+        ran_on = i > 0 and start - times[i - 1][1] <= _CONTIGUOUS_EPS
+        plausible = _syllables(word) * _SEC_PER_SYLLABLE
+        if ran_on and end - start > plausible:
+            # Never past its own end, and never earlier than whisper already had it.
+            start = max(start, end - plausible)
+        out.append((start, end))
+    return out
+
 
 def lyric_words(
     audio_path: str,
@@ -546,6 +609,7 @@ def _transcript(pieces, total: Optional[float]) -> Dict[str, Any]:
 
     words: List[Tuple[float, float]] = []
     guessed: List[bool] = []
+    spelled: List[str] = []
     k = 0
     for match in _WORD_RE.finditer(text):
         a, b = match.span()
@@ -562,6 +626,7 @@ def _transcript(pieces, total: Optional[float]) -> Dict[str, Any]:
             j += 1
         words.append((start, end))
         guessed.append(unsure)
+        spelled.append(match.group(0))
 
     if not words:
         raise AlignmentFailed(
@@ -569,6 +634,12 @@ def _transcript(pieces, total: Optional[float]) -> Dict[str, Any]:
             "from the words that are sung, so they need a song with vocals — an "
             "instrumental has no words to work from."
         )
-    # Every word is known here, so this is only the monotonic clean-up and the clamp to
-    # the file's length — whisper's timestamps can still run backwards between windows.
-    return {"text": text, "words": _fill_gaps(words, total), "guessed": guessed}
+    # Every word is known here, so _fill_gaps is only the monotonic clean-up and the clamp
+    # to the file's length — whisper's timestamps can still run backwards between windows.
+    # _onsets runs first and only ever moves a start LATER, never past its own end, so it
+    # cannot disturb the ordering that clean-up then enforces.
+    return {
+        "text": text,
+        "words": _fill_gaps(_onsets(words, spelled), total),
+        "guessed": guessed,
+    }
