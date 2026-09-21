@@ -67,3 +67,16 @@ async def list_voices(engine: str | None = None) -> None:
 def preload(engine: str | None = None) -> None:
     """Load the active engine's model once (called at FastAPI startup)."""
     _module(engine).preload()
+
+
+def unavailable_reason(engine: str | None = None) -> str | None:
+    """Why this process cannot synthesize at all, or None if it can.
+
+    Non-None means the engine is wedged for the life of the process — today that is a
+    broken CUDA context, which only a restart clears. Requests check it before they are
+    admitted so a dead engine answers 503 with the cure rather than a 500 per attempt,
+    and /health reports it so nobody has to discover it by generating narration.
+    """
+    mod = _module(engine)
+    reason = getattr(mod, "unavailable_reason", None)
+    return reason() if callable(reason) else None

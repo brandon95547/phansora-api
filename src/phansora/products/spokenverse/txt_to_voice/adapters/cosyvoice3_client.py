@@ -82,6 +82,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional, Sequence
 
+from phansora.shared import gpu
 from phansora.shared.utils.tts_text import normalize_for_tts
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ logger = logging.getLogger(__name__)
 _MODEL_LOCK = Lock()      # guards the one-per-process model construction
 _INFER_LOCK = Lock()      # serializes synthesis (the vLLM engine + flow are shared state)
 _COSY = None              # cached CosyVoice engine instance
+_DEAD: Optional[str] = None  # set once the CUDA context is beyond repair — see _poisoned
 _SPK_CACHE: dict[str, str] = {}  # ref-clip signature -> cached zero-shot speaker id
 
 # Audio suffixes we treat as "this argument is a reference clip to clone".
@@ -186,6 +188,40 @@ def _model_dir(repo: Path) -> str:
     return _env("COSYVOICE3_MODEL_DIR", str(repo / "pretrained_models" / MODEL_DIR_NAME))
 
 
+class EngineNeedsRestart(RuntimeError):
+    """The CUDA context is broken for the life of this process. Only a restart fixes it."""
+
+
+# A failed CUDA-graph capture leaves the allocator with a capture permanently "underway",
+# and every allocation after that asserts. There is no way back from inside the process, so
+# a load that fails like this is remembered and never retried: retrying costs 25-35s of a
+# worker thread per request and cannot succeed. Matched on the messages torch and CUDA
+# actually produce — see shared/gpu.py for how the capture gets broken in the first place.
+# The first two are the capture failing and the allocator refusing to work afterwards —
+# the two wordings prod produced, in that order. "cuda error" is deliberately broader: a
+# sticky CUDA error at load time leaves a context torch cannot clear either way, and
+# retrying one per request is the behaviour worth removing.
+_POISON_MARKERS = (
+    "previous error during capture",
+    "captures_underway",
+    "cuda error",
+)
+
+
+def _poisoned(text: str) -> bool:
+    low = text.lower()
+    return any(m in low for m in _POISON_MARKERS)
+
+
+def unavailable_reason() -> Optional[str]:
+    """Why this process can no longer synthesize, or None if it can (or hasn't tried).
+
+    Read by ``/health`` and checked before a generation is admitted, so a wedged engine
+    answers with "restart me" instead of a 500 per request.
+    """
+    return _DEAD
+
+
 def _load_cosy():
     """Construct the CosyVoice engine once per process (lock-guarded, cached).
 
@@ -193,10 +229,12 @@ def _load_cosy():
     (with TRT, first run only) compiles the flow TensorRT engine. Called from ``preload``
     at startup so requests never pay it; a request that races the warmup just waits here.
     """
-    global _COSY
+    global _COSY, _DEAD
     with _MODEL_LOCK:
         if _COSY is not None:
             return _COSY
+        if _DEAD:
+            raise EngineNeedsRestart(_DEAD)
         repo = _repo()
         # CosyVoice is a checkout, not a package; put its root + the Matcha-TTS submodule on
         # sys.path before importing (mirrors the upstream examples).
@@ -236,18 +274,38 @@ def _load_cosy():
             )
             # NOTE: no load_jit here. CosyVoice3.__init__ does not accept it (CosyVoice2's
             # did); passing it raises TypeError.
-            _COSY = AutoModel(
-                model_dir=model_dir,
-                load_trt=use_trt,
-                load_vllm=use_vllm,
-                fp16=use_fp16,
-            )
+            #
+            # Held exclusively because this is where vLLM captures CUDA graphs, and a
+            # caption request touching the GPU mid-capture takes the whole process's CUDA
+            # context down with it — the fifteen-hour outage in shared/gpu.py's header.
+            # Only with vLLM on a GPU is there a capture to protect; on CPU the gate would
+            # make whisper wait for nothing.
+            with gpu.exclusive("the CosyVoice load", active=use_vllm):
+                _COSY = AutoModel(
+                    model_dir=model_dir,
+                    load_trt=use_trt,
+                    load_vllm=use_vllm,
+                    fp16=use_fp16,
+                )
+        except gpu.GpuBusy:
+            # Nothing was loaded and nothing was corrupted: the device was busy. Let this
+            # propagate untouched so the next request tries again on an idle GPU, and do
+            # NOT mark the engine dead.
+            raise
         except Exception as e:  # noqa: BLE001
+            detail = f"{type(e).__name__}: {e}"
+            if _poisoned(detail):
+                _DEAD = (
+                    "The voice engine's CUDA context is unusable in this process and cannot "
+                    "be repaired from inside it — restart the API "
+                    f"(systemctl restart phansora-api). Original error: {detail}"
+                )
+                logger.error("CosyVoice load left CUDA unusable — this process cannot synthesize: %s", detail)
+                raise EngineNeedsRestart(_DEAD) from e
             raise RuntimeError(
                 "Could not import/load CosyVoice from "
                 f"{repo} — check COSYVOICE3_REPO / COSYVOICE3_MODEL_DIR and that its deps "
-                f"(torch 2.7 + vllm 0.9.0) are installed.\nOriginal error: "
-                f"{type(e).__name__}: {e}"
+                f"(torch 2.7 + vllm 0.9.0) are installed.\nOriginal error: {detail}"
             ) from e
         return _COSY
 

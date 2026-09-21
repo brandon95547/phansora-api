@@ -30,6 +30,8 @@ from difflib import SequenceMatcher
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
+from phansora.shared import gpu
+
 logger = logging.getLogger("narrava-studio.align")
 
 # THE tokenizer for narration text — storyboard.py imports this rather than keeping its own,
@@ -244,8 +246,29 @@ def _load_model():
         return _MODEL
 
 
+def _on_whisper_gpu():
+    """Hold the shared GPU for a transcription, if this host puts whisper on one.
+
+    The voice engine captures CUDA graphs when it loads, and a decode landing inside that
+    capture breaks the whole process's CUDA context — see shared/gpu.py. Transcription is
+    the guest here: it waits for the load, which takes about ninety seconds, rather than
+    walking into it. On a CPU host this is a no-op.
+    """
+    device = os.getenv("WHISPER_DEVICE", "cpu").strip().lower()
+    on_gpu = device.startswith("cuda") or (device == "auto" and gpu.cuda_available())
+    return gpu.guest("transcription", active=on_gpu)
+
+
 def _heard(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
     """``(word, start, end)`` for everything the model hears, in order."""
+    try:
+        with _on_whisper_gpu():
+            return _heard_on_device(audio_path, language)
+    except gpu.GpuBusy as busy:
+        raise AlignmentUnavailable(str(busy)) from busy
+
+
+def _heard_on_device(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
     model = _load_model()
     segments, _ = model.transcribe(
         audio_path,
@@ -561,29 +584,15 @@ def lyric_words(
     true where the model was unsure of it. Raises rather than returning nothing: a track
     with no voice on it is the user's to fix, and saying so beats an empty caption track.
     """
-    # The same model narration is aligned with. A larger one would hear singing better, but
-    # this is the one the box already runs; a word it is unsure of is flagged instead.
-    model = _load_model()
+    # Guest on the shared GPU, for the reason in _on_whisper_gpu: a decode landing inside
+    # the voice engine's graph capture breaks CUDA for the whole process.
     try:
-        segments, _ = model.transcribe(
-            audio_path,
-            word_timestamps=True,
-            # Off, as in the aligner: captions and scenes are laid on the file's own
-            # timeline, gaps and all. Silero's VAD is a speech detector too, and a voice
-            # under a band is exactly where it misfires.
-            vad_filter=False,
-            language=language or None,
-            # Unlike alignment this wants the best WORDING — nothing corrects it afterwards
-            # — so the wider beam earns its time here.
-            beam_size=5,
-            # A song is the worst case for whisper's prompt cascade: choruses repeat, one
-            # hallucinated line becomes the prompt for the next window, and the lyrics walk
-            # off the recording for a verse. Each window is decoded cold.
-            condition_on_previous_text=False,
-        )
-        pieces = _sung_pieces(segments)  # consuming the generator IS the decode
+        with _on_whisper_gpu():
+            pieces = _sung_pieces(_sung_decode(audio_path, language))
     except AlignmentUnavailable:
         raise
+    except gpu.GpuBusy as busy:
+        raise AlignmentUnavailable(str(busy)) from busy
     except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable file
         raise AlignmentFailed(
             f"The music track could not be read for transcription: {exc}"
@@ -593,6 +602,32 @@ def lyric_words(
         "Lyrics transcribed: %d words, %d unsure", len(result["words"]), sum(result["guessed"])
     )
     return result
+
+
+def _sung_decode(audio_path: str, language: Optional[str]):
+    """Whisper's segment generator for a music track. Consuming it IS the decode.
+
+    The same model narration is aligned with. A larger one would hear singing better, but
+    this is the one the box already runs; a word it is unsure of is flagged instead.
+    """
+    model = _load_model()
+    segments, _ = model.transcribe(
+        audio_path,
+        word_timestamps=True,
+        # Off, as in the aligner: captions and scenes are laid on the file's own timeline,
+        # gaps and all. Silero's VAD is a speech detector too, and a voice under a band is
+        # exactly where it misfires.
+        vad_filter=False,
+        language=language or None,
+        # Unlike alignment this wants the best WORDING — nothing corrects it afterwards —
+        # so the wider beam earns its time here.
+        beam_size=5,
+        # A song is the worst case for whisper's prompt cascade: choruses repeat, one
+        # hallucinated line becomes the prompt for the next window, and the lyrics walk off
+        # the recording for a verse. Each window is decoded cold.
+        condition_on_previous_text=False,
+    )
+    return segments
 
 
 def _sung_pieces(segments) -> List[Tuple[str, float, float, float, bool]]:

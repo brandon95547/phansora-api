@@ -38,6 +38,8 @@ import subprocess
 from threading import Lock
 from typing import List, Optional, Sequence, Tuple
 
+from phansora.shared import gpu
+
 logger = logging.getLogger("narrava-studio.forced-align")
 
 SAMPLE_RATE = 16000
@@ -162,6 +164,21 @@ def align(
     recording, which for a lyric sheet is almost always — see the note at the top of this
     module for what happens without it.
     """
+    # Guest on the shared GPU: the voice engine captures CUDA graphs when it loads, and any
+    # CUDA work from another thread during that capture breaks the process's context for
+    # good (shared/gpu.py). The gate is uncontended outside a load.
+    device = _device()
+    with gpu.guest("forced alignment", active=device.startswith("cuda")):
+        return _align_on_device(audio_path, words, window, total_duration_sec, device)
+
+
+def _align_on_device(
+    audio_path: str,
+    words: Sequence[str],
+    window: Optional[Tuple[float, float]],
+    total_duration_sec: Optional[float],
+    device: str,
+) -> List[Optional[Tuple[float, float, float]]]:
     import torch
 
     model, bundle = _load()
@@ -179,7 +196,6 @@ def align(
             hi = min(hi, float(total_duration_sec))
     wav = _decode(audio_path, lo, hi)
 
-    device = _device()
     with torch.inference_mode():
         chunk = int(_CHUNK_SEC * SAMPLE_RATE)
         parts = []

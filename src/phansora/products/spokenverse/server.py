@@ -41,7 +41,11 @@ from phansora.shared.utils.uploads import (
     safe_stem as _safe_stem,
     save_upload as _save_upload,
 )
-from phansora.products.spokenverse.txt_to_voice.adapters.backend import discover_voices, get_synthesizer
+from phansora.products.spokenverse.txt_to_voice.adapters.backend import (
+    discover_voices,
+    get_synthesizer,
+    unavailable_reason,
+)
 from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
 from phansora.products.spokenverse import voices as voice_store
@@ -95,7 +99,18 @@ if _cors_origins:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True}
+    """Whether this process can actually voice something — not merely whether it is up.
+
+    It used to answer {"ok": true} unconditionally, which is how a wedged voice engine went
+    unnoticed for fifteen hours on 2026-09-20: the engine's CUDA context had been broken by
+    a failed graph capture at startup, every generation 500'd, and the only thing that knew
+    was the traceback in the journal. A restart is the cure, so say so here where a watchdog
+    can read it.
+    """
+    reason = unavailable_reason()
+    if reason:
+        return {"ok": False, "tts": "needs_restart", "detail": reason}
+    return {"ok": True, "tts": "ok"}
 
 
 @app.on_event("startup")
@@ -427,6 +442,16 @@ async def txt_to_audio(
         speed=speed,
         instruct_text=instruct_text,
     )
+
+    # A wedged engine is not this request's fault and will not be fixed by trying: the CUDA
+    # context is gone for the life of the process. Say what fixes it instead of spending
+    # 25-35s on a load that cannot succeed and answering 500.
+    if unavailable_reason():
+        raise HTTPException(
+            status_code=503,
+            detail="The voice service needs to be restarted before it can generate audio.",
+            headers={"Retry-After": "120"},
+        )
 
     priority = admission.priority_from_headers(request.headers)
     try:
