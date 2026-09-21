@@ -732,6 +732,79 @@ def clean_lyrics(text: str) -> str:
     return out.strip()
 
 
+def _measured(
+    audio_path: str,
+    text: str,
+    inferred: List[Tuple[float, float]],
+    *,
+    total_duration_sec: Optional[float] = None,
+) -> Optional[Dict[str, Any]]:
+    """The same words, timed by reading the audio — or None to keep what came from the
+    transcript.
+
+    Never raises. This is an improvement on an answer that already exists, so every way it
+    can fail (no torchaudio, no weights, no GPU memory, an audio file ffmpeg will not open)
+    has the same correct outcome: the caller keeps the inferred timings and the user gets
+    captions. It is logged rather than surfaced, because there is nothing for the user to do
+    about it.
+    """
+    from . import forced_align
+
+    if not forced_align.enabled() or not inferred:
+        return None
+    words = [m.group(0) for m in _WORD_RE.finditer(text)]
+    try:
+        spans = forced_align.align(
+            audio_path,
+            words,
+            # Where the transcript found this sheet. The aligner is otherwise free to place
+            # a word anywhere in the song, and on a sheet covering a third of a track it
+            # took that freedom.
+            window=(min(t[0] for t in inferred), max(t[1] for t in inferred)),
+            total_duration_sec=total_duration_sec,
+        )
+    except Exception as exc:  # noqa: BLE001 — every failure keeps the inferred answer
+        logger.info("Forced alignment unavailable, keeping the inferred timings: %s", exc)
+        return None
+
+    # A word the model's alphabet cannot spell is left for the gap-filler to place between
+    # its MEASURED neighbours. Handing it the time the transcript gave it would look like
+    # the obvious thing and is wrong: the two are different readings of the recording, and
+    # dropping one of whisper's numbers into a run of measured ones puts it out of order as
+    # often as not — which the monotonic pass then resolves by flattening the word to zero
+    # width. Interpolating between two measurements keeps one frame of reference.
+    out: List[Optional[Tuple[float, float]]] = []
+    for span in spans:
+        out.append(None if span is None else (span[0], span[1]))
+
+    # Whether to tell the user to read a cue is decided a LINE at a time. The model's
+    # confidence in a single sung word is too noisy to act on — see forced_align — but over
+    # a line it separates cleanly: on the prod song the lines that match score 0.22 to 0.82
+    # and the four the singer does not sing score 0.038 to 0.081.
+    line_of = [text.count("\n", 0, m.start()) for m in _WORD_RE.finditer(text)]
+    scores: Dict[int, List[float]] = {}
+    for line, span in zip(line_of, spans):
+        scores.setdefault(line, []).append(0.0 if span is None else span[2])
+    weak = {
+        line: forced_align.unsure(sum(v) / len(v)) for line, v in scores.items() if v
+    }
+    guessed = [span is None or weak.get(line, False) for line, span in zip(line_of, spans)]
+
+    cleaned = _fill_gaps(
+        out,
+        total_duration_sec,
+        weights=[len(w) for w in words],
+        paces=[_syllables(w) * _SEC_PER_SYLLABLE for w in words],
+    )
+    if cleaned is None:
+        return None
+    logger.info(
+        "Lyrics measured against the audio: %d words, %d the model could not find",
+        len(cleaned), sum(guessed),
+    )
+    return {"words": cleaned, "guessed": guessed}
+
+
 def lyric_alignment(
     audio_path: str,
     lyrics: str,
@@ -792,6 +865,23 @@ def lyric_alignment(
     )
     if filled is None:
         raise AlignmentFailed("The song produced no usable word timings for these lyrics.")
+
+    # Everything above is inference from a TRANSCRIPT: whisper's word boundaries where it
+    # heard the word, and a guess between them where it did not. Now read the answer off
+    # the audio instead — which is a measurement, and on singing the difference is not
+    # small (see services/forced_align.py). The work above is not wasted: it is what says
+    # WHERE in the recording this sheet sits, and the aligner needs that window or it will
+    # wander off into a later chorus.
+    measured = _measured(
+        audio_path, said_text, filled, total_duration_sec=total_duration_sec,
+    )
+    if measured is not None:
+        return {
+            "text": said_text,
+            "words": measured["words"],
+            "guessed": measured["guessed"],
+            "heard_ratio": ratio,
+        }
     logger.info(
         "Lyrics aligned: %d words, %.0f%% heard directly", len(said), ratio * 100
     )

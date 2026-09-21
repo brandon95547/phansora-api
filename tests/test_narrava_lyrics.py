@@ -225,11 +225,17 @@ def test_narration_still_gets_the_documentary_editor(monkeypatch):
 # different song are refused rather than spread across this one.
 
 
-def _aligned(monkeypatch, lyrics, transcript, *, total=None):
-    """``lyric_alignment`` over a transcript handed in instead of decoded."""
+def _aligned(monkeypatch, lyrics, transcript, *, total=None, measured=None):
+    """``lyric_alignment`` over a transcript handed in instead of decoded.
+
+    The forced aligner is stubbed rather than left to the machine: with torchaudio and the
+    MMS weights present it would really run, and these are about what the TRANSCRIPT path
+    infers. ``measured`` stands in for it where a test wants the other branch.
+    """
     from phansora.products.narrava_studio.services import align
 
     monkeypatch.setattr(align, "lyric_words", lambda *a, **k: transcript)
+    monkeypatch.setattr(align, "_measured", lambda *a, **k: measured)
     return align.lyric_alignment("song.mp3", lyrics, total_duration_sec=total)
 
 
@@ -365,3 +371,97 @@ def test_a_song_that_sings_about_music_keeps_the_line():
     for line in ("The music plays", "Music is my life"):
         out = _transcribe(_seg(*[(f" {w}", i, i + 0.4) for i, w in enumerate(line.split())]))
         assert _tokens(out["text"]) == line.split(), line
+
+
+# ── Reading the audio instead of the transcript ───────────────────────────────
+# Everything above infers timing from what whisper wrote down. The forced aligner measures
+# it off the recording, which on singing is a different order of accuracy — but it is a
+# refinement of an answer that already exists, and it must never be the thing standing
+# between a user and their captions.
+
+
+def test_the_measured_timings_win_when_the_audio_can_be_read(monkeypatch):
+    out = _aligned(
+        monkeypatch,
+        "Take me home",
+        _heard(("Take", 1.0, 1.4), ("me", 1.4, 1.6), ("home", 1.7, 2.3)),
+        total=10.0,
+        measured={"words": [(5.0, 5.4), (5.4, 5.6), (5.7, 6.9)], "guessed": [False, False, True]},
+    )
+    assert out["words"] == [(5.0, 5.4), (5.4, 5.6), (5.7, 6.9)]
+    assert out["guessed"] == [False, False, True]
+    # The transcript still reports how much of the sheet it corroborated, which is what says
+    # whether these are even the same song.
+    assert out["heard_ratio"] == 1.0
+
+
+def test_a_host_that_cannot_read_the_audio_still_gets_captions(monkeypatch):
+    out = _aligned(
+        monkeypatch,
+        "Take me home",
+        _heard(("Take", 1.0, 1.4), ("me", 1.4, 1.6), ("home", 1.7, 2.3)),
+        total=10.0,
+        measured=None,
+    )
+    assert out["words"] == [(1.0, 1.4), (1.4, 1.6), (1.7, 2.3)]
+
+
+def test_every_way_the_aligner_can_fail_keeps_the_inferred_answer(monkeypatch):
+    from phansora.products.narrava_studio.services import align, forced_align
+
+    for boom in (forced_align.ForcedAlignUnavailable("no weights"), RuntimeError("out of memory")):
+        monkeypatch.setattr(forced_align, "enabled", lambda: True)
+        monkeypatch.setattr(forced_align, "align", lambda *a, **k: (_ for _ in ()).throw(boom))
+        assert align._measured("song.mp3", "Take me home", [(1.0, 1.4), (1.4, 1.6), (1.7, 2.3)]) is None
+
+
+def test_a_word_the_alphabet_cannot_spell_keeps_the_time_it_had(monkeypatch):
+    from phansora.products.narrava_studio.services import align, forced_align
+
+    monkeypatch.setattr(forced_align, "enabled", lambda: True)
+    # "1969" has nothing the model's 26 letters can hold, so the aligner hands back None
+    # for it and the transcript's own time stands.
+    monkeypatch.setattr(forced_align, "align",
+                        lambda *a, **k: [(5.0, 5.4, 0.9), None, (6.0, 6.4, 0.9)])
+    out = align._measured("song.mp3", "home 1969 again", [(1.0, 1.4), (1.5, 1.9), (2.0, 2.4)])
+    # Placed between the two words either side of it — which were MEASURED, so the whole
+    # answer stays in one frame of reference — and marked for reading.
+    assert out["words"][0] == (5.0, 5.4) and out["words"][2] == (6.0, 6.4)
+    assert 5.4 <= out["words"][1][0] <= out["words"][1][1] <= 6.0
+    assert out["guessed"] == [False, True, False]
+
+
+def test_the_alphabet_keeps_what_it_can_and_drops_what_it_cannot():
+    from phansora.products.narrava_studio.services import forced_align
+
+    assert forced_align.spellable("Holding") == "holding"
+    assert forced_align.spellable("don’t") == "don't"
+    assert forced_align.spellable("well-worn") == "well-worn"
+    assert forced_align.spellable("1969") == ""
+    assert forced_align.spellable("—") == ""
+
+
+def test_a_line_the_model_could_not_find_is_marked_for_reading():
+    from phansora.products.narrava_studio.services import forced_align
+
+    # Measured on the prod song: lines that match score 0.22-0.82, lines the singer does
+    # not sing score 0.038-0.081.
+    assert forced_align.unsure(0.05) is True
+    assert forced_align.unsure(0.22) is False
+
+
+def test_confidence_is_judged_a_line_at_a_time_not_a_word_at_a_time(monkeypatch):
+    from phansora.products.narrava_studio.services import align, forced_align
+
+    monkeypatch.setattr(forced_align, "enabled", lambda: True)
+    # Line one matches; line two does not. "the" scores badly on BOTH — a short function
+    # word under singing always does — and that must not be what decides either line.
+    monkeypatch.setattr(forced_align, "align", lambda *a, **k: [
+        (1.0, 1.4, 0.80), (1.4, 1.6, 0.02), (1.7, 2.3, 0.75),
+        (3.0, 3.4, 0.04), (3.4, 3.6, 0.03), (3.7, 4.3, 0.05),
+    ])
+    out = align._measured(
+        "song.mp3", "hold the cross\nfull of grace",
+        [(1.0, 1.4)] * 6, total_duration_sec=10.0,
+    )
+    assert out["guessed"] == [False, False, False, True, True, True]
