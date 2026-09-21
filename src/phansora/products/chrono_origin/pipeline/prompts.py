@@ -302,17 +302,106 @@ Return JSON only, ordered chronologically from earliest to latest:
 
 
 EXPAND_MODES = {
+    # The corpus branch at the top exists because a collection has no discovery. Asked
+    # how the Hebrew Bible "first emerged", the mode answered correctly and uselessly:
+    # the Ketef Hinnom amulets and the paper announcing them, two cards for a library of
+    # thirty-nine books, because the prompt described one object with one emergence and
+    # the model had no licence to read the subject as plural. Nothing downstream can
+    # recover from that — the books were never asked for, so no filter dropped them.
     "discovery": {
         "query": "discovered excavation first published announced found record",
         "label": "Path to Discovery",
         "body": """\
+Before searching, determine whether {subject} is a single historical subject or a COMPOSITE
+CORPUS / COLLECTION.
+
+A composite corpus includes subjects such as:
+
+- a collection of independently transmitted books
+- an anthology
+- a canon
+- a library or manuscript collection
+- a multi-part textual tradition
+- a body of writings assembled over time
+
+Examples include the Hebrew Bible, Old Testament, New Testament, Septuagint, Dead Sea Scrolls,
+Nag Hammadi Library, Corpus Hermeticum, Egyptian Book of the Dead, and similar collections.
+
+IF {subject} IS A COMPOSITE CORPUS:
+
+1. Do not treat the entire corpus as though it were one physical document with one discovery
+   event.
+
+2. Identify the principal constituent works or books that make up the corpus.
+
+3. Expand the corpus into those constituent works and investigate each independently.
+
+4. For each constituent work, search for surviving RECORDS showing how that specific work first
+   emerged, was physically attested, discovered, identified, documented, deciphered, published,
+   or became known.
+
+5. Include, when applicable:
+
+   - earliest surviving manuscript or fragment
+   - earliest known physical textual witness
+   - archaeological discovery
+   - excavation record
+   - provenance record
+   - manuscript identification
+   - decipherment
+   - catalog or accession record
+   - first scholarly publication
+   - photographs, drawings, facsimiles, or transcriptions made at the time
+   - important later manuscript discoveries that materially improved knowledge of the text
+
+6. Do not stop after finding evidence for only one or two constituent works. Search
+   independently for every major constituent work.
+
+7. If the corpus contains too many constituent works to investigate fully in a single response,
+   return the individual works as suggested expansions rather than collapsing the corpus into
+   only a few representative examples. Return each such work as a result in its own right, named
+   as the work itself, so it can be expanded in turn.
+
+For example:
+
+Hebrew Bible
+→ Genesis
+→ Exodus
+→ Leviticus
+→ Numbers
+→ Deuteronomy
+→ Joshua
+→ Judges
+→ Samuel
+→ Kings
+→ Isaiah
+→ Jeremiah
+→ Ezekiel
+→ Psalms
+→ Proverbs
+→ Job
+→ and the remaining constituent books
+
+Each constituent work should be treated as having its own manuscript, attestation, discovery,
+and publication history.
+
+IF {subject} IS NOT A COMPOSITE CORPUS:
+
 Using live web search, find the surviving RECORDS of how {subject} first emerged, was
 documented, or became known.
 
-Include whichever of these a subject of this kind actually has: the earliest surviving text,
-account or depiction of it; the first publication announcing it; the report of the excavation,
-observation or experiment that established it; the patent or filing; the notes, drawings or
-photographs made at the time; the accession record; the study that identified or deciphered it.
+For either type of subject, include whichever of these actually exist:
+
+- earliest surviving text, manuscript, inscription, account, or depiction
+- discovery or excavation records
+- first publication announcing the find
+- excavation report
+- the observation or experiment that established it, and the record that reported it
+- patent, filing, or registration
+- notes, drawings, photographs, facsimiles, or transcriptions made at the time
+- catalog or accession record
+- the study that identified, dated, or deciphered it
+- later discoveries that materially improved knowledge of the subject
 
 The emergence itself is an event and cannot be returned; the record that captures it can. Date
 each to when the RECORD was made, not to what it records: an excavation report is dated to its
@@ -323,13 +412,16 @@ summary.
 
 For each result:
 
-- Name the specific thing it records about {subject}.
+- Name the specific thing it records, and the work it records it about.
+- Put the constituent work in `group` when {subject} is a composite corpus, so each record says
+  which work it belongs to; otherwise put the kind of record there.
 - Classify it as `direct_source`, `records`, or `disputed_parallel`.
 - Use the earliest defensible attestation date.
 - Include every qualifying result found, rather than selecting only the strongest examples.
 
-Before returning the results, search separately for each category above; finding one result in a
-category does not complete that category.
+Before returning the results, search separately for each category above, and for a composite
+corpus search separately for each constituent work. Finding one result in a category does not
+complete that category, and finding records for one work does not complete the corpus.
 
 """
         + _JSON_TAIL,
