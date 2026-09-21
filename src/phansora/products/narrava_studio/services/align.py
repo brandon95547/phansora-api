@@ -427,10 +427,22 @@ _UNSURE_PROBABILITY = 0.5
 # music)", "(laughs)", a run of ♪. Right in a subtitle file, wrong here, where they would
 # become caption cards reading "Music" and lyrics for the storyboard to illustrate. A
 # parenthesis is only a note when it names a sound; "(yeah)" is a backing vocal and stays.
+
+# The sounds whisper names when it cannot write words down. Named, because the pattern below
+# looks for them twice: inside brackets, and bare on a line of their own.
+_SOUNDS = (
+    r"music|applause|laugh\w*|instrumental|silence|inaudible|singing|humming|cheer\w*"
+    r"|noise|beat"
+)
 _NOTE_RE = re.compile(
     r"\[[^\]]*\]"
-    r"|\((?=[^)]*\b(?:music|applause|laugh\w*|instrumental|silence|inaudible|singing|"
-    r"humming|cheer\w*|noise|beat)\b)[^)]*\)"
+    r"|\((?=[^)]*\b(?:" + _SOUNDS + r")\b)[^)]*\)"
+    # The SAME note with its brackets missing, which whisper writes just as often: a line
+    # holding nothing but "Music". It is not a lyric — left in, it becomes a caption card
+    # reading "Music" over the intro, which is what the prod song did (one at 16.7s, eleven
+    # seconds before the first word is sung). Only a whole line, so a song that really does
+    # sing the word keeps it.
+    r"|(?m:^[ \t]*(?:" + _SOUNDS + r")[ \t]*\.?[ \t]*$)"
     r"|[♪♫]+",
     re.IGNORECASE,
 )
@@ -642,4 +654,107 @@ def _transcript(pieces, total: Optional[float]) -> Dict[str, Any]:
         "text": text,
         "words": _fill_gaps(_onsets(words, spelled), total),
         "guessed": guessed,
+    }
+
+
+# ── Known lyrics ──────────────────────────────────────────────────────────────
+# Transcribing a song is the fallback, not the goal. A band is the hardest audio whisper
+# meets — on the 4:52 song this was built against it marked 79 of 430 words unsure and
+# wrote "Maskin' on my feet" for a line nobody sang — and a caption card with the wrong
+# words in it reads as a caption in the wrong PLACE, because the viewer is matching what
+# they hear to what they see. So when the user has the lyrics, they are the words, and the
+# recording is only asked WHEN each one is sung.
+#
+# That is the narration path exactly: a known text, matched onto what was heard, with the
+# words in between interpolated. The one difference is that a narration script is read once
+# and a lyric sheet is sung — so this goes through the song transcriber (wider beam, notes
+# stripped, vocal onsets recovered) rather than the aligner's, and it forgives a lower
+# match, because a quarter of a song coming back mis-heard is normal and a quarter of a
+# narration coming back mis-heard means the wrong file was uploaded.
+
+# A lyric sheet is written for a person, so it carries furniture a caption must not show:
+# section markers on their own line, and the blank lines between verses.
+_SECTION_RE = re.compile(r"(?m)^[ \t]*[\[(][^\])]{0,60}[\])][ \t]*$")
+_BLANKS_RE = re.compile(r"\n[ \t]*\n+")
+
+# How much of the sheet has to be found in the singing before the two are the same song.
+# Lower than narration's 0.6 on purpose: measured on the prod song, whisper heard about
+# three quarters of the words it was given well enough to match, and the floor has only one
+# job — catching a sheet pasted for a different track, which lands near zero because
+# SequenceMatcher pays for RUNS of words and stray "the"s do not make runs.
+_MIN_LYRIC_MATCH_RATIO = 0.35
+
+
+def clean_lyrics(text: str) -> str:
+    """A pasted lyric sheet as the words that are actually sung, one line per sung line.
+
+    Line breaks survive, because a lyric line IS a caption card — the caption builder
+    breaks on them (see captions.js). Everything else a sheet carries for the reader goes.
+    """
+    out = _SECTION_RE.sub("", str(text or ""))
+    out = "\n".join(line.strip() for line in out.split("\n"))
+    out = _BLANKS_RE.sub("\n", out)
+    return out.strip()
+
+
+def lyric_alignment(
+    audio_path: str,
+    lyrics: str,
+    *,
+    language: Optional[str] = None,
+    total_duration_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """When each word of a KNOWN lyric sheet is sung on ``audio_path``.
+
+    Returns the same shape ``lyric_words`` does — ``text``, one ``(start, end)`` per
+    WORD_RE match over it, and a positional ``guessed`` — so the caption builder and the
+    storyboard take it without knowing which of the two produced it. ``text`` is the
+    CLEANED sheet rather than the one that was passed in, since that is what the timings
+    are positional over; the caller must caption that text, not its own copy.
+
+    ``guessed`` here means a word the singing did not yield and the gap placed, which is
+    the same thing it means for a narration — not, as in the transcribed path, a word the
+    model was unsure it heard right. Both are "check this one by ear", which is all the
+    editor does with it.
+    """
+    said_text = clean_lyrics(lyrics)
+    said = [normalize(m.group(0)) for m in _WORD_RE.finditer(said_text)]
+    if not said:
+        raise AlignmentFailed(
+            "There are no words in the lyrics saved for this song, so there is nothing to "
+            "time against it."
+        )
+
+    # The transcript, exactly as the no-lyrics path would have used it — notes stripped,
+    # vocal onsets recovered. Those onsets are the timings this hands back for every word
+    # it matches, so the correction has to happen before the matching, not after.
+    heard_transcript = lyric_words(
+        audio_path, language=language, total_duration_sec=total_duration_sec
+    )
+    heard = [
+        (normalize(m.group(0)), float(start), float(end))
+        for m, (start, end) in zip(
+            _WORD_RE.finditer(heard_transcript["text"]), heard_transcript["words"]
+        )
+    ]
+
+    times, ratio = _anchored(said, heard)
+    if ratio < _MIN_LYRIC_MATCH_RATIO:
+        raise AlignmentFailed(
+            f"Only {ratio * 100:.0f}% of the saved lyrics could be found in this song, so "
+            "they do not look like the same track. Check the lyrics on the song, or clear "
+            "them to caption from the singing instead."
+        )
+
+    filled = _fill_gaps(times, total_duration_sec, weights=[len(w) for w in said])
+    if filled is None:
+        raise AlignmentFailed("The song produced no usable word timings for these lyrics.")
+    logger.info(
+        "Lyrics aligned: %d words, %.0f%% heard directly", len(said), ratio * 100
+    )
+    return {
+        "text": said_text,
+        "words": filled,
+        "guessed": [t is None for t in times],
+        "heard_ratio": ratio,
     }

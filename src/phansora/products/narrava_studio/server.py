@@ -420,6 +420,61 @@ async def transcribe_lyrics(
     return {"text": result["text"], "words": result["words"], "guessed": result["guessed"]}
 
 
+@app.post("/lyrics/align")
+async def align_lyrics(
+    file: UploadFile = File(...),
+    full_text: str = Form(...),
+    language: Optional[str] = Form(None),
+    total_duration_sec: Optional[float] = Form(None),
+):
+    """When each word of a song's KNOWN lyrics is sung — /lyrics/transcribe with the words
+    supplied instead of guessed.
+
+    Whisper over a full band mishears freely, and a caption card holding the wrong words
+    reads to the viewer as a card in the wrong place. So once the user has saved the lyrics
+    for a song, only the timing is taken from the recording.
+
+    ``text`` comes back as well as ``words``, and it is NOT the text that was posted: a
+    pasted sheet carries section markers and blank lines that no caption should show, and
+    the timings are positional over the cleaned version. Caption what comes back.
+
+    503 means the host cannot transcribe at all; 422 means these lyrics and this song do
+    not go together, and the user has to fix which is wrong.
+    """
+    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
+    fd, temp_path = tempfile.mkstemp(prefix="narrava_lyrics_", suffix=suffix)
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while chunk := await file.read(1 << 20):
+                out.write(chunk)
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: align.lyric_alignment(
+                temp_path,
+                full_text,
+                language=language,
+                total_duration_sec=total_duration_sec,
+            ),
+        )
+    except align.AlignmentUnavailable as exc:
+        logger.error("Lyrics alignment unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except align.AlignmentFailed as exc:
+        logger.warning("Lyrics alignment failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+    return {
+        "text": result["text"],
+        "words": result["words"],
+        "guessed": result["guessed"],
+        "heard_ratio": result["heard_ratio"],
+    }
+
+
 @app.post("/storyboard", response_model=StoryboardResponse)
 async def build_storyboard(req: StoryboardRequest):
     """AI first visual pass: narration -> media-placeholder scenes at story-flow

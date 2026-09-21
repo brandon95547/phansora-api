@@ -216,3 +216,95 @@ def test_narration_still_gets_the_documentary_editor(monkeypatch):
     text = "The port never sleeps."
     storyboard.build_storyboard(text, 3.0, word_times=[(i * 0.5, i * 0.5 + 0.4) for i in range(4)])
     assert asked["system"] == storyboard._SYSTEM
+
+
+# ── Known lyrics ──────────────────────────────────────────────────────────────
+# The words come from the user's sheet and only the timing comes off the recording, so what
+# these pin down is the join: that the sheet's furniture never reaches a caption, that a
+# word the singing did not yield is still placed and marked, and that lyrics for a
+# different song are refused rather than spread across this one.
+
+
+def _aligned(monkeypatch, lyrics, transcript, *, total=None):
+    """``lyric_alignment`` over a transcript handed in instead of decoded."""
+    from phansora.products.narrava_studio.services import align
+
+    monkeypatch.setattr(align, "lyric_words", lambda *a, **k: transcript)
+    return align.lyric_alignment("song.mp3", lyrics, total_duration_sec=total)
+
+
+def _heard(*words):
+    """A transcript in ``lyric_words``' shape: ``(text, start, end)`` per word."""
+    text = " ".join(w[0] for w in words)
+    return {
+        "text": text,
+        "words": [(w[1], w[2]) for w in words],
+        "guessed": [False] * len(words),
+    }
+
+
+def test_a_sheets_section_markers_and_blank_lines_never_reach_a_caption():
+    from phansora.products.narrava_studio.services import align
+
+    assert align.clean_lyrics(
+        "[Verse 1]\nTake me home\n\n\n(Chorus)\n  where the river runs  \n"
+    ) == "Take me home\nwhere the river runs"
+
+
+def test_the_sheets_words_win_and_the_recording_only_says_when(monkeypatch):
+    # Whisper misheard "river" as "rubber" and "runs" as "once" — what a band does to it.
+    out = _aligned(
+        monkeypatch,
+        "[Verse 1]\nTake me home\nwhere the river runs\n",
+        _heard(("Take", 1.0, 1.4), ("me", 1.4, 1.6), ("home", 1.7, 2.3),
+               ("where", 3.0, 3.2), ("the", 3.2, 3.4), ("rubber", 3.5, 4.0),
+               ("once", 4.1, 4.6)),
+        total=6.0,
+    )
+    # The sheet is captioned, not the transcript — and its line breaks survive, because a
+    # lyric line is a caption card.
+    assert out["text"] == "Take me home\nwhere the river runs"
+    # Every word the singing yielded keeps the second it was sung at.
+    assert out["words"][0] == (1.0, 1.4)
+    assert out["words"][3] == (3.0, 3.2)
+    # The two it did not are placed between the words either side of them, and marked.
+    assert out["guessed"] == [False, False, False, False, False, True, True]
+    assert 3.4 <= out["words"][5][0] <= out["words"][6][0] <= 6.0
+
+
+def test_lyrics_for_a_different_song_are_refused_rather_than_spread_over_this_one(monkeypatch):
+    from phansora.products.narrava_studio.services import align
+
+    with pytest.raises(align.AlignmentFailed) as exc:
+        _aligned(
+            monkeypatch,
+            "totally different words about a harbour at dawn",
+            _heard(("Take", 1.0, 1.4), ("me", 1.4, 1.6), ("home", 1.7, 2.3),
+                   ("tonight", 2.4, 3.0)),
+        )
+    assert "do not look like the same track" in str(exc.value)
+
+
+def test_an_empty_sheet_says_so_instead_of_timing_nothing(monkeypatch):
+    from phansora.products.narrava_studio.services import align
+
+    with pytest.raises(align.AlignmentFailed) as exc:
+        _aligned(monkeypatch, "[Chorus]\n\n", _heard(("Take", 1.0, 1.4)))
+    assert "no words in the lyrics" in str(exc.value)
+
+
+def test_a_bare_sound_name_on_its_own_line_is_not_a_lyric():
+    # Whisper writes "[Music]" over an intro, and writes it WITHOUT the brackets just as
+    # readily — which put a caption card reading "Music" eleven seconds before the first
+    # word of the prod song.
+    out = _transcribe(
+        _seg((" Music", 16.6, 18.0)),
+        _seg((" I'll", 28.1, 28.8), (" wait", 28.8, 29.0)),
+    )
+    assert _tokens(out["text"]) == ["I'll", "wait"]
+    assert out["words"] == [(28.1, 28.8), (28.8, 29.0)]
+
+
+def test_a_song_that_sings_the_word_music_mid_line_keeps_it():
+    out = _transcribe(_seg((" The", 1.0, 1.2), (" music", 1.2, 1.6), (" plays", 1.6, 2.0)))
+    assert _tokens(out["text"]) == ["The", "music", "plays"]
