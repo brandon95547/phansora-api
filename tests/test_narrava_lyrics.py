@@ -308,3 +308,60 @@ def test_a_bare_sound_name_on_its_own_line_is_not_a_lyric():
 def test_a_song_that_sings_the_word_music_mid_line_keeps_it():
     out = _transcribe(_seg((" The", 1.0, 1.2), (" music", 1.2, 1.6), (" plays", 1.6, 2.0)))
     assert _tokens(out["text"]) == ["The", "music", "plays"]
+
+
+def test_a_line_the_transcript_missed_is_not_smeared_across_the_intro(monkeypatch):
+    # Whisper missed the first sung line of the prod song entirely, so its words had nothing
+    # to anchor to — and were spread from second zero across a 28-second instrumental intro,
+    # which put the first caption card on screen through the whole introduction.
+    out = _aligned(
+        monkeypatch,
+        "Take me home tonight\nwhere the river runs",
+        _heard(("where", 30.0, 30.2), ("the", 30.2, 30.4), ("river", 30.5, 31.0),
+               ("runs", 31.1, 31.6)),
+        total=60.0,
+    )
+    assert out["guessed"][:4] == [True, True, True, True]
+    # Placed by how long they take to sing, backwards from the first word that WAS heard —
+    # "Take me home tonight" is five syllables, so a little over a second before 30.0.
+    assert 28.0 <= out["words"][0][0] <= 29.5
+    assert out["words"][3][1] <= 30.0
+    # And the words that were heard keep exactly the seconds they were heard at.
+    assert out["words"][4] == (30.0, 30.2)
+
+
+def test_a_sheet_ending_past_what_was_heard_is_not_stretched_to_the_end_of_the_song(monkeypatch):
+    out = _aligned(
+        monkeypatch,
+        "Take me home\nand the lights go down",
+        _heard(("Take", 10.0, 10.4), ("me", 10.4, 10.6), ("home", 10.7, 11.3)),
+        total=240.0,
+    )
+    # The five words nobody heard follow the singing rather than reaching for 4:00.
+    assert out["words"][-1][1] < 20.0
+    assert out["words"][3][0] >= 11.3
+
+
+def test_a_narration_still_starts_at_the_top_of_its_own_recording():
+    from phansora.products.narrava_studio.services import align
+
+    # No paces: a narration's voice starts when the recording does, so second zero is a real
+    # edge there and the leading run is interpolated from it exactly as before.
+    filled = align._fill_gaps([None, None, (4.0, 4.5)], 10.0, weights=[4, 4, 4])
+    assert filled[0][0] == 0.0
+
+
+def test_a_whole_line_of_stage_direction_is_not_a_lyric():
+    # "Outro music playing" landed at 27.9s on the prod song, right on top of the first line
+    # actually sung.
+    out = _transcribe(
+        _seg((" Outro", 27.8, 28.0), (" music", 28.0, 28.4), (" playing", 28.4, 29.0)),
+        _seg((" Holding", 31.6, 32.1), (" the", 32.1, 32.4), (" cross", 32.4, 32.8)),
+    )
+    assert _tokens(out["text"]) == ["Holding", "the", "cross"]
+
+
+def test_a_song_that_sings_about_music_keeps_the_line():
+    for line in ("The music plays", "Music is my life"):
+        out = _transcribe(_seg(*[(f" {w}", i, i + 0.4) for i, w in enumerate(line.split())]))
+        assert _tokens(out["text"]) == line.split(), line

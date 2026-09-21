@@ -355,6 +355,7 @@ def _fill_gaps(
     times: List[Optional[Tuple[float, float]]],
     total: Optional[float],
     weights: Optional[List[int]] = None,
+    paces: Optional[List[float]] = None,
 ) -> Optional[List[Tuple[float, float]]]:
     """Interpolate the words the transcript missed, then force the result monotonic.
 
@@ -363,6 +364,19 @@ def _fill_gaps(
     evenly — "a" and "extraordinarily" do not take the same breath, and an even split put
     the second half of every interpolated run measurably late. Still crude, still bounded:
     the words on either side are real, so the error can never exceed the gap itself.
+
+    ``paces`` — how long each word plausibly takes to say — closes the one case where that
+    bound does not hold. A run with nothing anchored BEFORE it has only one real edge, and
+    stretching it from second zero of the file is not interpolation, it is invention: on the
+    prod song whisper missed the whole first sung line, and its six words were spread from
+    0.00s across a 28-second instrumental intro, so the first caption card sat on screen
+    through the entire introduction with the karaoke highlight crawling through silence.
+    Given paces, such a run is placed by how long its words take instead — backwards from
+    the first word that WAS heard, and forwards from the last one at the other end. Measured
+    on that song: the run moves from 0.00-32.30 to 29.80-32.30, against a true 28.16-31.68.
+
+    Without ``paces`` the old behaviour stands, which is right for a narration: the voice
+    starts when the recording does, so second zero is a real edge there.
     """
     known = [t for t in times if t]
     if not known:
@@ -382,6 +396,15 @@ def _fill_gaps(
             run_end += 1
         left = out[-1][1] if out else 0.0
         right = times[run_end][0] if run_end < len(times) else tail
+        if paces:
+            # An OPEN edge — the start of the file, or its end — is not evidence of anything,
+            # so it is replaced by where these words can actually have been said. Never past
+            # the anchor at the other end, and never outside the file.
+            span = sum(paces[i:run_end])
+            if not out and run_end < len(times):
+                left = max(0.0, right - span)
+            elif out and run_end >= len(times):
+                right = min(tail, left + span)
         width = max(0.0, right - left)
         share = [max(1, weights[k]) if weights else 1 for k in range(i, run_end)]
         whole = sum(share)
@@ -434,15 +457,27 @@ _SOUNDS = (
     r"music|applause|laugh\w*|instrumental|silence|inaudible|singing|humming|cheer\w*"
     r"|noise|beat"
 )
+# The words whisper reaches for when it is describing a sound rather than writing one down.
+# Deliberately tight, and deliberately without articles or common verbs: they are only ever
+# used to decide that a whole line is a stage direction, so anything a song might sing in
+# the same breath as "music" has to stay out of this list.
+_STAGE = (
+    r"outro|intro|interlude|continues|playing|fades|fading|background|distant|muffled"
+    r"|softly|throughout|offstage|reprise"
+)
 _NOTE_RE = re.compile(
     r"\[[^\]]*\]"
     r"|\((?=[^)]*\b(?:" + _SOUNDS + r")\b)[^)]*\)"
     # The SAME note with its brackets missing, which whisper writes just as often: a line
-    # holding nothing but "Music". It is not a lyric — left in, it becomes a caption card
-    # reading "Music" over the intro, which is what the prod song did (one at 16.7s, eleven
-    # seconds before the first word is sung). Only a whole line, so a song that really does
-    # sing the word keeps it.
-    r"|(?m:^[ \t]*(?:" + _SOUNDS + r")[ \t]*\.?[ \t]*$)"
+    # reading "Music", or "Outro music playing". Left in, those become caption cards — the
+    # prod song produced both, and the second landed at 27.9s, right on top of the first
+    # line actually sung.
+    #
+    # A whole line only, and only when EVERY word in it is a sound or a stage direction.
+    # That is what keeps "The music plays" — a line a song could really sing — while taking
+    # "Outro music playing", which no song sings: "the" and "plays" are in neither list, so
+    # a lyric that merely mentions music survives.
+    r"|(?m:^[ \t]*(?:(?:" + _SOUNDS + r"|" + _STAGE + r")\b[ \t,]*)+\.?[ \t]*$)"
     r"|[♪♫]+",
     re.IGNORECASE,
 )
@@ -746,7 +781,15 @@ def lyric_alignment(
             "them to caption from the singing instead."
         )
 
-    filled = _fill_gaps(times, total_duration_sec, weights=[len(w) for w in said])
+    # A sheet's words are SUNG, so how long each takes is knowable — the same syllable pace
+    # the onset recovery above uses. It is what keeps a run the transcript missed at either
+    # end of the sheet from being stretched across an instrumental intro or outro.
+    filled = _fill_gaps(
+        times,
+        total_duration_sec,
+        weights=[len(w) for w in said],
+        paces=[_syllables(w) * _SEC_PER_SYLLABLE for w in said],
+    )
     if filled is None:
         raise AlignmentFailed("The song produced no usable word timings for these lyrics.")
     logger.info(
