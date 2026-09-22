@@ -1452,20 +1452,37 @@ class TraceOrchestrator:
         #
         # The loose read below stays as the fallback. A forced mime type still leaves a tail
         # cut off at the token cap, and a half-parsed answer is worth more than none.
+        # Asked twice before giving up, escalating to the reasoning model.
+        #
+        # An empty shape throws away research that has already been searched for and paid
+        # for, which is the worst outcome available: the user is told the direction found
+        # nothing when it found everything. It happened on prod with a grounded answer that
+        # listed all nine books correctly — and the same research, resubmitted twenty-six
+        # times across both tiers and with and without its citations, came back with nine
+        # events every single time. So the cause is not the input and is not reproducible on
+        # demand, which makes a retry the honest response: it is one ungrounded call against
+        # a model that has already demonstrated it can do this.
+        shape = expand_extract(
+            req.parent_source_title, answer.text, _format_citations_block(citations),
+        )
         data: Any = None
-        try:
-            data = self.client.reason_json(
-                expand_extract(
-                    req.parent_source_title,
-                    answer.text,
-                    _format_citations_block(citations),
-                ),
-                use_reasoning_model=False,
+        for attempt, reasoning in enumerate((False, True)):
+            try:
+                data = self.client.reason_json(shape, use_reasoning_model=reasoning)
+            except Exception as exc:  # noqa: BLE001 — fall through to the research itself
+                logger.warning(
+                    "Expand: shaping the research failed on attempt %d (%s).", attempt + 1, exc,
+                )
+                data = None
+            if isinstance(data, dict) and data.get("events"):
+                break
+            # Said out loud. This was silent, and a silent empty shape is indistinguishable
+            # from a search that found nothing — which is exactly how it was read.
+            logger.warning(
+                "Expand: the shaping call returned no events on attempt %d over %d characters "
+                "of research for %r.",
+                attempt + 1, len(answer.text or ""), req.parent_source_title,
             )
-        except Exception as exc:  # noqa: BLE001 — fall through to reading the research itself
-            logger.warning("Expand: shaping the research failed (%s); reading it directly.", exc)
-            data = None
-        if not isinstance(data, dict) or not data.get("events"):
             data = None
         for candidate in (
             () if data is not None
