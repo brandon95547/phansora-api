@@ -172,7 +172,8 @@ The evidence dossier shape (same for the origin and every entry):
   "estimated_source_date": <when it was COMPOSED or made; a range is fine, or "Unknown">,
   "earliest_surviving_copy": <oldest physically existing copy + its date + repository if known,
                               or "None identified">,
-  "provenance": <who holds it, under what shelfmark, and how it reached them, or
+  "provenance": <who holds it now, under what identifier — shelfmark, accession,
+                  catalog or lot number, registration — and how it reached them, or
                  "None identified">,
   "contemporary_evidence": <evidence created at the time, or "None identified">,
   "independent_corroboration": <support NOT descending from the same chain, or "None identified">,
@@ -377,12 +378,14 @@ EXPAND_MODES = {
     # comes back as a card, and expanding THAT is the discovery research — which is the
     # non-corpus branch below, unchanged, because a single book is a single subject.
     "discovery": {
-        "query": "discovered excavation first published announced found record",
+        "query": "discovered first published announced found introduced recorded",
         "label": "Path to Discovery",
         "body": """\
 Before searching, decide whether {subject} is a single historical subject or a COMPOSITE
 CORPUS — a collection of independently transmitted works. An anthology, a canon, a
-manuscript library, a multi-part textual tradition, a body of writings assembled over time.
+manuscript library, a multi-part textual tradition, a body of writings assembled over time —
+and equally a catalogue, a product line, a series, a repertoire, a standards family, or any
+other set of separately made things gathered under one name.
 
 IF IT IS A COMPOSITE CORPUS, THE CONSTITUENT WORKS ARE THE WHOLE ANSWER:
 
@@ -413,19 +416,19 @@ documented, or became known.
 Include whichever of these actually exist:
 
 - earliest surviving text, manuscript, inscription, account, or depiction
-- discovery or excavation records
+- discovery, excavation, recovery or first-sighting records
 - first publication announcing the find
-- excavation report
+- the field, laboratory, survey or investigation report
 - the observation or experiment that established it, and the record that reported it
 - patent, filing, or registration
 - notes, drawings, photographs, facsimiles, or transcriptions made at the time
-- catalog or accession record
-- the study that identified, dated, or deciphered it
+- catalog, accession, inventory, registry or listing record
+- the study that identified, dated, authenticated, attributed or deciphered it
 - later discoveries that materially improved knowledge of the subject
 
 The emergence itself is an event and cannot be returned; the record that captures it can. Date
-each to when the RECORD was made, not to what it records: an excavation report is dated to its
-publication.
+each to when the RECORD was made, not to what it records: a report is dated to its publication,
+not to the work or the event it describes.
 
 The goal is to produce a large, complete chronological list with rich metadata, not a brief
 summary.
