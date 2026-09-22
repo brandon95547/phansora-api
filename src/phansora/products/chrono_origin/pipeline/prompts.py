@@ -314,11 +314,30 @@ OUTPUT:
 #
 # The trace pipeline never had the bug because it was always two calls: grounded_search to
 # research, then reason_json to shape. Expand now matches it.
+# The naming rule below is here, in the one template every mode's names come out of, because
+# a name in this product is not a label — it is the next prompt's input. Every name becomes a
+# card, and expanding that card feeds the string back verbatim as `{subject}`. So a qualifier
+# written into a name is not decoration, it is a restriction imposed on every expansion made
+# under it afterwards, by a call that has no way to know the qualifier was ever optional.
+#
+# Measured: a card minted as a collection's name plus a parenthesis naming two of its
+# divisions expanded into the works of those two divisions and stopped — correctly, for the
+# subject it was handed. The corpus branch was not at fault and neither was the model; the
+# scope had been baked into the title one call earlier, where nothing was checking. Renaming
+# the card fixes that card. This fixes the next one.
 _JSON_TAIL = """\
 Return JSON only, ordered chronologically from earliest to latest:
 
 {"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
-"shared":"","url":""}]}"""
+"shared":"","url":""}]}
+
+`name` is the thing's own name and nothing else. Never the name plus a parenthesis, subtitle
+or appositive narrowing it to the part of it that is relevant here. Every name you write
+becomes a card, and expanding that card sends this exact string back as the subject to be
+researched — so a scope written into a name silently becomes a limit on everything found
+under it later, and a collection named for the part of it that matters today comes back
+tomorrow as a collection containing only that part. Put why it is connected in `shared`, and
+which part of it matters in `group`."""
 
 
 EXPAND_EXTRACT_PROMPT = _JSON_TAIL + """
@@ -373,6 +392,11 @@ IF IT IS A COMPOSITE CORPUS, THE CONSTITUENT WORKS ARE THE WHOLE ANSWER:
   its works. Those belong to the individual works, and the reader reaches them by expanding
   the work they want.
 - Do not stop at a representative few. A corpus of forty works returns forty results.
+- The subject may reach you carrying a qualifier — a parenthesis, subtitle or appositive
+  naming some of the collection's divisions, periods or parts. Expand the collection itself
+  anyway. A qualifier records which part the reader arrived through; it does not shrink what
+  the collection contains, and treating it as a limit redefines the collection as whichever
+  part of it someone once named. Use the divisions it names for `group`, not as a filter.
 - `relation` is `direct_source` — the corpus is made of these.
 - `year` is when that work was composed or assembled, as closely as it is known, and null
   where it is not. A work with no defensible date is still returned.
