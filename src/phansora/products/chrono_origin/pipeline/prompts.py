@@ -491,31 +491,361 @@ finding one result in a category does not complete that category.
 
 """,
     },
-    "context": {
-        "query": "contemporary events culture society technology at the time",
-        "label": "Historical Context",
+    "people": {
+        "query": "people person who involved role figure founder maker author",
+        "label": "People",
         "body": """\
-Using live web search, find what was happening AROUND {subject} at the time.
+Using live web search, find the INDIVIDUALS directly associated with {subject} and what each one did.
 
-Include contemporaneous events, the culture and society it sat in, the people and institutions
-involved, the technologies and materials available, the beliefs of the period, and the
-circumstances that explain its place in history.
+Include whichever of these actually exist:
 
-Each result must be a dated source in its own right, and must say how it bears on {subject}.
-Sharing a century is not a relationship.
+- whoever made, wrote, built, designed, founded or commissioned it
+- whoever transmitted, copied, translated, edited, manufactured or distributed it
+- whoever recorded, reported, catalogued, studied, dated or authenticated it
+- whoever opposed, suppressed, disputed, prosecuted or competed with it
+- whoever it is chiefly named for, attributed to, or associated with in later memory
+
+A person qualifies by a stated role, not by being alive nearby. Give the role in each case.
+Where attribution is traditional rather than established, say so rather than dropping the person.
 
 The goal is to produce a large, complete chronological list with rich metadata, not a brief
 summary.
 
 For each result:
 
-- Name the specific way it bears on {subject}.
-- Classify it as `contemporaneous`, `context`, or `direct_source`.
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `records`, `contemporaneous` or `context`.
 - Use the earliest defensible attestation date.
 - Include every qualifying result found, rather than selecting only the strongest examples.
 
-Before returning the results, search separately for events, people, institutions, technologies and
-beliefs; finding one result in a category does not complete that category.
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "events": {
+        "query": "events happened occurred incident episode milestone",
+        "label": "Events",
+        "body": """\
+Using live web search, find the significant EVENTS connected to {subject}.
+
+Include whichever of these actually exist:
+
+- what brought it about, and what it in turn brought about
+- its making, release, publication, enactment, construction or first use
+- disruptions to it: loss, destruction, suppression, banning, decline, revival
+- disputes, trials, controversies, rivalries and conflicts it was the subject of
+- moments it was adopted, imitated, superseded, rediscovered or reinterpreted
+
+An event qualifies by bearing on {subject}, not by sharing its period. Say what the bearing is.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `records`, `contemporaneous` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "chronology": {
+        "query": "date dated dating chronology when year period sequence",
+        "label": "Dates & Chronology",
+        "body": """\
+Using live web search, find the DATING of {subject}: when it belongs, how that is known, and where it is disputed.
+
+Include whichever of these actually exist:
+
+- dated milestones in its own history, earliest to latest
+- the earliest and latest defensible dates for it, and what fixes each
+- COMPETING dates proposed for the same thing, with who proposes each and on what basis
+- relative chronology: what it must postdate or predate, and why
+- the methods that date it — stratigraphy, dendrochronology, radiocarbon, seriation,
+  typology, astronomical retrocalculation, records, style, provenance
+- revisions where a previously accepted date was overturned
+
+Where scholars disagree, return the disagreement as its own result rather than choosing a winner.
+A date with no argument behind it is not a chronology result.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `records`, `contemporaneous` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "places": {
+        "query": "place location where site region route geography",
+        "label": "Places",
+        "body": """\
+Using live web search, find the PLACES that matter to {subject}, and how it moved between them.
+
+Include whichever of these actually exist:
+
+- where it originated, was made, was found, or was first attested
+- where it was kept, held, housed, installed, performed or used
+- routes and movements: trade, migration, pilgrimage, distribution, export, exile, looting
+- places it spread to, was copied in, or took a distinct local form
+- sites excavated, surveyed or documented in connection with it
+
+Name the specific place rather than the region when the research supports it, and say what happened there.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `contemporaneous` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "lineages": {
+        "query": "lineage descent ancestry succession dynasty genealogy transmission",
+        "label": "Genealogies & Lineages",
+        "body": """\
+Using live web search, find the LINES OF DESCENT running into and out of {subject}.
+
+Include whichever of these actually exist:
+
+- ancestry: what it descends from, and what that descended from
+- descendants: what descends from it, including branches that diverged
+- succession: who or what held it, followed it, or inherited it, in order
+- dynasties, houses, families and lines of office where those are the subject
+- intellectual and craft lineages: teacher to student, school to school, workshop to workshop
+- transmission chains: how it passed from hand to hand, copy to copy, or version to version
+
+Give the order of descent, and say what each step rests on. Where a line is claimed rather than
+demonstrated, return it as claimed rather than omitting it.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `probable_influence` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "nations": {
+        "query": "people nation culture civilization kingdom tribe population group",
+        "label": "Nations & Peoples",
+        "body": """\
+Using live web search, find the PEOPLES and COLLECTIVE GROUPS bound up with {subject}.
+
+Include whichever of these actually exist:
+
+- the cultures, civilizations or societies it arose within
+- kingdoms, states, empires, polities and administrations that produced, used or governed it
+- tribes, clans, ethnic groups, communities and diasporas connected to it
+- the populations who made it, used it, carried it, or were affected by it
+- groups that opposed, displaced, absorbed, or were displaced by it
+
+Name the group as the research names it, and say what its relationship to {subject} was.
+A group qualifies by a stated connection, not by geographic proximity.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `contemporaneous` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "beliefs": {
+        "query": "belief concept idea doctrine principle theory symbol meaning",
+        "label": "Beliefs & Concepts",
+        "body": """\
+Using live web search, find the IDEAS bound up with {subject}.
+
+Include whichever of these actually exist:
+
+- doctrines, teachings, tenets and positions it asserts or embodies
+- theories, principles, models and design ideas behind it
+- the worldview or cosmology it assumes, and the framework it argues within
+- symbols, motifs and imagery it carries, and what those were taken to mean
+- ideas it opposed, replaced, or was itself opposed by
+- later reinterpretations that changed what it was understood to mean
+
+State the idea itself, not merely that an idea was involved. Where an interpretation is contested,
+name whose it is.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `probable_influence` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "texts": {
+        "query": "text source document manuscript record edition account writing",
+        "label": "Texts & Sources",
+        "body": """\
+Using live web search, find the WRITTEN AND DOCUMENTARY SOURCES for {subject}.
+
+Include whichever of these actually exist:
+
+- primary texts of it, and the earliest surviving witnesses to those
+- manuscripts, copies, recensions, fragments and inscriptions bearing it
+- documentary evidence: records, registers, accounts, correspondence, filings, specifications
+- editions, translations, critical editions and facsimiles, with their editors
+- contemporary accounts and later testimonies describing it
+- the scholarship that established, dated, deciphered or disputed the text
+
+Distinguish the WORK from a witness to it: a copy is not the composition, and an edition is not
+the copy. Return both, named separately.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `records` or `contemporaneous`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "objects": {
+        "query": "object artifact physical remains monument specimen evidence material",
+        "label": "Objects & Artifacts",
+        "body": """\
+Using live web search, find the PHYSICAL THINGS that evidence {subject}.
+
+Include whichever of these actually exist:
+
+- surviving examples, specimens, prototypes and production pieces
+- monuments, structures, sites and installations
+- inscriptions, marks, stamps, seals, signatures and maker's marks
+- tools, instruments, equipment and machinery used to make or use it
+- artworks, images, depictions and representations of it
+- materials and samples analysed as evidence for it
+
+Say where the object is now and what it evidences. An object qualifies by being physical evidence
+bearing on {subject}, not by depicting a related theme.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `records` or `contemporaneous`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "practices": {
+        "query": "law rule custom practice ritual institution regulation procedure",
+        "label": "Laws, Rules & Practices",
+        "body": """\
+Using live web search, find the RULES AND PRACTICES governing or surrounding {subject}.
+
+Include whichever of these actually exist:
+
+- laws, statutes, decrees, commands, charters and rulings bearing on it
+- regulations, standards, specifications, codes and licensing that constrain it
+- customs, conventions, etiquette and unwritten rules around it
+- rituals, ceremonies, observances and procedures it is used in or requires
+- institutions, offices, guilds, bodies and organisations that administer it
+- prohibitions, restrictions, bans and enforcement against it
+
+State the rule and who it bound. Say whether it was actually enforced where the research says so.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `direct_source`, `contemporaneous` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
+
+""",
+    },
+    "traditions": {
+        "query": "tradition legend prophecy vision oral account folklore story",
+        "label": "Visions, Prophecies & Traditions",
+        "body": """\
+Using live web search, find what is TRANSMITTED ABOUT {subject} as tradition rather than as record.
+
+Include whichever of these actually exist:
+
+- recorded visions, dreams, revelations and experiences associated with it
+- prophecies, predictions and forecasts about it, and whether they were held to be fulfilled
+- oral traditions, folklore and stories transmitted about it
+- legends and founding accounts: how it is said to have begun
+- attributions and claims made about it that the evidence does not establish
+- popular beliefs, rumours and received wisdom about it, and where those arose
+
+Report what is transmitted and who transmits it, without asserting it as fact and without
+dismissing it. Where the record contradicts the tradition, say what the record says.
+Date each to when the tradition is first ATTESTED, not to what it describes.
+
+The goal is to produce a large, complete chronological list with rich metadata, not a brief
+summary.
+
+For each result:
+
+- Name the specific way it bears on {subject}, not merely that it does.
+- Classify it as `records`, `probable_influence`, `disputed_parallel` or `context`.
+- Use the earliest defensible attestation date.
+- Include every qualifying result found, rather than selecting only the strongest examples.
+
+Before returning the results, search separately for each category above. Finding one result in
+a category does not complete that category.
 
 """,
     },

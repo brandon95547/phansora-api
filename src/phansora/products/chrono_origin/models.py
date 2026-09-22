@@ -480,10 +480,28 @@ class TraceResponse(BaseModel):
 # Deliberately subject-agnostic. These have to read the same way for a manuscript, a
 # telescope observation, a treaty, an excavation and a patent, because Chrono Origin
 # does not know which it is looking at.
+# The axes an expansion can be aimed at. Mirrored in prompts.EXPAND_MODES, in the
+# phansora repo's chrono-expand-modes.js and its MODES guard in routes.js, and pinned by a
+# test on each side — a value here with no directive upstream silently degrades to the
+# default, and the user gets the same result whichever axis they pick.
+#
+# "context" (what surrounded it at the time) was removed: it asked the vaguest question of
+# the set and answered it with anything that shared a century. The eleven axes below split
+# that ground into questions with an answerable shape.
 ExpandMode = Literal[
-    "discovery",  # how this first emerged, was documented, became known
-    "earlier",    # what came before it and fed into it
-    "context",    # what surrounded it at the time
+    "discovery",   # how this first emerged, was documented, became known
+    "earlier",     # what came before it and fed into it
+    "people",      # the individuals involved, and each one's role
+    "events",      # significant events connected to it
+    "chronology",  # dating, competing dates, relative sequence
+    "places",      # locations, and movement between them
+    "lineages",    # ancestry, descent, succession, transmission chains
+    "nations",     # cultures, polities, ethnic groups, populations
+    "beliefs",     # doctrines, ideas, symbols, cosmology
+    "texts",       # primary texts, witnesses, editions, documentary sources
+    "objects",     # physical evidence: artifacts, monuments, specimens
+    "practices",   # laws, rules, customs, rituals, institutions
+    "traditions",  # visions, prophecies, oral tradition, legend
 ]
 
 
