@@ -58,6 +58,7 @@ from . import source_policy as sp
 from .dated_list import SIGNIFICANCE_LABEL, parse_dated_list
 from .prompts import (
     RESEARCH_PROMPT,
+    expand_extract,
     EXPAND_PROMPT,
     expand_body,
     expand_mode,
@@ -1433,12 +1434,43 @@ class TraceOrchestrator:
                 duration_seconds=round(time.time() - started, 2),
             )
 
-        # The answer IS the JSON. A grounded call cannot be pinned to a response format
-        # — the API refuses a forced JSON mime type alongside the search tool — so the
-        # shape is a request rather than a guarantee, and reading it has to survive a
-        # markdown fence, prose on either side, and a tail cut off at the token cap.
+        # Shape the research in a SECOND call, which is the only way the first one gets to
+        # search at all.
+        #
+        # A grounded call cannot be pinned to a response format — the API refuses a forced
+        # JSON mime type alongside the search tool — so this used to ask for the shape in
+        # the prompt instead and read whatever came back. That request is complied with:
+        # measured against the live API, the same prompt searches at 1835 characters and
+        # stops searching the moment "Return JSON only" is added, on both model tiers. So
+        # every expansion was answered from the model's recall, and the JSON it produced was
+        # well-formed and unsourced.
+        #
+        # reason_json CAN force the mime type, because it is not grounded and has nothing to
+        # search. It runs on the chat model rather than the reasoning one: turning prose that
+        # is already in the prompt into six flat fields is formatting work, and the research
+        # it is shaping has already been paid for.
+        #
+        # The loose read below stays as the fallback. A forced mime type still leaves a tail
+        # cut off at the token cap, and a half-parsed answer is worth more than none.
         data: Any = None
-        for candidate in (answer.text or "", repair_truncated_json(answer.text or "") or ""):
+        try:
+            data = self.client.reason_json(
+                expand_extract(
+                    req.parent_source_title,
+                    answer.text,
+                    _format_citations_block(citations),
+                ),
+                use_reasoning_model=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — fall through to reading the research itself
+            logger.warning("Expand: shaping the research failed (%s); reading it directly.", exc)
+            data = None
+        if not isinstance(data, dict) or not data.get("events"):
+            data = None
+        for candidate in (
+            () if data is not None
+            else (answer.text or "", repair_truncated_json(answer.text or "") or "")
+        ):
             if not candidate:
                 continue
             try:

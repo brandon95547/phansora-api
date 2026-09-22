@@ -301,12 +301,18 @@ def test_the_three_modes_are_the_ones_the_dialog_offers():
 
 
 def test_every_mode_is_one_body_that_names_its_subject():
-    """One call, so one body — and it has to be about the node, not about nothing.
+    """One body per mode — and it has to be about the node, not about nothing.
 
     The axis used to be split across a search directive and an extraction directive with
     a summary in between, and the summary is where the aim went missing: asked for the
     earlier parallels of a subject, the chain returned old documents from roughly the
     right part of the world and none of the counterparts anyone would name.
+
+    Expanding is two CALLS again, because it has to be — asking one call for JSON stops it
+    searching, measured on both model tiers and in the system channel as well as the prompt
+    (see prompts._JSON_TAIL). What must not come back is the two-DIRECTIVE split that lost
+    the aim: the whole axis still lives in this one body, which the grounded call gets
+    verbatim, and the second call only reshapes what that call already found.
     """
     from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES, expand_body
 
@@ -318,9 +324,10 @@ def test_every_mode_is_one_body_that_names_its_subject():
         filled = expand_body(spec, "Hebrew scriptures")
         assert "Hebrew scriptures" in filled
         assert "{subject}" not in filled
-        # The body ends in the JSON template, and the template's braces must survive:
-        # a body run through .format() instead of .replace() would raise or mangle them.
-        assert '"events"' in filled
+        # The JSON template must NOT be here. It is what stopped the grounded call
+        # searching, and it now belongs to the second call alone.
+        assert '"events"' not in filled, f"{name} still asks for JSON in the searching call"
+        assert "Return JSON only" not in filled, f"{name} still asks for JSON in the searching call"
 
 
 def test_a_body_without_a_subject_still_reads():
@@ -913,3 +920,28 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     urls = {c.url for c in result.citations}
     for i in (0, 8, 39):
         assert f"https://src{i}.example/p" in urls, f"source {i} was dropped"
+
+
+def test_the_shaping_call_reformats_and_does_not_re_aim():
+    """The second call gets the research verbatim and turns it into the six flat fields.
+
+    This is the call that replaced asking the grounded one for JSON. It is allowed to be
+    dumb — that is the point. It must carry the subject and the research it was given, it
+    must carry the template, and it must not contain a directive of its own that could
+    re-interpret the axis, which is how the old split lost the aim.
+    """
+    from phansora.products.chrono_origin.pipeline.prompts import (
+        EXPAND_EXTRACT_PROMPT, expand_extract,
+    )
+
+    for field in ("{subject}", "{research}", "{citations_block}"):
+        assert field in EXPAND_EXTRACT_PROMPT, f"the shaping call never receives {field}"
+    assert '"events"' in EXPAND_EXTRACT_PROMPT
+    # Substituted, never .format()ed — the template's braces are not fields.
+    filled = expand_extract("Hebrew scriptures", "RESEARCH HERE", "CITES HERE")
+    assert "{" in EXPAND_EXTRACT_PROMPT.split("Return JSON only")[1]
+    assert "RESEARCH HERE" in filled and "Hebrew scriptures" in filled
+    assert '"events"' in filled
+    # No second axis. The words that aim a search belong to the body, not to this.
+    for directive in ("live web search", "search separately", "Before searching"):
+        assert directive not in filled, f"the shaping call re-aims with {directive!r}"

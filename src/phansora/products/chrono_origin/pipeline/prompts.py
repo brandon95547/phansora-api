@@ -294,11 +294,49 @@ OUTPUT:
 # discovery record and "records" is the wrong word for a parallel. Every value any mode
 # can emit is mapped in orchestrator._RELATION_WORDS.
 
+# ASKING FOR JSON IS WHAT STOPPED THE SEARCH HAPPENING, so this is no longer part of any
+# mode body — it is the second call's whole job (EXPAND_EXTRACT_PROMPT below).
+#
+# `google_search` is model-ELECTED and cannot be forced, and a prompt that ends "Return JSON
+# only" is complied with: the model goes straight to emitting the shape and never reaches for
+# the tool. MEASURED against the live API, one call per line, same subject:
+#
+#   paragraphs 1-8 of the discovery body   1835 chars   searched
+#   + "Return JSON only ..."               1903 chars   no search
+#   + the template below                   2016 chars   no search
+#
+# So every expand since the feature shipped answered from recall. It looked like a tier
+# problem — flash-lite is cheap and declining a tool is what cheap tiers do — but a plain
+# question grounds on flash-lite and the full expand prompt grounds on NEITHER flash-lite nor
+# flash, which is the opposite result. The client already guarded the API-level version of
+# this (see `json_out`: a forced mime type alongside a search tool is refused); the
+# prompt-level version does the same damage and nothing was watching for it.
+#
+# The trace pipeline never had the bug because it was always two calls: grounded_search to
+# research, then reason_json to shape. Expand now matches it.
 _JSON_TAIL = """\
 Return JSON only, ordered chronologically from earliest to latest:
 
 {"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
 "shared":"","url":""}]}"""
+
+
+EXPAND_EXTRACT_PROMPT = _JSON_TAIL + """
+
+THE SHAPE COMES FIRST AND THE RESEARCH LAST, which is not a matter of taste: with the
+research first and the template trailing after it, this call answered `{}` every time —
+measured, same research blob, both model tiers. Put the template at the top and the same
+blob yields one event per result.
+
+Every distinct result in the research below becomes one event. Add nothing the research does
+not support, and drop nothing it does. Keep each result's own source URL where the research
+gives one.
+
+Research already gathered about "{subject}":
+{research}
+
+{citations_block}
+"""
 
 
 EXPAND_MODES = {
@@ -379,8 +417,7 @@ For each result:
 Before returning the results, search separately for each category above. Finding one result in
 a category does not complete that category.
 
-"""
-        + _JSON_TAIL,
+""",
     },
     # Written by the owner and shipped as supplied. The two things it does that nothing
     # before it did: it refuses to let a parallel be disqualified for lacking a
@@ -425,8 +462,7 @@ father-child, birth, family, teacher-follower, adversary, death, enthronement, a
 relationships or scenes. Include every famous or frequently proposed qualifying comparison found;
 finding one result in a category does not complete that category.
 
-"""
-        + _JSON_TAIL,
+""",
     },
     "context": {
         "query": "contemporary events culture society technology at the time",
@@ -454,8 +490,7 @@ For each result:
 Before returning the results, search separately for events, people, institutions, technologies and
 beliefs; finding one result in a category does not complete that category.
 
-"""
-        + _JSON_TAIL,
+""",
     },
 }
 
@@ -463,6 +498,23 @@ beliefs; finding one result in a category does not complete that category.
 def expand_mode(mode: str) -> dict:
     """The directives for a mode, defaulting to the one the dialog preselects."""
     return EXPAND_MODES.get(mode) or EXPAND_MODES["discovery"]
+
+
+def expand_extract(subject: str, research: str, citations_block: str) -> str:
+    """The shaping call's prompt, with the research already gathered dropped into it.
+
+    `.replace`, not `.format`, for the same reason `expand_body` uses it: this prompt ends in
+    the JSON template, and `.format` reads every brace in that template as a field and raises
+    KeyError on the first one. Which it did — caught by a test, not by production, where the
+    orchestrator's except-and-fall-back would have swallowed it and then read the research
+    prose as JSON, producing an expansion with zero events and no error anywhere.
+    """
+    return (
+        EXPAND_EXTRACT_PROMPT
+        .replace("{subject}", subject or "this subject")
+        .replace("{research}", research or "")
+        .replace("{citations_block}", citations_block or "")
+    )
 
 
 def expand_body(mode: dict, subject: str) -> str:

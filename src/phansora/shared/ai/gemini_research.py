@@ -364,7 +364,10 @@ class GeminiResearchClient:
         logger.warning(
             "Gemini answered without searching on the retry either; returning an unsourced "
             "answer. If this is every trace rather than the odd one, the model tier is the "
-            "cause: set GEMINI_SEARCH_MODEL."
+            "cause, and the first thing to check is whether the prompt asks for JSON: a "
+            "prompt that does is complied with instead of searched, on every tier and in "
+            "the system channel too. Research and shaping have to be separate calls. Only "
+            "once the prompt is clean is GEMINI_SEARCH_MODEL worth reaching for."
         )
         return retry if retry is not None and (retry.text or "").strip() else answer
 
