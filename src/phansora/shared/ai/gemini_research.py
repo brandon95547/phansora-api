@@ -157,21 +157,49 @@ def _strip_fences(text: str) -> str:
     return t.strip()
 
 
+def _wrap(parsed: Any) -> Dict[str, Any]:
+    """A dict for the caller, without throwing away a valid answer that is a list.
+
+    A model asked for ``{"events": [...]}`` returns a BARE ARRAY often enough that
+    discarding it is the most expensive line in this file. It was
+    ``parsed if isinstance(parsed, dict) else {}``: a complete, correct, well-formed
+    answer — measured, 1,939 characters of dated Genesis events — became ``{}``, the
+    caller reported "no new evidence found for this direction", and the user was told a
+    search that had worked had found nothing. Twice, then a third time after a fix aimed
+    at the prompt, because nothing about the failure pointed here.
+
+    The array is the only list-shaped contract the callers have (``events``), and a
+    synthesis answer that came back as a bare list would be wrong under any key, so
+    wrapping costs nothing and recovers everything. Logged, because a model that ignores
+    the shape it was given is worth knowing about even when it no longer breaks anything.
+    """
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        logger.info(
+            "Model returned a bare JSON array of %d item(s) instead of the object it was "
+            "asked for; reading it as `events`.", len(parsed),
+        )
+        return {"events": parsed}
+    return {}
+
+
 def _parse_json(raw: str) -> Dict[str, Any]:
-    """Parse, falling back to the outermost object if there is text around it."""
+    """Parse, falling back to the outermost object or array if there is text around it."""
     text = _strip_fences(raw)
     try:
-        parsed = json.loads(text)
-        return parsed if isinstance(parsed, dict) else {}
+        return _wrap(json.loads(text))
     except json.JSONDecodeError:
         pass
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            parsed = json.loads(text[start : end + 1])
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {}
+    # Both shapes, and whichever starts first wins — hunting only for braces finds the
+    # first OBJECT INSIDE an array and parses `{a},{b},{c}`, which is not JSON at all.
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = text.find(opener), text.rfind(closer)
+        if start != -1 and end > start:
+            try:
+                return _wrap(json.loads(text[start : end + 1]))
+            except json.JSONDecodeError:
+                continue
     return {}
 
 
