@@ -73,6 +73,10 @@ class DatedItem:
     # heard of. Empty when the answer carried nothing but a title and a date, which is
     # a fact about the answer rather than a gap to fill.
     details: Tuple[Tuple[str, str], ...] = ()
+    # Whether this item is a SET of separately made works gathered under one name. Named
+    # rather than left to `details` because it is not display metadata: it selects which
+    # prompt an expansion of this node runs. See models.TimelineEvent.is_collection.
+    is_collection: bool = False
 
 
 # The keys the prompt asks for, and the ones models substitute for them. Read leniently:
@@ -82,6 +86,9 @@ class DatedItem:
 SIGNIFICANCE_LABEL = "Significance"
 
 _TITLE_KEYS = ("title", "item_title", "item", "name")
+# Same leniency for the collection flag: the prompt says "is_collection", and a model
+# that writes "collection" or "is_corpus" instead should not silently mean false.
+_COLLECTION_KEYS = ("is_collection", "collection", "is_corpus", "corpus")
 _DATE_KEYS = ("date", "date_range", "dates", "year", "period")
 # Order matters — this is the order the fields are shown in.
 _DETAIL_KEYS = (
@@ -176,6 +183,7 @@ def _parse_json_items(text: str) -> List[DatedItem]:
                 precision=precision,
                 era_label=era_label,
                 details=_details(lowered),
+                is_collection=_truthy(lowered),
             )
         )
     return items
@@ -297,6 +305,24 @@ def _split_title_and_date(line: str) -> Optional[Tuple[str, str]]:
         if idx > 0:
             return line[:idx].strip(), line[idx + len(sep):].strip()
     return None
+
+
+def _truthy(lowered: dict) -> bool:
+    """The collection flag, however the model spelled it.
+
+    JSON `true` is the usual answer, but "true", "True" and 1 all arrive often enough that
+    reading only `is True` would drop the flag silently — and a collection read as a single
+    subject is the exact failure the flag exists to prevent.
+    """
+    for k in _COLLECTION_KEYS:
+        if k in lowered:
+            v = lowered[k]
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, (int, float)):
+                return v == 1
+            return str(v or "").strip().lower() in {"true", "yes", "1"}
+    return False
 
 
 def parse_date(text: str) -> Tuple[Optional[int], Optional[int], str, Optional[str]]:

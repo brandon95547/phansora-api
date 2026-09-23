@@ -111,11 +111,18 @@ Return the result as a JSON array and nothing else. One object per item, in date
     "origin": "Geographic origin and provenance",
     "material": "Physical material, medium, and language",
     "authorship": "Authorship or source community",
-    "significance": "Historical significance and function"
+    "significance": "Historical significance and function",
+    "is_collection": true or false
   }
 ]
 
-Every object must have "title" and "date". Leave any other field as an empty string when the research does not support it. Do not guess a value to fill a field.
+Every object must have "title" and "date". Leave any other TEXT field as an empty string when the research does not support it. Do not guess a value to fill a field.
+
+"is_collection" is a true/false judgement and must be present on every object. Set it true when the item is a COLLECTION — a set of separately made works gathered under one name: an anthology, a canon, a body of collected letters, a manuscript cache, a series, a catalogue, a product line, a standards family, a repertoire. Set it false for a single work, object, person, place or event.
+
+This decides which question the item is asked later: a collection is expanded into the works it is made of, where a single thing is expanded into the record of how it emerged. A collection marked false hands back manuscripts of itself instead of its contents. Most items are not collections, but any lineage of any length contains several, so do not default the whole list to false.
+
+It is a judgement AT A LEVEL, not a fact about a subject. A canon is a collection of books; one book of it may itself be a collection of poems or letters; a single letter is not a collection. Judge each item as you have named it.
 
 Return as many valid items as the research supports. Do not shorten the list.
 

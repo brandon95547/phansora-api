@@ -1024,6 +1024,10 @@ class TraceOrchestrator:
                 era_label=item.era_label,
                 precision=item.precision,
                 node_type="event",
+                # THE live path. _build_response below reads this too, but it is parked —
+                # a trace runs through here, which is why a flag wired only into the
+                # synthesis path stayed false on every node of a real trace.
+                is_collection=item.is_collection,
                 attribution="not_applicable",
                 source_title=item.title,
                 claim=_claim_of(item),
