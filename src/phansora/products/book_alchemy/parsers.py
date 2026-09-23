@@ -489,8 +489,17 @@ def _read(path: Optional[str]) -> str:
     return Path(path).read_text(encoding="utf-8", errors="ignore")
 
 
+# Control characters that are not \t or \n. Postgres text and jsonb both REFUSE \x00 —
+# "invalid byte sequence for encoding UTF8: 0x00" — and a PDF or DOCX extractor emits them
+# readily, so a book that parsed perfectly would fail at the insert with an error naming
+# an encoding rather than a page. The rest go with it: they are not prose, nothing
+# downstream renders them, and leaving them in means the next one surprises someone.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 def _normalize_ws(text: str) -> str:
-    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _CONTROL_CHARS.sub("", text or "")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     # Join hyphenated line breaks, collapse intra-paragraph single newlines into
     # spaces, but keep blank-line paragraph breaks.
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)

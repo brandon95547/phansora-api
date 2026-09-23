@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Optional
 
 import asyncpg
@@ -276,7 +277,7 @@ async def insert_chunks(project_id: int, chunks: list[dict]) -> None:
         """,
         [
             (
-                project_id, c["ordinal"], c["text"], c.get("chapter"), c.get("section"),
+                project_id, c["ordinal"], _scrub(c["text"]), c.get("chapter"), c.get("section"),
                 c.get("page_start"), c.get("page_end"), c.get("char_start"), c.get("char_end"),
                 # Default True: a chunk from before this column existed, or from a
                 # path that does not classify, is material until proven otherwise.
@@ -703,6 +704,40 @@ async def list_phases_for_projects(project_ids: list[int]) -> list[asyncpg.Recor
 
 
 # --------------------------------------------------------------- util
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _scrub(value: str) -> str:
+    """Text Postgres will accept.
+
+    A NUL is not storable in `text` OR in `jsonb`, and the error it raises names an
+    encoding rather than the column or the book — so the parse boundary strips these
+    (parsers._normalize_ws) and this strips them again. Two layers on purpose: a path that
+    reaches the database without going through a parser is exactly the one nobody thinks
+    to check, and the cost here is a regex over strings already being serialised.
+    """
+    return _CONTROL_CHARS.sub("", value or "")
+
+
+def _scrub_value(value: Any) -> Any:
+    """Scrub every string inside a structure, before it is serialised.
+
+    Not after: json.dumps turns a NUL into the six-character ESCAPE `\\u0000`, which
+    _scrub cannot see because there is no control byte left to match — and Postgres
+    rejects that escape in jsonb exactly as it rejects the raw byte ("unsupported Unicode
+    escape sequence"). Stripping the escape out of the serialised text instead would also
+    corrupt a legitimate literal backslash-u-0000 in a book, so the cleaning happens while
+    these are still Python strings and the question is unambiguous.
+    """
+    if isinstance(value, str):
+        return _scrub(value)
+    if isinstance(value, dict):
+        return {k: _scrub_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub_value(v) for v in value]
+    return value
+
+
 def _json(value: Any) -> str:
     import json
-    return json.dumps(value, ensure_ascii=False)
+    return json.dumps(_scrub_value(value), ensure_ascii=False)
