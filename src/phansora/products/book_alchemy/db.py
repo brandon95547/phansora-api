@@ -277,7 +277,8 @@ async def insert_chunks(project_id: int, chunks: list[dict]) -> None:
         """,
         [
             (
-                project_id, c["ordinal"], _scrub(c["text"]), c.get("chapter"), c.get("section"),
+                project_id, c["ordinal"], _scrub(c["text"]),
+                _scrub_opt(c.get("chapter")), _scrub_opt(c.get("section")),
                 c.get("page_start"), c.get("page_end"), c.get("char_start"), c.get("char_end"),
                 # Default True: a chunk from before this column existed, or from a
                 # path that does not classify, is material until proven otherwise.
@@ -717,6 +718,11 @@ def _scrub(value: str) -> str:
     to check, and the cost here is a regex over strings already being serialised.
     """
     return _CONTROL_CHARS.sub("", value or "")
+
+
+def _scrub_opt(value: Optional[str]) -> Optional[str]:
+    """_scrub for a column that is allowed to be NULL, keeping None as None."""
+    return None if value is None else _scrub(value)
 
 
 def _scrub_value(value: Any) -> Any:

@@ -128,7 +128,14 @@ async def _fail(project_id: int, proj: dict, message: str) -> None:
     await db.set_project(
         project_id, status="failed", phase="failed", stage="Failed", error_message=detail,
     )
-    _cleanup_source(proj)
+    # The upload survives a failure that happened before parsing stored anything.
+    # A `failed` row is not really terminal — it is resumed by flipping status and
+    # phase back — but only while the file it was made from still exists, and a
+    # project that trips in its first phase is failed outright with no retry. That
+    # combination is what turned a one-line NUL-byte bug into a lost book and a
+    # re-upload. Once chunks exist, nothing opens the source again: delete it then.
+    if await db.count_chunks(project_id) > 0:
+        _cleanup_source(proj)
 
 
 async def _heartbeat(project_id: int) -> None:
@@ -159,9 +166,10 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
             return
         proj = dict(row)
         if proj["phase"] in pipeline.IDLE_PHASES:
-            # Done, failed, or parked between phases. All three are finished with
-            # the source file.
-            _cleanup_source(proj)
+            # Done, failed, or parked between phases — all finished with the source
+            # file, except the failure that never got as far as a chunk. See _fail.
+            if proj["phase"] != "failed" or await db.count_chunks(project_id) > 0:
+                _cleanup_source(proj)
             return
         if not cleaned and proj["phase"] not in ("uploaded", "parse"):
             _cleanup_source(proj)
