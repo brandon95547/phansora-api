@@ -457,7 +457,51 @@ name. ITS CONSTITUENT WORKS ARE THE WHOLE ANSWER:
   contents if you are unsure of them.
 
 """,
+        # The FALLBACK body, and it asks the model to decide for itself — restored
+        # verbatim from 4b54f9b because it worked.
+        #
+        # 4e6a9ca replaced it with a hard dependency on `is_collection`, and that was a
+        # regression the moment the flag was not set: a node minted before the field
+        # existed, a node served from a cached trace, or a synthesis that answered false
+        # all took this branch and returned manuscripts OF a collection instead of its
+        # contents. A board that had been expanding the Hebrew Bible into Genesis, Exodus
+        # and the rest stopped doing so.
+        #
+        # So the flag is now a SHORT-CUT, not a precondition. Known true -> collection_body,
+        # which states it and skips the question. Anything else -> this, which asks the
+        # question the way it always did and cannot be wrong-footed by an absent flag.
+        # The cost is that an unflagged expansion pays for the longer body again, which is
+        # the correct trade: the saving was never worth the failure it bought.
         "body": """\
+Before searching, decide whether {subject} is a single historical subject or a COMPOSITE
+CORPUS — a collection of independently transmitted works. An anthology, a canon, a
+manuscript library, a multi-part textual tradition, a body of writings assembled over time —
+and equally a catalogue, a product line, a series, a repertoire, a standards family, or any
+other set of separately made things gathered under one name.
+
+IF IT IS A COMPOSITE CORPUS, THE CONSTITUENT WORKS ARE THE WHOLE ANSWER:
+
+- Return one result per principal constituent work, named as the work itself.
+- Return nothing else. No manuscripts, discoveries, excavations, codices or publications: a
+  corpus has no discovery of its own, and a manuscript of the whole collection is not one of
+  its works. Those belong to the individual works, and the reader reaches them by expanding
+  the work they want.
+- Do not stop at a representative few. A corpus of forty works returns forty results.
+- The subject may reach you carrying a qualifier — a parenthesis, subtitle or appositive
+  naming some of the collection's divisions, periods or parts. Expand the collection itself
+  anyway. A qualifier records which part the reader arrived through; it does not shrink what
+  the collection contains, and treating it as a limit redefines the collection as whichever
+  part of it someone once named. Use the divisions it names for `group`, not as a filter.
+- `relation` is `direct_source` — the corpus is made of these.
+- `year` is when that work was composed or assembled, as closely as it is known, and null
+  where it is not. A work with no defensible date is still returned.
+- `group` is the division of the corpus the work belongs to when the corpus has divisions,
+  and the corpus's own name when it does not.
+- Listing what a corpus is made of does not need a live search. Search only to confirm the
+  contents if you are unsure of them.
+
+IF {subject} IS NOT A COMPOSITE CORPUS:
+
 Using live web search, find the surviving RECORDS of how {subject} first emerged, was
 documented, or became known.
 
