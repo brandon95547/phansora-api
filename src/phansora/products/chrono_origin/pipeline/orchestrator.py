@@ -62,6 +62,7 @@ from .prompts import (
     EXPAND_PROMPT,
     expand_body,
     expand_mode,
+    part_of_line,
     SYNTHESIZE_PROMPT,
 )
 from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_json
@@ -1409,6 +1410,7 @@ class TraceOrchestrator:
         prompt = EXPAND_PROMPT.format(
             parent_source_title=req.parent_source_title,
             mode_query=mode["query"],
+            part_of_line=part_of_line(req.parent_source_title, req.part_of),
             context_line=(
                 f"\nThe subject is understood in this context: {req.context}\n"
                 if req.context else ""

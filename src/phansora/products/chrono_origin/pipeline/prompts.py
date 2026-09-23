@@ -14,6 +14,8 @@ could not talk itself up.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 # Expanding used to carry a tier hierarchy of its own — five ranks of source, with
 # "tiers 4-5 are leads, never the basis of a claim" under them. It was removed
 # deliberately: on an axis that asks for earlier parallels, much of the honest material
@@ -941,6 +943,34 @@ a category does not complete that category.
 }
 
 
+# A node reached by expanding another one is named as the CHILD knows itself, and that name
+# is often ambiguous on its own: "Genesis" is a book, a band, a console and a Sega magazine.
+# The board knows what it came out of, so the prompt says so.
+#
+# The second sentence is not padding. Naming a parent without it sends the model off to
+# research the PARENT — the failure behind e66ff44, where a corpus expansion came back as
+# whole-corpus objects wearing book names. "Research X itself, not Y" pins the subject.
+#
+# Only the IMMEDIATE parent. The trace root would be noise and worse than noise: expanding
+# an unrelated object inside a trace of Jesus Christ should not tell the model to look for
+# one connected to Jesus Christ.
+_PART_OF_LINE = ('\n"{subject}" here means the one that is part of {part_of} — not any other '
+                 'thing of that name. Research {subject} itself, not {part_of}.\n')
+
+
+def part_of_line(subject: str, part_of: Optional[str]) -> str:
+    """The disambiguating line, or nothing when this node has no parent.
+
+    Empty for a node that came from the trace itself, which has only the trace title above
+    it — and a trace title is a subject, not a container.
+    """
+    subject = (subject or "").strip()
+    parent = (part_of or "").strip()
+    if not parent or not subject or parent.casefold() == subject.casefold():
+        return ""
+    return _PART_OF_LINE.replace("{subject}", subject).replace("{part_of}", parent)
+
+
 def expand_mode(mode: str) -> dict:
     """The directives for a mode, defaulting to the one the dialog preselects."""
     return EXPAND_MODES.get(mode) or EXPAND_MODES["discovery"]
@@ -1022,6 +1052,6 @@ def format_existing_block(existing) -> str:
 # distinct from "Mercury" the god. Empty when the box is.
 EXPAND_PROMPT = """\
 Search query: "{parent_source_title}" {mode_query}
-{context_line}
+{part_of_line}{context_line}
 {mode_body}
 """

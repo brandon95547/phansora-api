@@ -553,6 +553,14 @@ class ExpandRequest(BaseModel):
         default=False,
         description="True when the item being expanded is a collection of separately transmitted works.",
     )
+    # What this node was expanded OUT of, when it was. Disambiguates a child whose name is
+    # ambiguous alone — "Genesis" is a book, a band and a games console. Absent for a node
+    # that came from the trace itself.
+    part_of: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Title of the node this one was expanded from, to disambiguate its name.",
+    )
     # What the board already shows. An expansion that returns the step sitting next to
     # the anchor has cost a call and added nothing, and the user cannot tell the
     # difference from a card that looks new until they read it.
