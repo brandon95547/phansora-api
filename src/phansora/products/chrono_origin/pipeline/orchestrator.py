@@ -62,7 +62,6 @@ from .prompts import (
     EXPAND_PROMPT,
     expand_body,
     expand_mode,
-    format_existing_block,
     SYNTHESIZE_PROMPT,
 )
 from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_json
@@ -1403,7 +1402,6 @@ class TraceOrchestrator:
         # The axis this expansion was asked for. Unaimed, an expansion mostly returns
         # the anchor's own neighbours — which are already on the board.
         mode = expand_mode(req.mode)
-        existing_block = format_existing_block(req.existing)
 
         # One call: it searches and answers in the same breath, so the body below is the
         # whole instruction. There is no summary in the middle to lose half of it, which
@@ -1415,7 +1413,6 @@ class TraceOrchestrator:
                 f"\nThe subject is understood in this context: {req.context}\n"
                 if req.context else ""
             ),
-            existing_block=existing_block,
             mode_body=expand_body(mode, req.parent_source_title, req.parent_is_collection),
         )
         try:

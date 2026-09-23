@@ -654,37 +654,27 @@ a category does not complete that category.
 """,
     },
     "chronology": {
-        "query": "date dated dating chronology when year period sequence",
+        # Two lines, after the six-category version returned an essay.
+        #
+        # It asked for competing dates, relative chronology, the METHODS that date the
+        # subject, and revisions where a date was overturned — every one of which is an
+        # ARGUMENT rather than a thing. The research call answered them well: 6,131 and
+        # 7,301 characters on Genesis, the Mesopotamian dependency, palaeographic dating
+        # of the Qumran fragments, the Albright-to-Van-Seters revision. Then the shaping
+        # call found no discrete items with names and years in any of it and returned
+        # nothing twice, which the user was told as "no evidence found for this
+        # direction" — the opposite of what had happened.
+        #
+        # Every other axis asks for THINGS (people, places, texts, objects) and things
+        # become cards. This one asks for events with dates, and nothing else.
+        "query": "chronology timeline date order events sequence",
         "label": "Dates & Chronology",
         "body": """\
-Using live web search, find the DATING of {subject}: when it belongs, how that is known, and where it is disputed.
+Using live web search, list the chronology of {subject} in date order, oldest first.
 
-Include whichever of these actually exist:
+One entry per event: the date, and one line on what happened.
 
-- dated milestones in its own history, earliest to latest
-- the earliest and latest defensible dates for it, and what fixes each
-- COMPETING dates proposed for the same thing, with who proposes each and on what basis
-- relative chronology: what it must postdate or predate, and why
-- the methods that date it — stratigraphy, dendrochronology, radiocarbon, seriation,
-  typology, astronomical retrocalculation, records, style, provenance
-- revisions where a previously accepted date was overturned
-
-Where scholars disagree, return the disagreement as its own result rather than choosing a winner.
-A date with no argument behind it is not a chronology result.
-
-The goal is to produce a large, complete chronological list with rich metadata, not a brief
-summary.
-
-For each result:
-
-- Name the specific way it bears on {subject}, not merely that it does.
-- Classify it as `records`, `contemporaneous` or `context`.
-- Use the earliest defensible attestation date.
-- Include every qualifying result found, rather than selecting only the strongest examples.
-
-Before returning the results, search separately for each category above. Finding one result in
-a category does not complete that category.
-
+Return every event the research supports, rather than a selection of the notable ones.
 """,
     },
     "places": {
@@ -993,6 +983,11 @@ def expand_body(mode: dict, subject: str, is_collection: bool = False) -> str:
 def format_existing_block(existing) -> str:
     """What the board already shows, so an expansion can avoid handing it back.
 
+    NO LONGER WIRED INTO EXPAND_PROMPT. The block rode on every expand call and could run
+    to 150 titles, and the client filters duplicates by title on arrival anyway ("told not
+    to repeat; enforced anyway"), so it was paying tokens for a guarantee it already had.
+    Kept, with its tests, because putting it back is one placeholder.
+
     The most common way an expansion wastes a call is by returning the anchor's own
     neighbour — ask for material around Paul's letters and the gospels come back, which
     are already the next step along. Naming them is cheaper than any instruction about
@@ -1028,9 +1023,5 @@ def format_existing_block(existing) -> str:
 EXPAND_PROMPT = """\
 Search query: "{parent_source_title}" {mode_query}
 {context_line}
-ALREADY ON THE TIMELINE. These are shown to the user already, so returning one costs a
-call and shows a card that has already been read. Do not return any of these:
-{existing_block}
-
 {mode_body}
 """
