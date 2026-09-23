@@ -186,6 +186,20 @@ The evidence dossier shape (same for the origin and every entry):
   "missing_piece": <the single absent piece of evidence that most limits this>
 }}
 
+COLLECTIONS. For every item, decide whether it is a single thing or a COLLECTION — a set of
+separately made works gathered under one name. An anthology, a canon, a body of collected
+letters, a manuscript cache, a series, a catalogue, a product line, a standards family, a
+repertoire. Mark each of those `is_collection: true`. Most items are not collections, but
+collections are common enough in any lineage that assuming false is wrong.
+
+This is not cosmetic. A collection is asked a different question when it is expanded: it
+returns the works it is made of, where a single thing returns the record of how it emerged.
+A collection marked false hands back manuscripts OF itself instead of its contents.
+
+It is a judgement AT A LEVEL, not a fact about a subject. A canon is a collection of books; a
+single book of it may itself be a collection of poems or letters; one letter is not a
+collection. Judge each item as it is named here.
+
 Produce a JSON object:
 {{
   "origin": {{
@@ -194,10 +208,9 @@ Produce a JSON object:
     "era_label": <string or null>,
     "precision": "exact|year|decade|century|millennium|era|unknown",
     "node_type": <one of the labels above>,
-    "is_collection": <true only if this item is itself a set of separately made works
-                      gathered under one name — an anthology, a canon, a product line, a
-                      series, a standards family; false for a single work, object, person,
-                      place or event. Expanding a collection asks different questions>,
+    "is_collection": <true when this item is a set of separately made works gathered under
+                      one name, per COLLECTIONS above; false for a single work, object,
+                      person, place or event>,
     "attribution": "established|attributed|disputed|anonymous|not_applicable",
     "source_title": <named as a reader would look for it>,
     "summary": <2-4 sentences: what this is, as the research described it>,
@@ -334,9 +347,11 @@ _JSON_TAIL = """\
 Return JSON only, ordered chronologically from earliest to latest:
 
 {"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
-"shared":"","url":"","is_collection":<true only if this item is itself a set of separately
-made works gathered under one name — an anthology, a canon, a product line, a series, a
-standards family; false for a single work, object, person, place or event>}]}
+"shared":"","url":"","is_collection":<true when this item is a set of separately made works
+gathered under one name — an anthology, a canon, collected letters, a manuscript cache, a
+series, a catalogue, a product line, a standards family; false for a single work, object,
+person, place or event. A collection expands into its contents, so this decides which
+question the next call asks>}]}
 
 `name` is the thing's own name and nothing else. Never the name plus a parenthesis, subtitle
 or appositive narrowing it to the part of it that is relevant here. Every name you write
