@@ -355,20 +355,22 @@ OUTPUT:
 _JSON_TAIL = """\
 Return JSON only, ordered chronologically from earliest to latest:
 
-{"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
-"shared":"","url":"","is_collection":<true when this item is a set of separately made works
-gathered under one name — an anthology, a canon, collected letters, a manuscript cache, a
-series, a catalogue, a product line, a standards family; false for a single work, object,
-person, place or event. A collection expands into its contents, so this decides which
-question the next call asks>}]}
+{"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"","shared":"","url":"","is_collection":false}]}
 
-`name` is the thing's own name and nothing else. Never the name plus a parenthesis, subtitle
-or appositive narrowing it to the part of it that is relevant here. Every name you write
-becomes a card, and expanding that card sends this exact string back as the subject to be
-researched — so a scope written into a name silently becomes a limit on everything found
-under it later, and a collection named for the part of it that matters today comes back
-tomorrow as a collection containing only that part. Put why it is connected in `shared`, and
-which part of it matters in `group`."""
+One object per result in the research. If the research contains results, the list is never
+empty.
+
+`name` — what the result is called. Something that HAS a name takes its own name and nothing
+else: never the name plus a parenthesis, subtitle or appositive narrowing it to the part
+relevant here, because expanding a card sends this exact string back as the next subject to
+be researched, and a scope written into a name limits everything found under it later. A
+result that is an EVENT rather than a named thing takes a short phrase saying what happened.
+
+`shared` — why it is connected. `group` — which part or category it belongs to.
+
+`is_collection` — true when the result is itself a set of separately made works gathered
+under one name: an anthology, a canon, collected letters, a series, a catalogue, a product
+line, a standards family. False for a single work, object, person, place or event."""
 
 
 EXPAND_EXTRACT_PROMPT = _JSON_TAIL + """
