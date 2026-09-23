@@ -194,6 +194,10 @@ Produce a JSON object:
     "era_label": <string or null>,
     "precision": "exact|year|decade|century|millennium|era|unknown",
     "node_type": <one of the labels above>,
+    "is_collection": <true only if this item is itself a set of separately made works
+                      gathered under one name — an anthology, a canon, a product line, a
+                      series, a standards family; false for a single work, object, person,
+                      place or event. Expanding a collection asks different questions>,
     "attribution": "established|attributed|disputed|anonymous|not_applicable",
     "source_title": <named as a reader would look for it>,
     "summary": <2-4 sentences: what this is, as the research described it>,
@@ -330,7 +334,9 @@ _JSON_TAIL = """\
 Return JSON only, ordered chronologically from earliest to latest:
 
 {"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"",
-"shared":"","url":""}]}
+"shared":"","url":"","is_collection":<true only if this item is itself a set of separately
+made works gathered under one name — an anthology, a canon, a product line, a series, a
+standards family; false for a single work, object, person, place or event>}]}
 
 `name` is the thing's own name and nothing else. Never the name plus a parenthesis, subtitle
 or appositive narrowing it to the part of it that is relevant here. Every name you write
@@ -359,6 +365,29 @@ Research already gathered about "{subject}":
 """
 
 
+# What an axis other than discovery does when the subject is a collection.
+#
+# The failure it prevents: ask a collection for People and the answer spans everyone who
+# touched any member of it — for a canon, a cast list fifteen centuries wide with no frame.
+# That is the same shapelessness that got "Historical Context" removed. The fix is not to
+# block the axis, which would also block the axes that are BETTER at collection level (a
+# manuscript witnesses the whole collection, not one book of it); it is to say which level
+# to answer at.
+COLLECTION_RULE = """\
+{subject} is a COLLECTION — a set of independently transmitted works gathered under one
+name. ANSWER AT THE LEVEL OF THE COLLECTION.
+
+- Return what belongs to the collection as a whole: how it was assembled, who assembled,
+  transmitted or governed it, where and under what rules, and what it is held to be.
+- Do NOT enumerate what belongs to a single member of it. Those are reached by expanding
+  that member, and returned here they are a list with no frame — the members of a large
+  collection can span centuries and disagree with each other.
+- Where something is a witness to, or a property of, the WHOLE collection, say so. Where it
+  is the clearest instance and comes from one member, name the member it comes from.
+
+"""
+
+
 EXPAND_MODES = {
     # The corpus branch at the top exists because a collection has no discovery. Asked how
     # the Hebrew Bible "first emerged", the mode answered correctly and uselessly: the Ketef
@@ -380,36 +409,40 @@ EXPAND_MODES = {
     "discovery": {
         "query": "discovered first published announced found introduced recorded",
         "label": "Path to Discovery",
-        "body": """\
-Before searching, decide whether {subject} is a single historical subject or a COMPOSITE
-CORPUS — a collection of independently transmitted works. An anthology, a canon, a
-manuscript library, a multi-part textual tradition, a body of writings assembled over time —
-and equally a catalogue, a product line, a series, a repertoire, a standards family, or any
-other set of separately made things gathered under one name.
-
-IF IT IS A COMPOSITE CORPUS, THE CONSTITUENT WORKS ARE THE WHOLE ANSWER:
+        # Two bodies, chosen by `is_collection` rather than by the model.
+        #
+        # This branch used to open "Before searching, decide whether {subject} is a single
+        # historical subject or a COMPOSITE CORPUS", and the model re-decided on every call.
+        # It did not decide the same way twice: the same Hebrew Bible card returned nine
+        # works in one run and eleven in the next, eleven minutes apart. The judgement is
+        # now made once, when the node is minted, and carried on the node — so this prompt
+        # states it rather than asking for it, and every subject stops paying for the
+        # paragraph that posed the question.
+        "collection_body": """\
+{subject} is a COLLECTION — a set of independently transmitted works gathered under one
+name. ITS CONSTITUENT WORKS ARE THE WHOLE ANSWER:
 
 - Return one result per principal constituent work, named as the work itself.
 - Return nothing else. No manuscripts, discoveries, excavations, codices or publications: a
-  corpus has no discovery of its own, and a manuscript of the whole collection is not one of
+  collection has no discovery of its own, and a manuscript of the whole collection is not one of
   its works. Those belong to the individual works, and the reader reaches them by expanding
   the work they want.
-- Do not stop at a representative few. A corpus of forty works returns forty results.
+- Do not stop at a representative few. A collection of forty works returns forty results.
 - The subject may reach you carrying a qualifier — a parenthesis, subtitle or appositive
   naming some of the collection's divisions, periods or parts. Expand the collection itself
   anyway. A qualifier records which part the reader arrived through; it does not shrink what
   the collection contains, and treating it as a limit redefines the collection as whichever
   part of it someone once named. Use the divisions it names for `group`, not as a filter.
-- `relation` is `direct_source` — the corpus is made of these.
+- `relation` is `direct_source` — the collection is made of these.
 - `year` is when that work was composed or assembled, as closely as it is known, and null
   where it is not. A work with no defensible date is still returned.
-- `group` is the division of the corpus the work belongs to when the corpus has divisions,
-  and the corpus's own name when it does not.
-- Listing what a corpus is made of does not need a live search. Search only to confirm the
+- `group` is the division of the collection the work belongs to when the collection has divisions,
+  and the collection's own name when it does not.
+- Listing what a collection is made of does not need a live search. Search only to confirm the
   contents if you are unsure of them.
 
-IF {subject} IS NOT A COMPOSITE CORPUS:
-
+""",
+        "body": """\
 Using live web search, find the surviving RECORDS of how {subject} first emerged, was
 documented, or became known.
 
@@ -874,14 +907,21 @@ def expand_extract(subject: str, research: str, citations_block: str) -> str:
     )
 
 
-def expand_body(mode: dict, subject: str) -> str:
-    """A mode's body with the node's own title in it.
+def expand_body(mode: dict, subject: str, is_collection: bool = False) -> str:
+    """A mode's body with the node's own title in it, and its level set by the node.
 
     `.replace`, not `.format`: the body ends in a JSON template, and every brace in it
     would otherwise have to be doubled by hand — which is exactly the kind of edit that
     silently breaks a prompt the next person pastes in.
+
+    A collection takes a different body where one exists (discovery returns the works it
+    is made of) and COLLECTION_RULE in front of the usual one where it does not (every
+    other axis answers about the collection rather than about its members).
     """
-    return mode["body"].replace("{subject}", subject or "this subject")
+    body = mode.get("collection_body") if is_collection else None
+    if body is None:
+        body = (COLLECTION_RULE + mode["body"]) if is_collection else mode["body"]
+    return body.replace("{subject}", subject or "this subject")
 
 
 def format_existing_block(existing) -> str:

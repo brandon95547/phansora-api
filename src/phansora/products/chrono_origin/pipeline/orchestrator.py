@@ -324,6 +324,21 @@ _YEAR_TEXT = re.compile(
 )
 
 
+def _truthy(value) -> bool:
+    """A model's boolean, however it chose to spell it.
+
+    A shaping call returns JSON, so this is usually a real bool — but the same field has
+    come back as "true", "True" and 1 often enough that reading only `is True` would drop
+    the flag silently, and a collection read as a single subject is the exact failure this
+    field exists to fix.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value or "").strip().lower() in {"true", "yes", "1"}
+
+
 def _year_of(value: Any) -> Optional[int]:
     """A signed year out of whatever the model wrote, or None.
 
@@ -463,6 +478,11 @@ def adapt_expand_events(
                 era_label=era or ("Undated" if undated else None),
                 precision="year" if year is not None else "unknown",
                 node_type=raw_kind if is_node_kind(raw_kind) else "event",
+                # A card produced by an expansion is itself a node the reader can expand,
+                # so it has to carry the same judgement the trace makes. Read leniently:
+                # the model returns a JSON bool, but a string "true" from a shaping call
+                # that quoted it should not silently mean False.
+                is_collection=_truthy(entry.get("is_collection")),
                 source_title=title,
                 claim=shared,
                 citations=to_citations(urls),
@@ -1164,6 +1184,7 @@ class TraceOrchestrator:
             # because a trace with no origin has nothing to hang the chain from; the gate
             # below is what keeps the chain itself clean.
             node_type=(origin_data.get("node_type") if is_node_kind(origin_data.get("node_type")) else "event"),
+            is_collection=_truthy(origin_data.get("is_collection")),
             attribution=_attribution(origin_data.get("attribution")),
             source_title=origin_data.get("source_title", "Unknown"),
             summary=origin_data.get("summary", ""),
@@ -1218,6 +1239,7 @@ class TraceOrchestrator:
                     # raising — node_type is a Literal, so an odd label would otherwise
                     # take the entire trace down with it.
                     node_type=(entry.get("node_type") if is_node_kind(entry.get("node_type")) else "event"),
+                    is_collection=_truthy(entry.get("is_collection")),
                     attribution=_attribution(entry.get("attribution")),
                     source_title=entry.get("source_title", "Unknown"),
                     claim=entry.get("claim", ""),
@@ -1390,7 +1412,7 @@ class TraceOrchestrator:
                 if req.context else ""
             ),
             existing_block=existing_block,
-            mode_body=expand_body(mode, req.parent_source_title),
+            mode_body=expand_body(mode, req.parent_source_title, req.parent_is_collection),
         )
         try:
             answer = self.client.grounded_search(prompt)

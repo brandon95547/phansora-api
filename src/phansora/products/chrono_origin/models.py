@@ -293,6 +293,24 @@ class TimelineEvent(BaseModel):
         description="Signed end year when this item spans a period rather than happening at a moment.",
     )
     node_type: NodeKind = "text"
+    # Whether this item is a SET of separately made works gathered under one name — an
+    # anthology, a canon, a product line, a standards family — rather than a single thing.
+    #
+    # Decided once, when the node is minted, and carried on the node. It used to be decided
+    # inside the discovery prompt on every call, and was not decided the same way twice:
+    # the same card returned nine constituent works in one run and eleven in the next.
+    #
+    # It is a judgement AT A LEVEL, not a fixed property of a subject: a canon is a
+    # collection of books, a book of it may be a collection of poems, and "T-shirt" is not
+    # a collection while "the 1990s Gap T-shirt line" is. So it steers a prompt and labels
+    # a card; it does not gate what a reader is allowed to ask.
+    #
+    # Defaults False, which is what every trace cached before this field existed will read
+    # as — and False is exactly the old behaviour.
+    is_collection: bool = Field(
+        default=False,
+        description="True when this item is a set of independently transmitted works rather than a single thing.",
+    )
     attribution: Attribution = "not_applicable"
     source_title: str
     claim: str
@@ -311,6 +329,9 @@ class OriginResult(BaseModel):
     precision: DatePrecision = "unknown"
     year_end: Optional[int] = None
     node_type: NodeKind = "text"
+    # The origin is a node the reader can expand like any other, so it carries the same
+    # judgement. See TimelineEvent.is_collection.
+    is_collection: bool = Field(default=False)
     attribution: Attribution = "not_applicable"
     source_title: str
     summary: str
@@ -524,6 +545,13 @@ class ExpandRequest(BaseModel):
     mode: ExpandMode = Field(
         default="discovery",
         description="Which axis to expand along. See ExpandMode.",
+    )
+    # Carried from the node being expanded. A collection is asked different questions:
+    # discovery returns the works it is made of, and every other axis answers about the
+    # collection rather than enumerating its members.
+    parent_is_collection: bool = Field(
+        default=False,
+        description="True when the item being expanded is a collection of separately transmitted works.",
     )
     # What the board already shows. An expansion that returns the step sitting next to
     # the anchor has cost a call and added nothing, and the user cannot tell the
