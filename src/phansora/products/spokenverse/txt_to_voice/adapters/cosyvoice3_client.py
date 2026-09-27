@@ -40,10 +40,11 @@ parity and ignored.
 
 ``<|endofprompt|>`` IS REQUIRED — this is the one hard break from v2. CosyVoice3's LLM
 asserts the token (id 151646) is present in the conditioning text and refuses to run
-without it, so every prompt we build is prefixed by ``_ensure_endofprompt``. Upstream's
-conventions, which we follow: a plain clone gets ``"You are a helpful assistant.<|endofprompt|>"``
-in front of the reference transcript, and an instruction gets the marker appended to
-itself. Prefixing is idempotent, mirroring upstream's own triton runtime.
+without it. Upstream's conventions, which we follow, put it in a DIFFERENT place for each
+mode: a plain clone gets ``"You are a helpful assistant.<|endofprompt|>"`` in front of the
+reference transcript (``_ensure_endofprompt``), and an instruction sits between the system
+prompt and the marker with nothing after it (``_instruct_prompt``). The difference is not
+cosmetic — see ``_instruct_prompt`` for what happens to an instruction placed after it.
 
 Exposes the backend surface used by ``adapters.backend``:
     * ``synthesize_to_file(...)`` — async, writes a WAV to ``out_path``
@@ -426,6 +427,29 @@ def _ensure_endofprompt(text: str, system_prompt: str = _DEFAULT_SYSTEM_PROMPT) 
     return f"{system_prompt}{_ENDOFPROMPT}{text}"
 
 
+def _instruct_prompt(instruct: str, system_prompt: str = _DEFAULT_SYSTEM_PROMPT) -> str:
+    """Wrap a delivery instruction the way CosyVoice3 was trained to read one.
+
+    The instruction goes BEFORE the marker, after the system prompt, and nothing follows
+    it: ``"You are a helpful assistant. Please say a sentence very angrily.<|endofprompt|>"``.
+    That is the shape of every entry in upstream's supported-controls list
+    (cosyvoice/utils/common.py ``instruct_list``) and of example.py's instruct2 calls.
+
+    Nothing may follow the marker because instruct mode drops the prompt speech tokens
+    (``frontend_instruct2``), and with no speech prefix the LLM VOICES whatever text comes
+    after the marker — that is how upstream's own ``inference_cross_lingual`` works. This
+    used to go through ``_ensure_endofprompt`` like a transcript, which put the instruction
+    after the marker, in the one place the model reads text aloud.
+
+    Text that already carries the marker keeps everything up to it and drops the rest, for
+    the same reason: what follows would be spoken.
+    """
+    text = (instruct or "").strip()
+    if _ENDOFPROMPT in text:
+        return text.split(_ENDOFPROMPT, 1)[0] + _ENDOFPROMPT
+    return f"{system_prompt} {text}{_ENDOFPROMPT}"
+
+
 def _resolve_reference(voice: str, speaker: Optional[str], ref_audio: Optional[str]) -> Optional[str]:
     for candidate in (ref_audio, speaker, voice, os.getenv("COSYVOICE3_REF_AUDIO")):
         if not candidate:
@@ -606,9 +630,11 @@ def _synthesize_sync(
     #
     # <|endofprompt|> goes on HERE, on the string that becomes the cache key — for exactly
     # the reason above. Applying it to the call argument instead would leave the cached
-    # conditioning without the marker and CosyVoice3 would assert on every request.
+    # conditioning without the marker and CosyVoice3 would assert on every request. It goes
+    # on differently per mode: after the system prompt for a transcript, after the
+    # instruction for an instruction (see _instruct_prompt — the wrong one gets read aloud).
     instruct = _clean_instruct(instruct_text)
-    conditioning = _ensure_endofprompt(instruct or p_text)
+    conditioning = _instruct_prompt(instruct) if instruct else _ensure_endofprompt(p_text)
 
     try:
         # The engine is one shared vLLM instance and sees one call at a time. That exclusion

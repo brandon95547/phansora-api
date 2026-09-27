@@ -95,7 +95,7 @@ class TestConditioningReachesTheCacheKey:
 
     @staticmethod
     def _conditioning(instruct: str, prompt_text: str) -> str:
-        return cv._ensure_endofprompt(instruct or prompt_text)
+        return cv._instruct_prompt(instruct) if instruct else cv._ensure_endofprompt(prompt_text)
 
     def test_plain_cloning_conditions_on_the_marked_transcript(self):
         cond = self._conditioning("", "Dusk was falling.")
@@ -103,8 +103,7 @@ class TestConditioningReachesTheCacheKey:
 
     def test_an_instruction_takes_precedence_and_is_marked(self):
         cond = self._conditioning("Speak in a calm tone.", "Dusk was falling.")
-        assert MARKER in cond
-        assert "Speak in a calm tone." in cond
+        assert cond == "You are a helpful assistant. Speak in a calm tone.<|endofprompt|>"
         assert "Dusk was falling." not in cond  # instruct replaces the transcript slot
 
     def test_each_instruction_gets_its_own_cache_key(self):
@@ -118,6 +117,42 @@ class TestConditioningReachesTheCacheKey:
         """The other half: identical input must NOT miss the cache, or every request pays
         speaker extraction again."""
         assert self._conditioning("Speak calmly.", "ref") == self._conditioning("Speak calmly.", "ref")
+
+
+class TestInstructPrompt:
+    """Where the instruction sits relative to the marker.
+
+    Instruct mode drops the prompt speech tokens, so the LLM voices every word after the
+    marker. An instruction placed there is read aloud at the start of each chunk — which is
+    what happened when instructions were wrapped like transcripts.
+    """
+
+    def test_matches_upstreams_supported_control_shape(self):
+        """Verbatim shape of an entry in upstream's cosyvoice/utils/common.py instruct_list."""
+        assert cv._instruct_prompt("Please say a sentence as loudly as possible.") == (
+            "You are a helpful assistant. Please say a sentence as loudly as possible.<|endofprompt|>"
+        )
+
+    def test_nothing_follows_the_marker(self):
+        out = cv._instruct_prompt("Please say a sentence very angrily.")
+        assert out.endswith(MARKER)
+        assert out.count(MARKER) == 1
+
+    def test_the_instruction_is_before_the_marker_not_after(self):
+        """The regression itself: the old wrapping put it in the transcript slot."""
+        out = cv._instruct_prompt("Speak angrily.")
+        assert out.index("Speak angrily.") < out.index(MARKER)
+        assert out != cv._ensure_endofprompt("Speak angrily.")
+
+    def test_a_premarked_instruction_is_cut_at_the_marker(self):
+        """Anything after a caller's own marker would be spoken, so it goes."""
+        assert cv._instruct_prompt("Speak angrily.<|endofprompt|>and this too") == (
+            "Speak angrily.<|endofprompt|>"
+        )
+
+    def test_it_is_idempotent(self):
+        once = cv._instruct_prompt("Speak angrily.")
+        assert cv._instruct_prompt(once) == once
 
 
 class TestEnvFallback:
