@@ -103,6 +103,11 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Readable cross-origin only if named here. Retry-After is how a busy voice service
+    # tells the browser when to come back — unexposed, the browser saw null and guessed.
+    # Content-Disposition is what SpokenVerse and Book Alchemy already expose for
+    # downloads; this outer layer's value replaces theirs, so it must carry it too.
+    expose_headers=["Retry-After", "Content-Disposition"],
 )
 
 for _prefix, _sub in _products.items():

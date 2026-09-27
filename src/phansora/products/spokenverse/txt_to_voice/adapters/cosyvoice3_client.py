@@ -82,13 +82,13 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional, Sequence
 
+from phansora.products.spokenverse import admission
 from phansora.shared import gpu
 from phansora.shared.utils.tts_text import normalize_for_tts
 
 logger = logging.getLogger(__name__)
 
 _MODEL_LOCK = Lock()      # guards the one-per-process model construction
-_INFER_LOCK = Lock()      # serializes synthesis (the vLLM engine + flow are shared state)
 _COSY = None              # cached CosyVoice engine instance
 _DEAD: Optional[str] = None  # set once the CUDA context is beyond repair — see _poisoned
 _SPK_CACHE: dict[str, str] = {}  # ref-clip signature -> cached zero-shot speaker id
@@ -611,14 +611,20 @@ def _synthesize_sync(
     conditioning = _ensure_endofprompt(instruct or p_text)
 
     try:
-        with _INFER_LOCK:
+        # The engine is one shared vLLM instance and sees one call at a time. That exclusion
+        # is taken per PIECE, through admission.turn(), not once around the whole chunk:
+        # each piece is a stopping point, so a Book Alchemy lesson steps aside for a person
+        # within a few seconds instead of after the chunk, and turn() hands the engine to
+        # the person first. See spokenverse/admission.py, rule 4.
+        with admission.turn():
             spk_id = _spk_id_for(cosy, ref_clip, conditioning)
-            parts: list["torch.Tensor"] = []
-            for chunk in chunks:
-                # Both paths run off the cached speaker id (prompt_text/prompt_wav unused).
-                # We pass `conditioning`, not the bare instruction: it is ignored on a cache
-                # HIT, but on a miss it is what reaches the LLM — and without the
-                # <|endofprompt|> marker that path asserts.
+        parts: list["torch.Tensor"] = []
+        for chunk in chunks:
+            # Both paths run off the cached speaker id (prompt_text/prompt_wav unused).
+            # We pass `conditioning`, not the bare instruction: it is ignored on a cache
+            # HIT, but on a miss it is what reaches the LLM — and without the
+            # <|endofprompt|> marker that path asserts.
+            with admission.turn():
                 if instruct:
                     stream = cosy.inference_instruct2(
                         chunk, conditioning, "", zero_shot_spk_id=spk_id, stream=False, speed=speed
@@ -629,9 +635,9 @@ def _synthesize_sync(
                     )
                 for out in stream:
                     parts.append(out["tts_speech"])
-            if not parts:
-                raise RuntimeError("CosyVoice synthesis produced no audio.")
-            wav = torch.cat(parts, dim=1)  # each tts_speech is [1, samples]
+        if not parts:
+            raise RuntimeError("CosyVoice synthesis produced no audio.")
+        wav = torch.cat(parts, dim=1)  # each tts_speech is [1, samples]
         torchaudio.save(str(out_path), wav, cosy.sample_rate)
         if not out_path.is_file() or out_path.stat().st_size == 0:
             raise RuntimeError("CosyVoice synthesis produced no audio.")

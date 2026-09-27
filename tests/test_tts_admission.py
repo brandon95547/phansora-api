@@ -39,6 +39,7 @@ def fresh_gate(monkeypatch):
     silently for a quarter of an hour. The real defaults are asserted separately, below.
     """
     monkeypatch.setattr(admission, "_gate", admission._Gate())
+    monkeypatch.setattr(admission, "_turns", admission._Turns())
     monkeypatch.setattr(admission, "_INTERACTIVE_WAIT_S", 0.2)
     monkeypatch.setattr(admission, "_BATCH_WAIT_S", 0.2)
     yield
@@ -168,7 +169,10 @@ def test_the_shipped_defaults_are_what_the_design_says():
     """
     assert SHIPPED["slots"] >= 2, "one slot cannot reserve anything for interactive work"
     assert SHIPPED["batch_slots"] == SHIPPED["slots"] - 1, "batch must be capped below the total"
-    assert SHIPPED["interactive_wait"] <= 30, "somebody is watching a spinner"
+    # A person QUEUES rather than being turned away — the wait is for another person's
+    # narration, which runs at full speed now that a book pauses for it. Bounded by the
+    # proxy: nginx gives the API 300s, and the synthesis has to fit in what is left.
+    assert 60 <= SHIPPED["interactive_wait"] <= 180, "queue, but answer before the proxy gives up"
     assert SHIPPED["batch_wait"] >= 300, "nobody is watching a book; let it wait"
     # Long enough that standing aside is the normal case, bounded so a busy box cannot
     # stop a course rendering altogether.
@@ -280,3 +284,128 @@ async def test_a_cancelled_caller_stops_holding_books_back():
 async def latecomer_that_gives_up():
     async with admission.slot("interactive"):
         pass
+
+
+# ── Rule 4: a book already running pauses at its next piece ───────────────────
+# Rule 3 holds back the NEXT lesson; a lesson already running used to hold the engine for
+# a whole chunk at a time, and a plain lock gave the handoff to whichever thread won — a
+# book's four threads, usually. Reported from Narrava Studio as "The voice service is busy"
+# while a Book Alchemy course rendered. These drive the engine's turns() the way the
+# synthesis threads do: from threads, each carrying its request's ticket.
+
+import threading
+import time
+
+
+def _piece(ticket, log, name, started=None, hold=0.0):
+    """One engine piece from a worker thread, as the synthesis loop takes it."""
+    def run():
+        admission._TICKET.set(ticket)
+        with admission.turn():
+            log.append(name)
+            if started is not None:
+                started.set()
+            time.sleep(hold)
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def _queued(count, timeout=2.0):
+    """Wait until `count` pieces are queued for the engine."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with admission._turns._cond:
+            if len(admission._turns._queue) >= count:
+                return
+        time.sleep(0.005)
+    raise AssertionError(f"never saw {count} piece(s) queued")
+
+
+BOOK, PERSON = 1, 0
+
+
+def test_a_person_gets_the_engine_before_a_book_that_was_waiting_first():
+    log, running = [], threading.Event()
+    holder = _piece((BOOK, 1), log, "book-in-progress", started=running, hold=0.2)
+    assert running.wait(2)
+
+    book_next = _piece((BOOK, 1), log, "book-next")
+    _queued(1)
+    person = _piece((PERSON, 2), log, "person")
+    _queued(2)
+
+    for t in (holder, book_next, person):
+        t.join(2)
+    # The piece in progress finishes — nothing interrupts it — then the person, then the book.
+    assert log == ["book-in-progress", "person", "book-next"]
+
+
+def test_a_book_holds_back_while_a_person_is_present_even_with_nobody_queued():
+    """The gap between two pieces of a narration is the one a book used to take."""
+    log, done = [], threading.Event()
+    admission._gate._enter_interactive()  # a narration mid-request, between pieces
+    book = _piece((BOOK, 1), log, "book", started=done)
+
+    time.sleep(0.3)
+    assert log == [], "a book must not take the gap between a person's pieces"
+
+    admission._gate._leave_interactive()
+    # Woken by the person leaving, not by its next poll.
+    assert done.wait(0.5), "a paused book resumes the moment the person is served"
+    book.join(2)
+    assert admission.stats()["batch_pauses"] == 1
+
+
+def test_people_are_served_in_the_order_they_arrived():
+    """One narration finishes before the next starts, instead of both at half speed."""
+    log, running = [], threading.Event()
+    holder = _piece((PERSON, 0), log, "first", started=running, hold=0.2)
+    assert running.wait(2)
+
+    later = _piece((PERSON, 9), log, "arrived-later")
+    _queued(1)
+    earlier = _piece((PERSON, 3), log, "arrived-earlier")  # queued second, arrived first
+    _queued(2)
+
+    for t in (holder, later, earlier):
+        t.join(2)
+    assert log == ["first", "arrived-earlier", "arrived-later"]
+
+
+def test_a_book_is_not_stopped_forever_by_a_box_that_is_never_quiet(monkeypatch):
+    monkeypatch.setattr(admission, "_BATCH_MAX_YIELD_S", 0.2)
+    log, done = [], threading.Event()
+    admission._gate._enter_interactive()  # and never leaves
+    try:
+        book = _piece((BOOK, 1), log, "book", started=done)
+        assert done.wait(2.5), "a book that yields forever never finishes the course"
+        book.join(2)
+        assert admission.stats()["batch_piece_overrides"] == 1
+    finally:
+        admission._gate._leave_interactive()
+
+
+def test_the_engine_is_handed_back_when_a_piece_raises():
+    def failing():
+        with admission.turn():
+            raise RuntimeError("synthesis blew up")
+
+    with pytest.raises(RuntimeError):
+        failing()
+
+    log, done = [], threading.Event()
+    _piece((PERSON, 1), log, "next", started=done)
+    assert done.wait(1), "a failed piece must not keep the engine"
+
+
+@pytest.mark.asyncio
+async def test_the_request_ticket_reaches_the_synthesis_threads():
+    """to_thread copies the context — the ticket needs no plumbing through the pipeline."""
+    async with admission.slot("batch"):
+        rank, _ = await asyncio.to_thread(admission._TICKET.get)
+        assert rank == BOOK
+    async with admission.slot("interactive"):
+        rank, _ = await asyncio.to_thread(admission._TICKET.get)
+        assert rank == PERSON
+    assert admission._TICKET.get() is None

@@ -28,24 +28,40 @@ THREE RULES, and the third is the one that makes the difference people can feel:
      seconds, so standing aside costs the book a fraction of a percent and gives the person
      back an order of magnitude — the most lopsided trade in the system.
 
-     What this cannot do is interrupt a lesson already in flight, and nothing here should:
-     the work is most of the way to an audio file nobody would get back. So one lesson may
-     still overlap one person. Shrinking THAT window is a question about how finely a
-     lesson is cut into requests, not about scheduling, and it is not answered here.
+  4. A BOOK ALREADY RUNNING PAUSES AT THE NEXT PIECE. Rule 3 holds back the next lesson;
+     it cannot touch one already in flight, and a lesson runs for many minutes. What made
+     that window hurt was not the overlap itself but the lock inside the engine: it was
+     held for a whole ~2,500-character chunk, a lesson fed it four chunks at once, and a
+     plain lock is not first-come-first-served — so a narration kept losing the handoff
+     and took minutes. The engine now takes turns() once per PIECE (the ~200 characters it
+     synthesizes in one call, a few seconds of GPU), and a turn goes to a person before a
+     book, people in the order they arrived. A book waits while anyone interactive is
+     present, not merely queued: a narration's pieces come one after another, and between
+     two of them it is briefly not in the queue at all — a gap a book would otherwise take,
+     one piece at a time, which is the half-speed sharing this replaces. So a person waits
+     at most for the piece a book is in the middle of, and the lesson resumes where it
+     stopped. Bounded like rule 3: a box that is never quiet cannot stop a book forever.
 
-And a caller that cannot be served soon is TOLD SO, quickly, with Retry-After. The failure
-this replaces was a request that simply never came back — which the browser reports as a
-network error, indistinguishable from the service being down. A fast, honest 503 is a
-better answer than a slow one, and far better than none.
+A person who arrives while every slot is taken QUEUES rather than being turned away: with a
+book pausing at its next piece, the wait is for another person's narration, which now runs
+at full speed. Only a wait long enough to approach the proxy's read timeout is refused, with
+a 503 and Retry-After — and the browser retries that on its own, so it is not a message
+anyone is asked to act on. The failure this replaced was a request that simply never came
+back, which the browser reports as the service being down.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import heapq
+import itertools
 import logging
 import os
-from typing import AsyncIterator, Literal
+import threading
+import time
+from typing import AsyncIterator, Iterator, Literal, Optional
 
 LOG = logging.getLogger("spokenverse.admission")
 
@@ -59,9 +75,14 @@ _SLOTS = max(1, int(os.getenv("TTS_MAX_CONCURRENT", "2")))
 # caller can never find the model completely taken by a book.
 _BATCH_SLOTS = max(1, _SLOTS - 1) if _SLOTS > 1 else 1
 
-# How long a caller waits for a slot before being told to come back. Interactive is short
-# because somebody is watching; batch is long because nobody is.
-_INTERACTIVE_WAIT_S = float(os.getenv("TTS_INTERACTIVE_WAIT_S", "20"))
+# How long a caller waits for a slot before being told to come back.
+#
+# Interactive QUEUES: the wait it is sitting out is another person's narration, which runs
+# at full speed now that a book pauses for it (rule 4). The ceiling is the proxy, not
+# patience — nginx gives the API 300s to answer, and the synthesis itself must fit in what
+# is left, so a wait near that would come back as a gateway timeout instead of a clean 503.
+# Batch waits long because nobody is watching.
+_INTERACTIVE_WAIT_S = float(os.getenv("TTS_INTERACTIVE_WAIT_S", "120"))
 _BATCH_WAIT_S = float(os.getenv("TTS_BATCH_WAIT_S", "900"))
 
 # How long batch will stand aside before taking its turn anyway.
@@ -71,6 +92,15 @@ _BATCH_WAIT_S = float(os.getenv("TTS_BATCH_WAIT_S", "900"))
 # never rendered" is a worse outcome than "one narration was slow". After this it goes,
 # still capped by _BATCH_SLOTS, so a person keeps their reserved slot regardless.
 _BATCH_MAX_YIELD_S = float(os.getenv("TTS_BATCH_MAX_YIELD_S", "600"))
+
+# Who is asking, carried from the request down to the engine's worker threads: (rank,
+# arrival), rank 0 for a person and 1 for a book. create_task and asyncio.to_thread both
+# copy the context, so the pipeline's chunk tasks and the threads they run in all see the
+# request's ticket without it being threaded through every signature in between.
+_TICKET: contextvars.ContextVar[Optional[tuple[int, int]]] = contextvars.ContextVar(
+    "tts_ticket", default=None
+)
+_arrivals = itertools.count()
 
 
 class Busy(Exception):
@@ -110,6 +140,12 @@ class _Gate:
         self._interactive = max(0, self._interactive - 1)
         if self._interactive == 0:
             self._quiet.set()
+            # A book paused mid-lesson (rule 4) is waiting in a worker thread, not on
+            # _quiet; tell it the box is clear so it resumes now rather than on its next poll.
+            _turns.wake()
+
+    def interactive_present(self) -> bool:
+        return self._interactive > 0
 
     async def _stand_aside(self) -> None:
         """Wait for the box to go quiet before a book takes the GPU. Rule 3.
@@ -140,6 +176,17 @@ class _Gate:
     async def slot(self, priority: Priority) -> AsyncIterator[None]:
         wait = _INTERACTIVE_WAIT_S if priority == "interactive" else _BATCH_WAIT_S
         interactive = priority == "interactive"
+        # The ticket the engine's turns() reads — taken on ARRIVAL, so people are served in
+        # the order they came, not the order they happened to get a slot.
+        ticket = _TICKET.set((0 if interactive else 1, next(_arrivals)))
+        try:
+            async with self._admitted(priority, wait, interactive):
+                yield
+        finally:
+            _TICKET.reset(ticket)
+
+    @contextlib.asynccontextmanager
+    async def _admitted(self, priority: Priority, wait: float, interactive: bool) -> AsyncIterator[None]:
         held_batch = False
         # Counted BEFORE the wait, so a person queueing is already making the next lesson
         # stand aside rather than only registering once they are served.
@@ -184,9 +231,110 @@ class _Gate:
 _gate = _Gate()
 
 
+class _Turns:
+    """The engine itself, one piece at a time, to whoever should have it next. Rule 4.
+
+    Thread-level, because synthesis runs in worker threads (asyncio.to_thread) and the
+    engine is one shared vLLM instance that must see one call at a time. This replaces the
+    plain lock that used to serialize it: same exclusion, but the release goes to the right
+    waiter instead of whichever thread wins the race — and it is taken per piece, so a book
+    has a stopping point every few seconds instead of every chunk.
+
+    Order: a person before a book, then arrival order of the REQUEST (so one person's
+    narration finishes before the next person's starts, rather than the two interleaving at
+    half speed each), then arrival of the piece.
+    """
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._held = False
+        self._queue: list[tuple[int, int, int]] = []
+        self._pieces = itertools.count()
+        # When the current pause began, None while books are running. One clock for all
+        # books rather than one per piece: a per-piece deadline would let a book through
+        # once per _BATCH_MAX_YIELD_S — a lesson a piece every ten minutes, which is stopped.
+        self._paused_since: Optional[float] = None
+        self._overriding = False
+        self.batch_pauses = 0
+        self.batch_overrides = 0
+
+    def wake(self) -> None:
+        with self._cond:
+            self._cond.notify_all()
+
+    @contextlib.contextmanager
+    def take(self) -> Iterator[None]:
+        # Unmarked work — the startup warm-up, a voice preview that never came through
+        # slot() — ranks as a person, for the same reason an unmarked header does.
+        rank, request = _TICKET.get() or (0, next(_arrivals))
+        me = (rank, request, next(self._pieces))
+        book = rank == 1
+        # A book yields while anyone interactive is PRESENT, not just queued: between two
+        # pieces of a narration there is a moment when it holds nothing and waits for
+        # nothing, and a book allowed into that gap takes it, piece after piece.
+        def overdue() -> bool:
+            return (self._paused_since is not None
+                    and time.monotonic() - self._paused_since >= _BATCH_MAX_YIELD_S)
+
+        def ready() -> bool:
+            if self._held or self._queue[0] != me:
+                return False
+            return not book or not _gate.interactive_present() or overdue()
+
+        with self._cond:
+            heapq.heappush(self._queue, me)
+            try:
+                while not ready():
+                    if book and _gate.interactive_present() and self._paused_since is None:
+                        self._paused_since = time.monotonic()
+                        self.batch_pauses += 1
+                        LOG.info("book paused between pieces — interactive work goes first")
+                    # A book re-checks now and then as well as on notify: its deadline passes
+                    # without anybody signalling it.
+                    self._cond.wait(timeout=1.0 if book else None)
+            except BaseException:
+                self._queue.remove(me)
+                heapq.heapify(self._queue)
+                self._cond.notify_all()
+                raise
+            heapq.heappop(self._queue)
+            self._held = True
+            if book and self._paused_since is not None:
+                if _gate.interactive_present():
+                    # Still not quiet: going anyway, on the same terms as rule 3's override.
+                    # The pause clock is left running so the rest of the lesson goes too,
+                    # still behind any person already queued.
+                    if not self._overriding:
+                        self._overriding = True
+                        self.batch_overrides += 1
+                        LOG.warning(
+                            "book paused %.0fs and is taking turns anyway — the box has not "
+                            "been quiet for that long", _BATCH_MAX_YIELD_S,
+                        )
+                else:
+                    self._paused_since = None
+                    self._overriding = False
+                    LOG.info("book resumed")
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._held = False
+                self._cond.notify_all()
+
+
+_turns = _Turns()
+
+
 def slot(priority: Priority = "interactive"):
     """Hold a synthesis slot for the duration of the block, or raise Busy."""
     return _gate.slot(priority)
+
+
+def turn():
+    """Hold the engine for one piece of synthesis. Blocks its thread until it is this caller's
+    turn; see _Turns. Use around each engine call, never around a whole request."""
+    return _turns.take()
 
 
 def stats() -> dict:
@@ -197,6 +345,8 @@ def stats() -> dict:
         "interactive_present": _gate._interactive,
         "batch_yields": _gate.batch_yields,
         "batch_overrides": _gate.batch_overrides,
+        "batch_pauses": _turns.batch_pauses,
+        "batch_piece_overrides": _turns.batch_overrides,
     }
 
 
