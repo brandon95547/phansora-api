@@ -29,11 +29,22 @@ behavior — this never makes an existing split worse, it only removes false one
 Tuning: every lexicon below is inserted verbatim. If the engine mispronounces an entry,
 respell it phonetically right here ("D C" -> "Dee See"). That is the entire tuning
 surface — no code change required.
+
+**It is also what keeps text the engine can't take from reaching it.** Every caller of
+the engine comes through here, so the rules are by character class, not by incident:
+invisible and control characters and the engine's own ``<|…|>`` markup are removed,
+symbols with one spoken reading are spelled out, and pictographs (emoji, ©, ✅) are
+dropped. The engine's number reader (wetext) asserts on a symbol it has no rule for
+touching a number ("3+", "±5", "5×3", "©2020"), and on 2026-09-29 that failed a whole
+book. Anything this still misses is caught at the engine boundary
+(``cosyvoice3_client._synthesize_sync``), which reads that piece as written and logs it
+— a logged piece is the cue to add its reading here.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 
 __all__ = ["normalize_for_tts"]
 
@@ -131,7 +142,51 @@ _SYMBOLS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\s*&\s*"), " and "),
     (re.compile(r"(?<=\d)\s*%"), " percent"),
     (re.compile(r"(?<=\d)\s*°"), " degrees"),
+    # Math and comparison signs. Each has one reading, and the engine's number reader
+    # asserts on every one of them touching a digit ("±5", "≥5", "5×3").
+    (re.compile(r"[ \t]*±[ \t]*"), " plus or minus "),
+    (re.compile(r"[ \t]*≥[ \t]*"), " greater than or equal to "),
+    (re.compile(r"[ \t]*≤[ \t]*"), " less than or equal to "),
+    (re.compile(r"[ \t]*≠[ \t]*"), " not equal to "),
+    (re.compile(r"[ \t]*≈[ \t]*"), " approximately "),
+    (re.compile(r"[ \t]*×[ \t]*"), " times "),
+    (re.compile(r"[ \t]*÷[ \t]*"), " divided by "),
+    # The typographic minus becomes the ASCII one, whose readings ("negative five",
+    # "ten to fifteen") the engine already has.
+    (re.compile("−"), "-"),
+    # Only after a digit: after a word, a superscript is usually a footnote mark.
+    (re.compile(r"(?<=\d)²"), " squared"),
+    (re.compile(r"(?<=\d)³"), " cubed"),
+    (re.compile(r"#(?=\d)"), "number "),
+    # A plus sign touching one side of a number: pathology scores ("HER2 IHC 3+") and
+    # signed values ("+5"). "1+1" and "3 + 4" the engine already reads as "plus", so a
+    # digit on both sides is left to it; "C++" and "A+" have no digit.
+    (re.compile(r"(?<=\d)\+(?![\d+])"), " plus"),
+    (re.compile(r"(?<![\w+])\+(?=\d)"), "plus "),
 )
+
+# Never heard, and never to reach the model as raw tokens. Unicode category C covers
+# control characters (NUL, bell), format characters (zero-width space, BOM, soft hyphen,
+# bidi marks), private-use and unassigned code points. Newlines, tabs and carriage
+# returns are the exceptions — both chunkers split on newlines. "<|" and "|>" are
+# CosyVoice's special-token syntax: in narration they switch the engine's text
+# normalizer off for the whole piece, or inject a control token.
+_KEEP_CONTROL = frozenset("\n\t\r")
+_ENGINE_MARKUP_RE = re.compile(r"<\||\|>")
+
+# Pictographs have no spoken form: emoji, ✅, ©, ™, box drawing (category So), plus the
+# emoji variation selectors and skin-tone modifiers that ride along with them. Runs
+# after _SYMBOLS, because "°" is also So and "20°" has to become "20 degrees" first.
+_EMOJI_PARTS = frozenset("︎️") | frozenset(chr(c) for c in range(0x1F3FB, 0x1F400))
+
+
+def _strip_invisible(text: str) -> str:
+    out = _ENGINE_MARKUP_RE.sub(" ", text)
+    return "".join(ch for ch in out if ch in _KEEP_CONTROL or unicodedata.category(ch)[0] != "C")
+
+
+def _strip_pictographs(text: str) -> str:
+    return "".join(ch for ch in text if ch not in _EMOJI_PARTS and unicodedata.category(ch) != "So")
 
 
 # Typography that is written to be SEEN, arriving in text that is only ever heard.
@@ -258,7 +313,9 @@ def normalize_for_tts(text: str) -> str:
     if not text or not text.strip():
         return text
 
-    out = text
+    # Before everything else: a zero-width space inside "e.g." would hide it from the
+    # abbreviation passes below.
+    out = _strip_invisible(text)
     # Phrases first: "e.g." and "a.m." also match the generic initialism pattern, and the
     # specific reading is the one we want.
     out = _sub_map(out, _PHRASE_INTRO_RE, _PHRASES_INTRO, may_end_sentence=False)
@@ -277,6 +334,7 @@ def normalize_for_tts(text: str) -> str:
 
     for pattern, replacement in _SYMBOLS:
         out = pattern.sub(replacement, out)
+    out = _strip_pictographs(out)
 
     # Collapse runs of spaces/tabs only. Newlines MUST survive: both chunkers split on
     # blank lines and single newlines, and _chunk_text relies on that to chunk verse

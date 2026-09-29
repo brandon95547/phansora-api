@@ -560,6 +560,30 @@ def _chunk_text(text: str, max_chars: int) -> list[str]:
     return chunks or ([text.strip()] if text.strip() else [])
 
 
+def _render_piece(cosy, chunk, instruct, conditioning, spk_id, speed, *, text_frontend=True) -> list:
+    """Run one piece through the engine and return its audio tensors."""
+    if instruct:
+        stream = cosy.inference_instruct2(
+            chunk, conditioning, "", zero_shot_spk_id=spk_id, stream=False, speed=speed,
+            text_frontend=text_frontend,
+        )
+    else:
+        stream = cosy.inference_zero_shot(
+            chunk, "", "", zero_shot_spk_id=spk_id, stream=False, speed=speed,
+            text_frontend=text_frontend,
+        )
+    return [out["tts_speech"] for out in stream]
+
+
+def _raised_in_text_normalizer(exc: BaseException) -> bool:
+    tb = exc.__traceback__
+    while tb is not None:
+        if "wetext" in tb.tb_frame.f_code.co_filename:
+            return True
+        tb = tb.tb_next
+    return False
+
+
 def _synthesize_sync(
     text: str,
     out_path: Path,
@@ -663,16 +687,19 @@ def _synthesize_sync(
             # HIT, but on a miss it is what reaches the LLM — and without the
             # <|endofprompt|> marker that path asserts.
             with admission.turn():
-                if instruct:
-                    stream = cosy.inference_instruct2(
-                        chunk, conditioning, "", zero_shot_spk_id=spk_id, stream=False, speed=speed
-                    )
-                else:
-                    stream = cosy.inference_zero_shot(
-                        chunk, "", "", zero_shot_spk_id=spk_id, stream=False, speed=speed
-                    )
-                for out in stream:
-                    parts.append(out["tts_speech"])
+                try:
+                    parts.extend(_render_piece(cosy, chunk, instruct, conditioning, spk_id, speed))
+                except AssertionError as exc:
+                    # The engine's number reader (wetext) asserts on text it has no rule
+                    # for, and it is the same text on every retry, so one such string
+                    # used to fail a whole book. It runs before any audio is made; read
+                    # the piece as written instead. Any other assert is a real fault.
+                    if not _raised_in_text_normalizer(exc):
+                        raise
+                    logger.warning("Text normalizer rejected a piece; reading it as written: %r", chunk[:120])
+                    parts.extend(_render_piece(
+                        cosy, chunk, instruct, conditioning, spk_id, speed, text_frontend=False,
+                    ))
         if not parts:
             raise RuntimeError("CosyVoice synthesis produced no audio.")
         wav = torch.cat(parts, dim=1)  # each tts_speech is [1, samples]

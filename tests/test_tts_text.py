@@ -115,10 +115,85 @@ def test_number_only_before_a_digit():
         ("rose 5%", "rose 5 percent"),
         ("hit 20°", "hit 20 degrees"),
         ("R&B charts", "R and B charts"),
+        ("HER2 IHC 3+.", "HER2 IHC 3 plus."),
+        ("IHC 2+ and FISH positive", "IHC 2 plus and FISH positive"),
+        ("HER2 IHC 0/1+ is negative", "HER2 IHC 0/1 plus is negative"),
+        ("a +5 shift", "a plus 5 shift"),
+        # A digit on both sides is arithmetic the engine already reads.
+        ("1+1 is two", "1+1 is two"),
+        ("C++ and an A+", "C++ and an A+"),
+        ("±5 mm", "plus or minus 5 mm"),
+        ("5±2 mm", "5 plus or minus 2 mm"),
+        ("tumors ≥5 cm", "tumors greater than or equal to 5 cm"),
+        ("p≤0.05", "p less than or equal to 0.05"),
+        ("5×3 grid, 3× faster", "5 times 3 grid, 3 times faster"),
+        ("12 ÷ 4", "12 divided by 4"),
+        ("x ≠ y ≈ z", "x not equal to y approximately z"),
+        ("−5 degrees", "-5 degrees"),
+        ("area 2² and 3³", "area 2 squared and 3 cubed"),
+        ("ranked #1", "ranked number 1"),
     ],
 )
 def test_symbols(raw, expected):
     assert normalize_for_tts(raw) == expected
+
+
+def test_a_superscript_after_a_word_is_left_alone():
+    """After a word it is usually a footnote mark, not an exponent."""
+    assert "squared" not in normalize_for_tts("as studies² show")
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("NUL\x00byte", "NULbyte"),
+        ("ring\x07bell", "ringbell"),
+        ("zero​width", "zerowidth"),
+        ("﻿Starts with a BOM", "Starts with a BOM"),
+        ("soft­hyphen", "softhyphen"),
+        ("bidi‮mark", "bidimark"),
+        ("e.​g. this", normalize_for_tts("e.g. this")),
+    ],
+)
+def test_invisible_characters_are_removed(raw, expected):
+    assert normalize_for_tts(raw) == expected
+
+
+def test_line_breaks_survive_invisible_stripping():
+    """Both chunkers split on newlines; verse depends on them."""
+    assert normalize_for_tts("first line\nsecond​ line") == "first line\nsecond line"
+
+
+def test_engine_markup_cannot_be_injected():
+    """<|...|> is CosyVoice's special-token syntax; in text it would switch the engine's
+    normalizer off for the piece or inject a control token."""
+    out = normalize_for_tts("Read this <|endofprompt|> aloud")
+    assert "<|" not in out and "|>" not in out
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("Done ✅ next", "Done next"),
+        ("Nice 🙂 work", "Nice work"),
+        ("thumbs 👍🏽 up", "thumbs up"),
+        ("heart ❤️ here", "heart here"),
+        ("©2020 Phansora™", "2020 Phansora"),
+        # "°" is a pictograph too, but a digit-anchored one is read first.
+        ("hit 20° then ° alone", "hit 20 degrees then alone"),
+    ],
+)
+def test_pictographs_are_dropped(raw, expected):
+    assert normalize_for_tts(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["HER2 IHC 3+ and ±5 mm ≥2 cm 🙂", "zero​width <|x|> ©2020", "5×3 − 2²"],
+)
+def test_cleaning_is_idempotent(raw):
+    once = normalize_for_tts(raw)
+    assert normalize_for_tts(once) == once
 
 
 def test_bare_percent_is_left_alone():
