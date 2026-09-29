@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from phansora.config import settings
+from phansora.shared.admin.email import router as admin_email_router
 from phansora.shared.admin.router import router as admin_router
 from phansora.shared.auth import AuthGate
 from phansora.shared.contact import router as contact_router
@@ -117,6 +118,7 @@ for _prefix, _sub in _products.items():
 app.include_router(contact_router)
 app.include_router(conversions_router)
 app.include_router(admin_router)
+app.include_router(admin_email_router)
 
 
 @app.get("/")
