@@ -13,6 +13,9 @@
 #   5. Runs standard host checks               (disk, load, postgres connectivity)
 #      Disk is two-tier: a heads-up once a mount passes $DISK_WARN_PCT (50%) of
 #      capacity, and an urgent alert past $DISK_CRIT_PCT (90%).
+#   6. Lists users whose product attempts failed (a dossier, trace, book, render…
+#      that ended `failed`, or a refunded synchronous action) — each failure is
+#      reported exactly once, grouped by user. See check_product_failures.
 #
 # If anything is wrong it emails you via the phansora-api email endpoint
 # (POST /contact -> delivers to $EMAIL_TO), falling back to direct SMTP when that
@@ -29,7 +32,13 @@
 # retries after the much shorter $DELIVERY_RETRY_SECONDS — a send that failed is
 # not a notification, and must not sit out the full cooldown as though it were.
 #
-# Exit codes: 0 = all clean, 1 = issues found (alert sent or suppressed by cooldown).
+# Failed product attempts sit outside that de-dupe: they are events, not a standing
+# condition, so each one is mailed once (tracked by key in $STATE_DIR) and never
+# re-mailed, and a run that finds new ones sends even while the issues above are
+# inside their cooldown.
+#
+# Exit codes: 0 = all clean, 1 = issues or new failed attempts found (alert sent or
+# suppressed by cooldown).
 #
 # Requires: bash, curl, systemctl, journalctl, awk. Uses python3 (already present
 # for the API) to JSON-encode the email safely. Should run as root (or a user in
@@ -103,6 +112,12 @@ EXCLUDE_PATTERNS="${EXCLUDE_PATTERNS:-favicon|GET /health|GET /robots.txt|Deprec
 
 MAX_SAMPLE_LINES="${MAX_SAMPLE_LINES:-40}"                # log excerpt lines per source in the email
 
+# Failed product attempts. The lookback only bounds the query — a failure is mailed once
+# regardless — so it just has to outlast any gap between runs (downtime, a paused cron).
+# The first run after install reports everything inside it.
+FAILURE_LOOKBACK="${FAILURE_LOOKBACK:-24 hours}"         # any Postgres interval
+MAX_FAILURE_ROWS="${MAX_FAILURE_ROWS:-50}"                # listed per email; the rest are counted
+
 VERBOSE=0
 TEST_MODE=0
 for arg in "$@"; do
@@ -122,6 +137,9 @@ FINGERPRINT=""       # stable one-line-per-issue key set, for de-dupe (no timest
 ISSUES=0
 CAPACITY_WARNINGS=0  # subset of ISSUES that are early disk-capacity heads-ups
 DELIVERED_VIA=""     # which transport actually got the last alert out
+FAILURE_REPORT=""    # failed-product-attempts section of the email
+FAILURE_COUNT=0      # failed attempts not yet reported in any email
+FAILURE_KEYS=""      # their keys, recorded as reported once an email gets out
 
 note() { [ "$VERBOSE" -eq 1 ] && echo "$*" >&2 || true; }
 
@@ -376,6 +394,213 @@ check_postgres() {
   fi
 }
 
+# ── 6. Failed product attempts ───────────────────────────────────────────────
+# One row per failed attempt inside the lookback, as TSV:
+#   key  epoch  user_id  email  name  product  what  error
+#
+# Two sources, because no single one covers every product:
+#   * Job tables — the async products. A `failed` row carries the error the user saw.
+#   * credit_ledger refunds — the synchronous actions (Narrava script/storyboard/…,
+#     Chrono expand) leave no job row, and the refund issued when one fails is their
+#     only trace. Refund reasons whose product HAS a job table are excluded, since that
+#     row already reported the failure with its error, and because those reasons also
+#     cover things that are not failures (a cancelled render, a book's unused phases).
+#     Excluding by name rather than listing the sync actions means a new metered
+#     action is covered the day it ships.
+#
+# SpokenVerse generation failures appear in neither: the browser calls the TTS service
+# directly and is charged only on success, so a failed generation writes nothing.
+#
+# A job key carries the minute its row last changed, so a retry that fails again is a
+# new report, while the refund bookkeeping that touches a row just after it fails is not.
+product_failures_sql() {
+  cat <<'SQL'
+WITH w AS (SELECT now() - :'lookback'::interval AS since),
+f AS (
+  SELECT 'research_atlas:' || j.id || ':' || floor(extract(epoch FROM j.updated_at) / 60) AS key,
+         j.updated_at AS at, j.user_id, 'research_atlas' AS product,
+         'Dossier "' || j.title || '"' AS what, j.error_message AS err
+    FROM public.research_atlas_jobs j, w
+   WHERE j.status = 'failed' AND j.updated_at > w.since
+  UNION ALL
+  SELECT 'chrono_trace:' || j.id || ':' || floor(extract(epoch FROM j.updated_at) / 60),
+         j.updated_at, j.user_id, 'chrono_origin', 'Trace "' || j.title || '"', j.error_message
+    FROM public.chrono_origin_jobs j, w
+   WHERE j.status = 'failed' AND j.updated_at > w.since
+  UNION ALL
+  -- A phase failure parks the book for a retry; after PHASE_MAX_ATTEMPTS it also fails
+  -- the project, which the next branch then skips as the same event.
+  SELECT 'ba_phase:' || ph.id || ':' || floor(extract(epoch FROM ph.updated_at) / 60),
+         ph.updated_at, p.user_id, 'book_alchemy',
+         'Book "' || p.name || '", phase ' || ph.ordinal || ' (attempt ' || ph.attempts || ')',
+         ph.error_message
+    FROM public.book_alchemy_phases ph
+    JOIN public.book_alchemy_projects p ON p.id = ph.project_id, w
+   WHERE ph.status = 'failed' AND ph.updated_at > w.since
+  UNION ALL
+  SELECT 'ba_project:' || p.id || ':' || floor(extract(epoch FROM p.updated_at) / 60),
+         p.updated_at, p.user_id, 'book_alchemy', 'Book "' || p.name || '"', p.error_message
+    FROM public.book_alchemy_projects p, w
+   WHERE p.status = 'failed' AND p.updated_at > w.since
+     AND NOT EXISTS (
+           SELECT 1 FROM public.book_alchemy_phases ph
+            WHERE ph.project_id = p.id AND ph.status = 'failed'
+              AND ph.updated_at BETWEEN p.updated_at - interval '1 minute'
+                                    AND p.updated_at + interval '1 minute')
+  UNION ALL
+  SELECT 'narrava_ebook:' || e.id || ':' || floor(extract(epoch FROM e.updated_at) / 60),
+         e.updated_at, e.user_id, 'narrava_studio',
+         'Ebook analysis "' || coalesce(e.book_title, e.filename) || '"', e.error_message
+    FROM public.narrava_ebook_jobs e, w
+   WHERE e.status = 'failed' AND e.updated_at > w.since
+  UNION ALL
+  SELECT 'narrava_render:' || r.id || ':' || floor(extract(epoch FROM r.updated_at) / 60),
+         r.updated_at, r.user_id, 'narrava_studio',
+         'Video export "' || coalesce(np.name, 'project #' || r.project_id) || '"', r.error_message
+    FROM public.narrava_render_jobs r
+    LEFT JOIN public.narrava_projects np ON np.id = r.project_id, w
+   WHERE r.status = 'failed' AND r.updated_at > w.since
+  UNION ALL
+  SELECT 'ledger:' || l.id, l.created_at, l.user_id, l.product,
+         replace(regexp_replace(l.reason, '_refund$', ''), '_', ' ') || ' failed (credit refunded)',
+         NULL
+    FROM public.credit_ledger l, w
+   WHERE l.reason LIKE '%\_refund' AND l.created_at > w.since
+     AND l.reason NOT IN ('dossier_generate_refund', 'book_alchemy_generate_refund',
+                          'narrava_render_refund', 'narrava_ebook_refund', 'chrono_trace_refund')
+  UNION ALL
+  -- A trace refund with no failed job beside it never got a job row: the submit itself
+  -- failed (API unreachable, or it rejected the request).
+  SELECT 'ledger:' || l.id, l.created_at, l.user_id, 'chrono_origin',
+         'Trace failed to start (credit refunded)', NULL
+    FROM public.credit_ledger l, w
+   WHERE l.reason = 'chrono_trace_refund' AND l.created_at > w.since
+     AND NOT EXISTS (
+           SELECT 1 FROM public.chrono_origin_jobs j
+            WHERE j.user_id = l.user_id AND j.status = 'failed'
+              AND j.updated_at BETWEEN l.created_at - interval '2 minutes'
+                                   AND l.created_at + interval '2 minutes')
+)
+SELECT f.key,
+       extract(epoch FROM f.at)::bigint,
+       f.user_id,
+       coalesce(u.email, ''),
+       coalesce(regexp_replace(u.name, '\s+', ' ', 'g'), ''),
+       initcap(replace(f.product, '_', ' ')),
+       regexp_replace(f.what, '\s+', ' ', 'g'),
+       left(regexp_replace(coalesce(f.err, ''), '\s+', ' ', 'g'), 300)
+  FROM f
+  LEFT JOIN public.users u ON u.id = f.user_id
+ ORDER BY u.email, f.at;
+SQL
+}
+
+# format_failures — TSV rows (above) on stdin -> the email section, grouped by user.
+format_failures() {
+  MAX_ROWS="$MAX_FAILURE_ROWS" python3 -c '
+import csv, os, sys, time
+from collections import OrderedDict
+
+rows = [r for r in csv.reader(sys.stdin, delimiter="\t", quoting=csv.QUOTE_NONE) if len(r) >= 8]
+limit = int(os.environ.get("MAX_ROWS") or 50)
+users = OrderedDict()
+for r in rows:
+    users.setdefault(r[2], []).append(r)
+
+out = ["• %d failed product attempt(s) by %d user(s), not reported before:" % (len(rows), len(users)), ""]
+shown = 0
+for uid, items in users.items():
+    if shown >= limit:
+        break
+    _, _, _, email, name, *_ = items[0]
+    who = email or "(no email)"
+    if name:
+        who += " — " + name
+    out.append("    %s (user #%s)" % (who, uid))
+    for _, epoch, _, _, _, product, what, err in items:
+        if shown >= limit:
+            break
+        when = time.strftime("%b %d %H:%M", time.localtime(int(epoch)))
+        line = "      %s  %s · %s" % (when, product, what)
+        out.append(line + (": " + err if err else ""))
+        shown += 1
+    out.append("")
+if shown < len(rows):
+    out.append("    …and %d more in the same window (not listed)." % (len(rows) - shown))
+    out.append("")
+print("\n".join(out))
+'
+}
+
+check_product_failures() {
+  # The rows live in the app database, reached the same way check_postgres reaches it.
+  if [ -z "$PG_CONTAINER" ]; then note "PG_CONTAINER unset; skipping failed-attempt check"; return; fi
+  have docker || return   # already reported by check_postgres_service
+  [ "$(docker inspect -f '{{.State.Status}}' "$PG_CONTAINER" 2>/dev/null || true)" = "running" ] || return
+
+  local db_user db_name out errf rc=0 fresh seen="${STATE_DIR}/reported_failures"
+  db_user="$(env_value "$FRONTEND_ENV_FILE" DB_USER || true)"
+  db_name="$(env_value "$FRONTEND_ENV_FILE" DB_NAME || true)"
+  if [ -z "$db_user" ] || [ -z "$db_name" ]; then
+    add_issue "failures-no-db-config" \
+      "Can't check for failed product attempts: DB_USER / DB_NAME are not readable in ${FRONTEND_ENV_FILE}."
+    return
+  fi
+
+  errf="$(mktemp)" || return
+  out="$(product_failures_sql | docker exec -i "$PG_CONTAINER" \
+          psql -X -q -At -F $'\t' -v ON_ERROR_STOP=1 -v lookback="$FAILURE_LOOKBACK" \
+               -U "$db_user" -d "$db_name" 2>"$errf")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # A broken query must say so — a check that silently finds nothing is how the
+    # old pg_isready no-op went unnoticed for months.
+    add_issue "failures-query-failed" \
+      "The failed-product-attempts query errored (psql exit ${rc}):"$'\n'"$(head -n 5 "$errf" | sed 's/^/    /')"
+    rm -f "$errf"
+    return
+  fi
+  rm -f "$errf"
+
+  # Drop every failure an earlier email already carried.
+  fresh="$(printf '%s\n' "$out" | awk -F'\t' -v seen="$seen" '
+    BEGIN { while ((getline k < seen) > 0) reported[k] = 1 }
+    NF >= 8 && !($1 in reported)')"
+  if [ -z "$fresh" ]; then
+    note "ok: no new failed product attempts (last ${FAILURE_LOOKBACK})"
+    return
+  fi
+
+  FAILURE_KEYS="$(printf '%s\n' "$fresh" | cut -f1)"
+  FAILURE_COUNT="$(printf '%s\n' "$FAILURE_KEYS" | grep -c .)"
+  FAILURE_REPORT="$(printf '%s\n' "$fresh" | format_failures)"$'\n\n'
+  note "FAILED ATTEMPTS: ${FAILURE_COUNT} new"
+}
+
+# Once an email carrying them is out, the failures are never mailed again. The key file
+# only has to remember a lookback's worth of failures, so trim it to keep it small.
+mark_failures_reported() {
+  local f="${STATE_DIR}/reported_failures"
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  printf '%s\n' "$FAILURE_KEYS" >> "$f" 2>/dev/null || true
+  { tail -n 5000 "$f" > "${f}.tmp" && mv -f "${f}.tmp" "$f"; } 2>/dev/null || true
+  rm -f "${STATE_DIR}/failures_retry_after" 2>/dev/null || true
+}
+
+# A failed send leaves the failures unreported, so they go out with the next email —
+# but wait DELIVERY_RETRY_SECONDS before a failures-only retry, the same backoff the
+# issue alerts get, so a dead mail path isn't hammered every run.
+defer_failures() {
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+  echo $(( $(date +%s) + DELIVERY_RETRY_SECONDS )) > "${STATE_DIR}/failures_retry_after" 2>/dev/null || true
+}
+
+failures_due() {
+  [ "$FAILURE_COUNT" -gt 0 ] || return 1
+  local until=0
+  [ -f "${STATE_DIR}/failures_retry_after" ] && until="$(cat "${STATE_DIR}/failures_retry_after" 2>/dev/null || echo 0)"
+  [ "$(date +%s)" -ge "${until:-0}" ]
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Alert delivery — via the phansora-api email endpoint (POST /contact -> EMAIL_TO)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -538,48 +763,67 @@ scan_logs "$FRONTEND_SERVICE" "frontend logs"
 check_disk
 check_load
 check_postgres
+check_product_failures
 
 HOST="$(hostname -f 2>/dev/null || hostname)"
 TS="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 
-if [ "$ISSUES" -eq 0 ]; then
+if [ "$ISSUES" -eq 0 ] && [ "$FAILURE_COUNT" -eq 0 ]; then
   note "All clean at ${TS}."
   exit 0
 fi
 
-BODY="status-agent found ${ISSUES} issue(s) on ${HOST} at ${TS}:
+if [ "$ISSUES" -gt 0 ]; then
+  BODY="status-agent found ${ISSUES} issue(s) on ${HOST} at ${TS}:
 
-${REPORT}
-— Automated watchdog. Log window scanned: ${LOG_WINDOW}."
-
-# A run whose only findings are capacity heads-ups isn't an incident — label it as
-# one and re-send it far less often than a real failure.
-if [ "$CAPACITY_WARNINGS" -eq "$ISSUES" ]; then
-  SUBJECT="${EMAIL_SUBJECT_PREFIX} disk capacity warning"
-  COOLDOWN="$DISK_WARN_COOLDOWN_SECONDS"
+${REPORT}${FAILURE_REPORT}"
 else
-  SUBJECT="${EMAIL_SUBJECT_PREFIX} ${ISSUES} issue(s) detected"
-  COOLDOWN="$ALERT_COOLDOWN_SECONDS"
+  BODY="status-agent found ${FAILURE_COUNT} failed product attempt(s) on ${HOST} at ${TS}:
+
+${FAILURE_REPORT}"
 fi
-FP="$(printf '%s' "$FINGERPRINT" | sort | (sha256sum 2>/dev/null || shasum -a 256) | awk '{print $1}')"
+BODY+="— Automated watchdog. Log window scanned: ${LOG_WINDOW}; failed attempts: last ${FAILURE_LOOKBACK}, each reported once."
+
+SEND=0
+FP=""
+if [ "$ISSUES" -gt 0 ]; then
+  # A run whose only findings are capacity heads-ups isn't an incident — label it as
+  # one and re-send it far less often than a real failure.
+  if [ "$CAPACITY_WARNINGS" -eq "$ISSUES" ]; then
+    SUBJECT="${EMAIL_SUBJECT_PREFIX} disk capacity warning"
+    COOLDOWN="$DISK_WARN_COOLDOWN_SECONDS"
+  else
+    SUBJECT="${EMAIL_SUBJECT_PREFIX} ${ISSUES} issue(s) detected"
+    COOLDOWN="$ALERT_COOLDOWN_SECONDS"
+  fi
+  [ "$FAILURE_COUNT" -gt 0 ] && SUBJECT+=", ${FAILURE_COUNT} failed product attempt(s)"
+  FP="$(printf '%s' "$FINGERPRINT" | sort | (sha256sum 2>/dev/null || shasum -a 256) | awk '{print $1}')"
+  should_alert "$FP" "$COOLDOWN" && SEND=1
+else
+  SUBJECT="${EMAIL_SUBJECT_PREFIX} ${FAILURE_COUNT} failed product attempt(s)"
+fi
+# New failed attempts go out even while the issues above sit in their cooldown.
+failures_due && SEND=1
 
 # Always keep a local record so nothing is lost even if email delivery fails.
-{ echo "===== ${TS} ${HOST} (${ISSUES} issues, fp=${FP}) ====="; printf '%s\n' "$BODY"; } \
+{ echo "===== ${TS} ${HOST} (${ISSUES} issues, ${FAILURE_COUNT} failed attempts, fp=${FP:-none}) ====="; printf '%s\n' "$BODY"; } \
   >> "$ALERT_LOG" 2>/dev/null || true
 
-if should_alert "$FP" "$COOLDOWN"; then
+if [ "$SEND" -eq 1 ]; then
   if deliver "$SUBJECT" "$BODY"; then
-    record_alert "$FP" yes
+    [ "$ISSUES" -gt 0 ] && record_alert "$FP" yes
+    [ "$FAILURE_COUNT" -gt 0 ] && mark_failures_reported
     note "Alert emailed via ${DELIVERED_VIA}."
   else
     # Both transports are down — surface loudly to cron/syslog so it's noticed, and
     # mark the attempt so should_alert retries in minutes rather than hours.
-    have logger && logger -t status-agent "ALERT delivery FAILED on every transport; ${ISSUES} issues on ${HOST} (see ${ALERT_LOG})" || true
-    echo "status-agent: ${ISSUES} issue(s) but BOTH the API and SMTP paths FAILED — see ${ALERT_LOG}" >&2
-    record_alert "$FP" no
+    have logger && logger -t status-agent "ALERT delivery FAILED on every transport; ${ISSUES} issues, ${FAILURE_COUNT} failed attempts on ${HOST} (see ${ALERT_LOG})" || true
+    echo "status-agent: ${ISSUES} issue(s), ${FAILURE_COUNT} failed attempt(s) but BOTH the API and SMTP paths FAILED — see ${ALERT_LOG}" >&2
+    [ "$ISSUES" -gt 0 ] && record_alert "$FP" no
+    [ "$FAILURE_COUNT" -gt 0 ] && defer_failures
   fi
 else
-  note "Same issues as last alert and within cooldown (${COOLDOWN}s) — not re-emailing."
+  note "Nothing new since the last alert (issues within cooldown, or failed attempts waiting out a delivery retry) — not re-emailing."
 fi
 
 exit 1
