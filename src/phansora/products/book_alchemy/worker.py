@@ -13,6 +13,18 @@ Run:
     python -m phansora.products.book_alchemy.worker
 Deploy as the systemd unit `book-alchemy-worker.service` (single instance to
 start; the SKIP LOCKED claim design already allows scaling to N workers later).
+
+Several users' books share this process. It runs CONCURRENCY lanes, and a lane
+holds a book for one TURN (about TURN_SECONDS of work, always at least one step)
+before handing it back; the next claim goes to whichever waiting book was served
+longest ago (db.claim_next_project). So books take turns, roughly a lesson at a
+time, instead of one book holding the worker for a whole ~2.5 h delivery phase
+while someone who has just uploaded waits behind it with nothing to listen to.
+
+The voice itself is still one GPU: two lanes recording at once queue at the API's
+admission gate (spokenverse/admission.py) and are served one after the other.
+What the lanes buy is that the rest of a book — reading the source, extracting
+concepts, writing scripts, all DeepSeek and CPU — goes on while another book records.
 """
 from __future__ import annotations
 
@@ -21,6 +33,7 @@ import logging
 import os
 import signal
 import socket
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv  # noqa: E402
@@ -41,6 +54,15 @@ LEASE_SECONDS = int(os.getenv("BOOK_ALCHEMY_LEASE_SECONDS", "600"))
 IDLE_SLEEP = float(os.getenv("BOOK_ALCHEMY_IDLE_SLEEP", "5"))
 # How many times one delivery phase may fail before the whole course is failed.
 PHASE_MAX_ATTEMPTS = int(os.getenv("BOOK_ALCHEMY_PHASE_MAX_ATTEMPTS", "2"))
+# Books worked on at once. Three: one recording, the others writing, with room
+# for a long OCR parse that would otherwise hold a lane for an hour.
+CONCURRENCY = max(1, int(os.getenv("BOOK_ALCHEMY_CONCURRENCY", "3")))
+# How long a lane stays on one book before handing it back. Measured in time rather
+# than steps because steps are wildly uneven — one concept extraction is ~15 s, one
+# recorded lesson ~5-8 min — and a turn of "one step" would let a book in its
+# analyze phase move one chunk per lesson another book records. A step is never cut
+# short, so a recording always completes its lesson.
+TURN_SECONDS = float(os.getenv("BOOK_ALCHEMY_TURN_SECONDS", "300"))
 
 _stop = asyncio.Event()
 
@@ -138,7 +160,7 @@ async def _fail(project_id: int, proj: dict, message: str) -> None:
         _cleanup_source(proj)
 
 
-async def _heartbeat(project_id: int) -> None:
+async def _heartbeat(project_id: int, owner: str) -> None:
     """Hold the lease while a single step runs.
 
     Renewing only BETWEEN steps was fine when every step was bounded in minutes,
@@ -150,43 +172,53 @@ async def _heartbeat(project_id: int) -> None:
     while True:
         await asyncio.sleep(interval)
         try:
-            await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
+            await db.renew_lease(project_id, owner, LEASE_SECONDS)
         except Exception:  # noqa: BLE001 — a DB blip must not end the run
             log.warning("Lease renewal failed for project %s", project_id, exc_info=True)
 
 
-async def _process_project(project_id: int, client: DeepSeekClient) -> None:
-    """Drive one claimed project until it has nothing more to do, renewing its
-    lease. "Nothing more" now includes parking to wait for the listener to ask
-    for the next delivery phase."""
-    cleaned = False
+async def _take_turn(project_id: int, client: DeepSeekClient, owner: str) -> int:
+    """Drive one claimed project for a turn: steps until TURN_SECONDS is used up or
+    the book has nothing more to do — done, failed, or parked waiting for the
+    listener to ask for the next delivery phase. Returns the steps taken.
+
+    Ending the turn does not end the book. The caller releases the lease, and the
+    book is claimed again (by any lane) once the books waiting longer have had
+    theirs; every phase is cursor-driven and resumes from what is in the database.
+    """
+    started = time.monotonic()
+    steps = 0
     while not _stop.is_set():
         row = await db.get_project(project_id)
         if row is None:
-            return
+            return steps
         proj = dict(row)
         if proj["phase"] in pipeline.IDLE_PHASES:
             # Done, failed, or parked between phases — all finished with the source
             # file, except the failure that never got as far as a chunk. See _fail.
             if proj["phase"] != "failed" or await db.count_chunks(project_id) > 0:
                 _cleanup_source(proj)
-            return
-        if not cleaned and proj["phase"] not in ("uploaded", "parse"):
+            return steps
+        if steps and time.monotonic() - started >= TURN_SECONDS:
+            return steps
+        if proj["phase"] not in ("uploaded", "parse"):
+            # Idempotent and cheap once the file is gone, so it can run every turn
+            # rather than needing to remember across them.
             _cleanup_source(proj)
-            cleaned = True
-        beat = asyncio.ensure_future(_heartbeat(project_id))
+        beat = asyncio.ensure_future(_heartbeat(project_id, owner))
         try:
             await pipeline.run_step(proj, client)
+            steps += 1
         except pipeline.RetryableError as exc:
             # Interrupted, not broken. Leave status 'processing' and let the lease
             # drop: the next worker claims the row and resumes from what's on disk.
             log.warning("Project %s interrupted, will resume: %s", project_id, exc)
             await db.set_project(project_id, stage="Paused — resuming shortly")
-            return
+            return steps
         except pipeline.TerminalError as exc:
             log.warning("Project %s failed (terminal): %s", project_id, exc)
             await _fail(project_id, proj, str(exc))
-            return
+            return steps
         except Exception as exc:  # noqa: BLE001
             # Same reasoning as RetryableError, for the phases that don't name it
             # themselves: audio rendering loses its ffmpeg and its HTTP call to the
@@ -194,23 +226,26 @@ async def _process_project(project_id: int, client: DeepSeekClient) -> None:
             if _stop.is_set() or pipeline.shutting_down():
                 log.warning("Project %s interrupted by shutdown, will resume: %s", project_id, exc)
                 await db.set_project(project_id, stage="Paused — resuming shortly")
-                return
+                return steps
             log.exception("Project %s step crashed", project_id)
-            await _fail(project_id, proj, str(exc))
-            return
+            # str() of some exceptions is empty; a blank error is what the dashboard
+            # and the admin page would then show for the book.
+            await _fail(project_id, proj, str(exc) or type(exc).__name__)
+            return steps
         finally:
             beat.cancel()
-        await db.renew_lease(project_id, WORKER_ID, LEASE_SECONDS)
+        await db.renew_lease(project_id, owner, LEASE_SECONDS)
+    return steps
 
 
-async def main() -> None:
-    log.info("Book Alchemy worker starting (id=%s, lease=%ss)", WORKER_ID, LEASE_SECONDS)
-    client = DeepSeekClient.from_env()
-    await db.get_pool()  # fail fast if DB/env is misconfigured
-
+async def _lane(lane: int, client: DeepSeekClient) -> None:
+    """One of CONCURRENCY loops: claim the book whose turn it is, work it for a turn,
+    hand it back."""
+    # Distinct per lane so the lease column says which loop holds a book.
+    owner = f"{WORKER_ID}/{lane}"
     while not _stop.is_set():
         try:
-            row = await db.claim_next_project(WORKER_ID, LEASE_SECONDS)
+            row = await db.claim_next_project(owner, LEASE_SECONDS)
         except Exception:  # noqa: BLE001
             log.exception("claim failed; backing off")
             await _sleep_or_stop(IDLE_SLEEP)
@@ -221,12 +256,27 @@ async def main() -> None:
             continue
 
         pid = int(row["id"])
-        log.info("Claimed project %s (phase=%s)", pid, row["phase"])
+        log.info("Lane %s claimed project %s (phase=%s)", lane, pid, row["phase"])
+        steps = 0
         try:
-            await _process_project(pid, client)
+            steps = await _take_turn(pid, client, owner)
+        except Exception:  # noqa: BLE001 — one book's bad turn must not end the lane
+            log.exception("Lane %s: turn on project %s failed outside a step", lane, pid)
+            await _sleep_or_stop(IDLE_SLEEP)
         finally:
             await db.release_lease(pid)
-            log.info("Released project %s", pid)
+            log.info("Lane %s released project %s after %s step(s)", lane, pid, steps)
+
+
+async def main() -> None:
+    log.info(
+        "Book Alchemy worker starting (id=%s, lease=%ss, lanes=%s, turn=%ss)",
+        WORKER_ID, LEASE_SECONDS, CONCURRENCY, TURN_SECONDS,
+    )
+    client = DeepSeekClient.from_env()
+    await db.get_pool()  # fail fast if DB/env is misconfigured
+
+    await asyncio.gather(*(_lane(n, client) for n in range(1, CONCURRENCY + 1)))
 
     await db.close_pool()
     log.info("Book Alchemy worker stopped.")

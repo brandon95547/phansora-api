@@ -37,6 +37,15 @@ class VoiceServiceBusy(RuntimeError):
         self.retry_after = retry_after
 
 
+class VoiceServiceError(RuntimeError):
+    """The voice service answered with an error. Carries the HTTP status so the caller
+    can tell a failed render (5xx, worth another try) from a bad request (4xx, not)."""
+
+    def __init__(self, status: int, body: str) -> None:
+        super().__init__(f"txt-to-audio HTTP {status}: {body[:800]}")
+        self.status = status
+
+
 def _internal_headers() -> dict:
     """Credentials for the API's AuthGate (shared/auth).
 
@@ -100,8 +109,7 @@ async def render_script_to_audio(
                 retry_after = resp.headers.get("Retry-After") or "60"
                 raise VoiceServiceBusy(int(retry_after) if retry_after.isdigit() else 60)
             if resp.status >= 400:
-                body = await resp.text()
-                raise RuntimeError(f"txt-to-audio HTTP {resp.status}: {body[:800]}")
+                raise VoiceServiceError(resp.status, await resp.text())
             with open(out_path, "wb") as fh:
                 async for chunk in resp.content.iter_chunked(1 << 16):
                     fh.write(chunk)

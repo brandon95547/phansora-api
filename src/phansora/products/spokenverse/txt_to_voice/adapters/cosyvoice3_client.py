@@ -81,7 +81,7 @@ import tempfile
 import uuid
 from pathlib import Path
 from threading import Lock
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from phansora.products.spokenverse import admission
 from phansora.shared import gpu
@@ -187,6 +187,10 @@ MODEL_DIR_NAME = "Fun-CosyVoice3-0.5B-RL"  # what the Makefile's snapshot_downlo
 
 def _model_dir(repo: Path) -> str:
     return _env("COSYVOICE3_MODEL_DIR", str(repo / "pretrained_models" / MODEL_DIR_NAME))
+
+
+class SynthesisStopped(RuntimeError):
+    """The caller asked this render to stop (``should_stop``) — not an engine fault."""
 
 
 class EngineNeedsRestart(RuntimeError):
@@ -572,6 +576,8 @@ def _synthesize_sync(
     emo_alpha: Optional[float] = None,
     emo_vector: Optional[Sequence[float]] = None,
     instruct_text: Optional[str] = None,
+    *,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> None:
     # CosyVoice clones from the speaker clip + its transcript. rate/volume/language/style
     # and emo_* are accepted for interface parity but not used by the model.
@@ -646,6 +652,12 @@ def _synthesize_sync(
             spk_id = _spk_id_for(cosy, ref_clip, conditioning)
         parts: list["torch.Tensor"] = []
         for chunk in chunks:
+            # Checked between pieces, the only place a thread can stop cleanly. A file's
+            # chunks run as several of these at once, and when one of them fails the
+            # file is lost anyway — without this the others kept the GPU for minutes
+            # more, rendering audio nobody would get, ahead of the retry and everyone else.
+            if should_stop is not None and should_stop():
+                raise SynthesisStopped("Stopped: another part of this file failed.")
             # Both paths run off the cached speaker id (prompt_text/prompt_wav unused).
             # We pass `conditioning`, not the bare instruction: it is ignored on a cache
             # HIT, but on a miss it is what reaches the LLM — and without the
@@ -688,6 +700,7 @@ async def synthesize_to_file(
     emo_alpha: Optional[float] = None,  # accepted for parity; CosyVoice has no emotion control
     emo_vector: Optional[Sequence[float]] = None,  # accepted for parity; ignored
     instruct_text: Optional[str] = None,  # delivery direction, e.g. "speak in a calm tone"
+    should_stop: Optional[Callable[[], bool]] = None,  # polled between pieces; True abandons the file
     **_ignored,
 ) -> None:
     # Spoken-form normalization happens here, at the engine boundary, so every caller gets
@@ -704,6 +717,7 @@ async def synthesize_to_file(
         _synthesize_sync,
         text, out_path, voice, use_gpu, rate, volume, speaker, language, ref_audio,
         prompt_text, speed, style, emo_alpha, emo_vector, instruct_text,
+        should_stop=should_stop,
     )
 
 

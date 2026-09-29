@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote as urlquote
@@ -173,7 +174,28 @@ if _BOOK_ALCHEMY_OK:
             "completed_at": _ba_iso(d.get("completed_at")),
         }
 
-    def _ba_project_wire(row, phases: Optional[list] = None) -> dict:
+    def _ba_queue_wire(d: dict, active_total: Optional[int]) -> Optional[dict]:
+        """Where a book stands among everyone's, for a book that still has work.
+
+        Books take turns on the worker (worker.py), so "queued" is not a position in a
+        line: a waiting book is served within a turn or two. What the listener can use
+        is whether theirs is being worked on this minute, and how many other books it
+        is sharing the narrator with — which is why it is going slower than it did
+        when they had the box to themselves. A count only; nothing about whose.
+        """
+        if active_total is None or d["status"] not in ("uploaded", "processing"):
+            return None
+        if d["phase"] == "complete":
+            return None
+        expires = d.get("lease_expires_at")
+        running = bool(d.get("lease_owner")) and expires is not None and (
+            expires > datetime.now(timezone.utc)
+        )
+        return {"running": running, "others": max(0, active_total - 1)}
+
+    def _ba_project_wire(
+        row, phases: Optional[list] = None, active_total: Optional[int] = None,
+    ) -> dict:
         d = dict(row)
         wired = [_ba_phase_wire(p) for p in (phases or [])]
         return {
@@ -201,6 +223,7 @@ if _BOOK_ALCHEMY_OK:
                 (p["ordinal"] for p in wired if p["status"] == "ready"), None
             ),
             "auto_continue": bool(d.get("auto_continue")),
+            "queue": _ba_queue_wire(d, active_total),
             "curriculum": _ba_json(d.get("curriculum")),
             "error": d.get("error_message"),
             "created_at": _ba_iso(d.get("created_at")),
@@ -326,12 +349,14 @@ if _BOOK_ALCHEMY_OK:
         for p in await ba_db.list_phases_for_projects([int(r["id"]) for r in rows]):
             by_project.setdefault(int(p["project_id"]), []).append(p)
         limit = _ba_max_projects()
+        active_total = await ba_db.count_active_projects()
         # The dashboard gates its upload form on these so it can block (and explain)
         # an over-limit upload before spending a credit on it.
         return {
             "ok": True,
             "projects": [
-                _ba_project_wire(r, by_project.get(int(r["id"]), [])) for r in rows
+                _ba_project_wire(r, by_project.get(int(r["id"]), []), active_total)
+                for r in rows
             ],
             "limit": limit,
             "remaining": max(0, limit - len(rows)),
@@ -354,7 +379,7 @@ if _BOOK_ALCHEMY_OK:
         }
         sessions = await ba_db.get_sessions(project_id)
         phases = await ba_db.list_phases_for_projects([project_id])
-        out = _ba_project_wire(row, phases)
+        out = _ba_project_wire(row, phases, await ba_db.count_active_projects())
         out["sessions"] = [_ba_session_wire(s, ref_map) for s in sessions]
         return {"ok": True, "project": out}
 

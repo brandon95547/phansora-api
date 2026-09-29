@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 from . import db, prompts
-from .audio import VoiceServiceBusy, render_script_to_audio
+from .audio import VoiceServiceBusy, VoiceServiceError, render_script_to_audio
 from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
 from .parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_source
@@ -50,6 +50,11 @@ KINDS = ["concept", "definition", "framework", "example", "conclusion"]
 MAX_REGEN = 2                 # re-script attempts before flagging a session
 _BUSY_RETRIES = 20            # how many times a lesson waits out a busy voice service
 _BUSY_MAX_WAIT_S = 60         # ceiling on one back-off, so a long Retry-After cannot stall a job
+# Recording attempts per lesson for a failure that is NOT "busy". One bad render used to
+# fail the whole book, with no retry at all in its first phase; a second try clears a
+# one-off engine fault, and a lesson that fails every time still fails the book.
+_LESSON_ATTEMPTS = max(1, int(os.getenv("BOOK_ALCHEMY_LESSON_ATTEMPTS", "3")))
+_LESSON_RETRY_WAIT_S = 30
 
 # --- Listening budget ---------------------------------------------------------
 # Book Alchemy adapts a work; it does not expand it. Lesson count is therefore a
@@ -214,10 +219,15 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
         u for u in (_as_dict(project.get("options")).get("source_urls") or []) if str(u).strip()
     ] or ([project.get("source_url")] if project.get("source_url") else [])
     try:
+        # In a thread: parsing is synchronous (PyMuPDF, a blocking URL fetch) and the
+        # worker runs several books on one event loop. Inline, a long parse froze every
+        # other lane AND their lease heartbeats — and a lease that lapses mid-step lets
+        # a second lane claim the same book.
         if fmt == "url" and len(source_urls) > 1:
-            doc = _parse_urls(source_urls, title_hint=project.get("name"))
+            doc = await asyncio.to_thread(_parse_urls, source_urls, title_hint=project.get("name"))
         else:
-            doc = parse_source(
+            doc = await asyncio.to_thread(
+                parse_source,
                 source_format=fmt,
                 path=source_path,
                 url=(source_urls[0] if source_urls else project.get("source_url")),
@@ -230,7 +240,7 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     except UnsupportedSourceError as exc:
         raise TerminalError(str(exc)) from exc
 
-    chunks = build_chunks(doc)
+    chunks = await asyncio.to_thread(build_chunks, doc)
     if not chunks:
         raise TerminalError("No readable text could be extracted from the source.")
 
@@ -1025,7 +1035,18 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     # silently change every prompt from phase 2 onwards.
     sessions = await db.get_sessions(pid)
     total = len(sessions)
-    sess = await db.next_session_needing(pid, ["pending"], await db.work_ceiling(pid))
+    ceiling = await db.work_ceiling(pid)
+    sess = await db.next_session_needing(pid, ["pending"], ceiling)
+    # Record each lesson as soon as its script exists, before writing the next one.
+    # Writing every script in the phase first meant nothing was playable until all of
+    # them were done — ~13 minutes for a six-lesson book, far longer for a big phase —
+    # when lesson 1 could have been in the listener's ears after one script and one
+    # recording. The order of the scripts is unchanged (each is still conditioned on
+    # the ones before it), so nothing about what gets written moves.
+    ready = await db.next_session_needing(pid, ["validated"], ceiling)
+    if _record_before_writing(ready, sess):
+        await _record_lesson(project, ready, total, sessions)
+        return
     if sess is None:
         await db.set_project(pid, phase="audio", stage="Generating audio", progress=80)
         return
@@ -1210,6 +1231,25 @@ async def _phase_audio(project: dict) -> None:
         await _close_active_phase(project)
         return
 
+    await _record_lesson(project, sess, total, sessions)
+
+
+def _record_before_writing(ready: Any, pending: Any) -> bool:
+    """Whether the next unit of lesson work is a recording rather than a script.
+
+    Record a written lesson that comes before the next one to write — which, since
+    scripts are written in order, means "the lesson just written". A written lesson
+    AFTER the next pending one (a Regenerate reopened an earlier lesson) waits: its
+    script is not the next thing anyone will listen to.
+    """
+    if ready is None:
+        return False
+    return pending is None or int(ready["ordinal"]) < int(pending["ordinal"])
+
+
+async def _record_lesson(project: dict, sess: Any, total: int, sessions: list[Any]) -> None:
+    """Record one written lesson and mark it complete — the moment it is playable."""
+    pid = int(project["id"])
     if not (sess["script"] or "").strip():
         # A blank script silently yields a course with no audio, which is the hardest
         # possible failure to diagnose from the outside — say so.
@@ -1242,16 +1282,46 @@ async def _phase_audio(project: dict) -> None:
     # spokenverse/admission.py), so a busy 503 here is the SYSTEM WORKING, not a fault —
     # it means a person got the slot. Treating it as a failure would abandon a lesson that
     # would have rendered a minute later, which is the wrong trade for a job nobody is
-    # watching. Every other error still fails immediately: only this one is retried, and
-    # only for as long as the service keeps saying "busy" rather than "broken".
+    # watching. That wait (up to _BUSY_RETRIES back-offs) lives in _render_waiting_out_busy.
+    #
+    # Any other failure gets _LESSON_ATTEMPTS tries: the voice service is shared, and a
+    # fault in one render (the 2026-09-27 failure of project 61 left no message at all)
+    # is not evidence the next will fail too. A 4xx is the request's own fault and is
+    # not retried; neither is anything once the worker is shutting down.
+    for attempt in range(1, _LESSON_ATTEMPTS + 1):
+        try:
+            seconds = await _render_waiting_out_busy(project, sess, out_path, voice, instruct_text)
+            break
+        except VoiceServiceBusy:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            client_error = isinstance(exc, VoiceServiceError) and exc.status < 500
+            if attempt >= _LESSON_ATTEMPTS or client_error or shutting_down():
+                raise
+            log.warning(
+                "Project %s lesson %s: recording failed (attempt %d/%d), retrying in %ss: %s",
+                pid, sess["ordinal"], attempt, _LESSON_ATTEMPTS, _LESSON_RETRY_WAIT_S,
+                str(exc) or type(exc).__name__,
+            )
+            await asyncio.sleep(_LESSON_RETRY_WAIT_S)
+
+    await db.set_session(
+        sess["id"], status="complete", audio_path=str(out_path),
+        audio_seconds=seconds, generated_at=_now(),
+    )
+
+
+async def _render_waiting_out_busy(
+    project: dict, sess: Any, out_path: Path, voice: str, instruct_text: Optional[str],
+) -> int:
+    """One recording of a lesson, backing off for as long as the service says "busy"."""
     for attempt in range(_BUSY_RETRIES):
         try:
-            seconds = await render_script_to_audio(
+            return await render_script_to_audio(
                 script=sess["script"], out_path=out_path,
                 user_id=project["user_id"], voice=voice,
                 instruct_text=instruct_text,
             )
-            break
         except VoiceServiceBusy as busy:
             if attempt == _BUSY_RETRIES - 1:
                 raise
@@ -1261,11 +1331,7 @@ async def _phase_audio(project: dict) -> None:
                 wait, sess["id"], attempt + 1, _BUSY_RETRIES,
             )
             await asyncio.sleep(wait)
-
-    await db.set_session(
-        sess["id"], status="complete", audio_path=str(out_path),
-        audio_seconds=seconds, generated_at=_now(),
-    )
+    raise VoiceServiceBusy()
 
 
 # --------------------------------------------------------------- delivery phases

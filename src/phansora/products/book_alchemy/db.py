@@ -26,6 +26,11 @@ _pool: Optional[asyncpg.Pool] = None
 _SCHEMA_ADDITIONS = (
     "ALTER TABLE public.book_alchemy_chunks "
     "ADD COLUMN IF NOT EXISTS teachable boolean NOT NULL DEFAULT true",
+    # When a worker last finished a turn on the book: the claim order, so books take
+    # turns instead of the oldest holding the worker. NULL = never served, which
+    # sorts first — a new upload starts at the next free turn.
+    "ALTER TABLE public.book_alchemy_projects "
+    "ADD COLUMN IF NOT EXISTS served_at timestamptz",
 )
 
 
@@ -214,7 +219,15 @@ async def claim_next_project(worker_id: str, lease_seconds: int = 600) -> Option
     Note this needs no awareness of delivery phases: a project parked waiting for
     the listener to ask for the next phase sits at status 'awaiting_user', which
     this predicate already excludes. This query is the single point of
-    correctness for claiming, and leaving it untouched is worth a lot."""
+    correctness for claiming, and leaving it untouched is worth a lot.
+
+    The ORDER is what makes books take turns. The worker hands a book back after
+    one turn (worker.TURN_SECONDS) and release_lease stamps served_at, so the next
+    claim goes to whichever waiting book was served longest ago. A book that has
+    never been served sorts first: someone who has just uploaded starts at the next
+    free turn rather than behind every phase of every older book. It used to be
+    created_at alone, with the worker keeping a book for its whole phase, which put
+    a new user's first lesson hours behind an older book's next phase."""
     pool = await get_pool()
     async with pool.acquire() as con:
         async with con.transaction():
@@ -224,7 +237,7 @@ async def claim_next_project(worker_id: str, lease_seconds: int = 600) -> Option
                  WHERE status IN ('uploaded', 'processing')
                    AND phase <> 'complete'
                    AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
-                 ORDER BY created_at ASC
+                 ORDER BY served_at ASC NULLS FIRST, created_at ASC
                  FOR UPDATE SKIP LOCKED
                  LIMIT 1
                 """
@@ -258,11 +271,30 @@ async def renew_lease(project_id: int, worker_id: str, lease_seconds: int = 600)
 
 
 async def release_lease(project_id: int) -> None:
+    """End a turn: free the book for the next claim and move it to the back of the
+    line (served_at — see claim_next_project)."""
     pool = await get_pool()
     await pool.execute(
-        "UPDATE public.book_alchemy_projects SET lease_owner = NULL, lease_expires_at = NULL WHERE id = $1",
+        """
+        UPDATE public.book_alchemy_projects
+           SET lease_owner = NULL, lease_expires_at = NULL, served_at = NOW()
+         WHERE id = $1
+        """,
         project_id,
     )
+
+
+async def count_active_projects() -> int:
+    """Books across every account that still have work queued — the same predicate
+    claim_next_project uses, lease or no lease. What the dashboard shows as "taking
+    turns with N other books"."""
+    pool = await get_pool()
+    return int(await pool.fetchval(
+        """
+        SELECT COUNT(*) FROM public.book_alchemy_projects
+         WHERE status IN ('uploaded', 'processing') AND phase <> 'complete'
+        """
+    ) or 0)
 
 
 # --------------------------------------------------------------- chunks

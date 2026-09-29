@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -59,6 +60,18 @@ class TTSConfig:
     # Delivery direction routed through inference_instruct2 ("speak in a calm tone").
     # None/empty => plain zero-shot cloning.
     instruct_text: Optional[str] = None
+
+
+def _describe(exc: BaseException) -> str:
+    """An error as one line that is never blank.
+
+    Some exceptions carry no message — a bare assert, an empty RuntimeError — and
+    str() of those is "". Logged as-is, that is what the 2026-09-27 Book Alchemy
+    failure left behind: "Failed converting session.txt:" and nothing else, with no
+    traceback, so the cause could not be recovered.
+    """
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 class BatchConverter:
@@ -121,6 +134,9 @@ class BatchConverter:
 
         # --- NEW: synthesize chunks concurrently ---
         sem = asyncio.Semaphore(max(1, int(self.cfg.max_concurrency)))
+        # Set when any chunk fails. The chunks render in worker threads, which a task
+        # cancel cannot reach; the engine polls this between pieces instead.
+        stop = threading.Event()
 
         async def run_one(i: int, chunk_text_str: str, chunk_file: Path) -> None:
             async with sem:
@@ -138,14 +154,25 @@ class BatchConverter:
                     prompt_text=self.cfg.prompt_text,
                     speed=self.cfg.speed,
                     instruct_text=self.cfg.instruct_text,
+                    should_stop=stop.is_set,
                 )
 
         tasks: List[asyncio.Task[None]] = []
         for i, chunk in enumerate(chunks, start=1):
             tasks.append(asyncio.create_task(run_one(i, chunk, chunk_files[i - 1])))
 
-        # If any chunk fails, gather will raise; this is desired.
-        await asyncio.gather(*tasks)
+        # If any chunk fails, gather will raise; this is desired. What gather does NOT do
+        # is stop the others, so the file's remaining chunks used to keep rendering —
+        # the ones waiting for the semaphore and the ones mid-render — for audio that
+        # was already lost. Stop both kinds before letting the failure out.
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            stop.set()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         # --- end NEW ---
 
         # Every ffmpeg pass below runs via asyncio.to_thread. They are blocking
@@ -206,8 +233,8 @@ class BatchConverter:
                     try:
                         await self._convert_one_txt(p, out_dir, in_dir)
                     except Exception as e:
-                        LOG.error("Failed converting %s: %s", p.name, e)
-                        failures.append((p.name, str(e)))
+                        failures.append((p.name, _describe(e)))
+                        LOG.error("Failed converting %s: %s", p.name, _describe(e), exc_info=True)
 
             LOG.info("File concurrency: %d", max(1, int(self.cfg.file_concurrency)))
             await asyncio.gather(*(run_file(p) for p in txt_files))
@@ -216,8 +243,8 @@ class BatchConverter:
                 try:
                     await self._convert_one_txt(p, out_dir, in_dir)
                 except Exception as e:
-                    LOG.error("Failed converting %s: %s", p.name, e)
-                    failures.append((p.name, str(e)))
+                    failures.append((p.name, _describe(e)))
+                    LOG.error("Failed converting %s: %s", p.name, _describe(e), exc_info=True)
 
         if failures:
             print("\nSome files failed:")
