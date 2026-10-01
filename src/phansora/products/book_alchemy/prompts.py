@@ -475,6 +475,19 @@ def script_user(
     )
 
 
+# ----------------------------------------------------------------- continuation
+# Sent as a follow-up turn when a reply hits the model's output ceiling (see
+# DeepSeekClient.chat_to_end). It is not part of any task prompt above and never
+# reaches the model unless a reply was cut off: the reply so far is handed back
+# trimmed to its last finished sentence, and this asks for the rest.
+CONTINUE_USER = (
+    "Your reply ran out of room and stopped there. Everything above is kept exactly "
+    "as written. Carry on from the very next sentence and finish what you were "
+    "asked to write. Do not repeat, restart, or summarize anything already "
+    "written, and do not mention the interruption."
+)
+
+
 # ----------------------------------------------------------------- validation
 VALIDATION_SYSTEM = (
     GROUNDING

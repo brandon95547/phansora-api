@@ -41,6 +41,7 @@ from .audio import VoiceServiceBusy, VoiceServiceError, render_script_to_audio
 from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
 from .parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_source
+from .sentences import complete_ending
 from .storage import session_audio_path
 from .validation import scrub_apparatus, validate_script
 
@@ -62,12 +63,24 @@ _LESSON_RETRY_WAIT_S = 30
 # source that fits one comfortable sitting becomes exactly one lesson, and that
 # decision is made here in code rather than left to the model.
 WORDS_PER_MINUTE = 150           # narration pace
-TARGET_LESSON_MINUTES = 14       # comfortable default sitting
-MAX_LESSON_MINUTES = 20          # a part longer than this gets split
-MIN_LESSON_MINUTES = 8           # below this, merging beats splitting
-TARGET_LESSON_WORDS = WORDS_PER_MINUTE * TARGET_LESSON_MINUTES   # 2100
+# A lesson runs at least MIN minutes wherever the source has that much to teach,
+# and then stops at the first place the material itself stops — see _plan_cuts,
+# which is where these three are enforced. Env-overridable because they are
+# planning figures: what a lesson actually runs depends on how the writer paces
+# it, and that can only be measured on finished courses.
+MIN_LESSON_MINUTES = max(1, int(os.getenv("BOOK_ALCHEMY_MIN_LESSON_MINUTES", "10")))
+# What the segmentation model is told to expect. Kept just above the floor, so
+# the parts it proposes are already about the size a lesson is allowed to be.
+TARGET_LESSON_MINUTES = max(
+    MIN_LESSON_MINUTES, int(os.getenv("BOOK_ALCHEMY_TARGET_LESSON_MINUTES", "12"))
+)
+# A part longer than this gets split.
+MAX_LESSON_MINUTES = max(
+    TARGET_LESSON_MINUTES, int(os.getenv("BOOK_ALCHEMY_MAX_LESSON_MINUTES", "20"))
+)
+TARGET_LESSON_WORDS = WORDS_PER_MINUTE * TARGET_LESSON_MINUTES   # 1800
 MAX_LESSON_WORDS = WORDS_PER_MINUTE * MAX_LESSON_MINUTES         # 3000
-MIN_LESSON_WORDS = WORDS_PER_MINUTE * MIN_LESSON_MINUTES         # 1200
+MIN_LESSON_WORDS = WORDS_PER_MINUTE * MIN_LESSON_MINUTES         # 1500
 
 # --- How long a lesson runs ---------------------------------------------------
 # Lesson length is a function of HOW MANY IDEAS the lesson has to teach, not of
@@ -684,9 +697,9 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
     planned = phases_mod.plan_phases([
         {
             "ordinal": l["ordinal"],
-            "seconds": phases_mod.estimate_seconds(
-                source_words=l["words"], narration_ratio=depth.planning_ratio
-            ),
+            # The same figure the lesson boundaries were placed by, so a phase's
+            # estimate and its lessons' lengths cannot disagree.
+            "seconds": int(l["planned_words"] * 60 / WORDS_PER_MINUTE),
             "chapter": chunks[l["start"]]["chapter"],
         }
         for l in lessons
@@ -715,6 +728,7 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
                 "topics": l["topics"],
                 "segment_range": [l["start"], l["end"]],
                 "source_words": l["words"],
+                "planned_words": l["planned_words"],
             }
             for l in lessons
         ],
@@ -767,15 +781,39 @@ def lesson_word_budget(
     lesson cannot balloon past what the source can support, and cannot collapse
     to a summary when the index came back thin.
     """
+    target = _budget_target(concept_count, source_words, depth)
+
+    min_words = max(60, int(target * BUDGET_UNDERSHOOT))
+    if target >= MIN_LESSON_WORDS:
+        # A lesson planned to fill a sitting is never asked for less than one. The
+        # undershoot allowance is for the estimate being rough, not a licence to
+        # hand back seven minutes where ten were planned.
+        min_words = max(min_words, MIN_LESSON_WORDS)
+    max_words = max(min_words + 60, int(target * BUDGET_OVERSHOOT))
+    return min_words, max_words
+
+
+def _budget_target(concept_count: int, source_words: int, depth: Depth) -> int:
+    """The narration length a lesson's ideas call for, clamped to its source."""
     target = max(1, concept_count) * depth.words_per_concept
     floor = int(source_words * depth.floor_share)
     ceiling = int(source_words * depth.ceiling_share)
     if ceiling > 0:
         target = max(floor, min(ceiling, target))
+    return target
 
-    min_words = max(60, int(target * BUDGET_UNDERSHOOT))
-    max_words = max(min_words + 60, int(target * BUDGET_OVERSHOOT))
-    return min_words, max_words
+
+def planned_lesson_words(*, concept_count: int, source_words: int, depth: Depth) -> int:
+    """How long a lesson over this much source is planned to run, in narration words.
+
+    The smaller of two estimates: what the depth expects of any source this long
+    (``planning_ratio``), and what the writer will actually be asked for given the
+    ideas indexed in it. The second is what the first cannot see — a genealogy is
+    thousands of source words and two concepts, so a lesson cut to "ten minutes"
+    by its word count alone would be asked for three.
+    """
+    expected = int(max(0, source_words) * depth.planning_ratio)
+    return min(expected, _budget_target(concept_count, source_words, depth))
 
 
 def _lesson_budget(source_words: int, depth: Depth) -> tuple[int, int, int]:
@@ -803,9 +841,8 @@ def _lesson_budget(source_words: int, depth: Depth) -> tuple[int, int, int]:
 def max_source_words_per_lesson(depth: Depth) -> int:
     """MAX_LESSON_WORDS expressed in SOURCE words.
 
-    Segmentation reasons about source segments and their word counts, and
-    _split_to_length measures ranges the same way, so the cap they enforce has to
-    be in the same currency they count in.
+    Segmentation reasons about source segments and their word counts, so the cap
+    it is given has to be in the same currency it counts in.
     """
     return max(MIN_LESSON_WORDS, int(MAX_LESSON_WORDS / max(0.01, depth.planning_ratio)))
 
@@ -867,11 +904,15 @@ async def _chunk_digests(project_id: int, chunks: list[Any]) -> list[dict]:
     """One planning line per source segment: where it sits, how long it is, and
     what the analyze phase indexed in it. Used only to place lesson boundaries."""
     by_chunk: dict[int, list[str]] = {}
+    # Every indexed idea, not just the titles kept for the prompt: this is what
+    # the lesson will be asked to teach, so it is what its length is planned from.
+    counts: dict[int, int] = {}
     for row in await db.get_concepts(project_id):
         title = str(_as_dict(row["content"]).get("title") or "").strip()
-        if not title:
-            continue
         for cid in (row["source_chunk_ids"] or []):
+            counts[int(cid)] = counts.get(int(cid), 0) + 1
+            if not title:
+                continue
             topics = by_chunk.setdefault(int(cid), [])
             if title not in topics and len(topics) < MAX_TOPICS_PER_SEGMENT:
                 topics.append(title)
@@ -882,6 +923,7 @@ async def _chunk_digests(project_id: int, chunks: list[Any]) -> list[dict]:
             "chapter": c["chapter"],
             "words": _word_count(c["text"]),
             "topics": by_chunk.get(int(c["id"]), []),
+            "concepts": counts.get(int(c["id"]), 0),
         }
         for i, c in enumerate(chunks)
     ]
@@ -937,85 +979,173 @@ def _entries_from_plan(raw: Any, *, segment_count: int, max_lessons: int) -> lis
     return deduped[:max_lessons]
 
 
-def _resolve_lessons(entries: list[dict], digests: list[dict], depth: Depth) -> list[dict]:
-    """Turn start-points into a complete, non-overlapping cover of the segments.
+# --- Where a lesson may end -------------------------------------------------------
+# A lesson can only begin or end on a segment boundary, and not all of those are
+# equal. Some are places the SOURCE stops and starts again — a new chapter, or a
+# shift of subject the segmentation model picked out. The rest are just where
+# 4,000 characters happened to run out, in the middle of whatever was being said.
+#
+# The plan is the set of cuts with the lowest total cost, in planned minutes:
+#
+#   * a lesson costs nothing at MIN_LESSON_MINUTES and a little more for each
+#     minute past it, so lessons sit as close to the floor as the stopping points
+#     allow rather than running long for no reason;
+#   * a lesson under the floor costs SHORT_LESSON_WEIGHT a minute. This is what
+#     folds a three-minute chapter into its neighbor. It used to stand alone:
+#     nothing stopped the model proposing a lesson out of one short section, and
+#     that lesson then ran for as long as one short section takes to teach;
+#   * a lesson over MAX_LESSON_MINUTES costs LONG_LESSON_WEIGHT a minute;
+#   * ending a lesson where the source does NOT change subject costs
+#     UNNATURAL_CUT_COST, flat. It is priced so that a topic runs a few minutes
+#     past the cap before it is cut in half mid-thought — and so that when a
+#     source has no structure at all, it gets as few such cuts as possible.
+#
+# These weights only arbitrate between imperfect options. Where the source offers
+# a stopping point between the floor and the cap, the lesson ends there and none
+# of them is paid.
+SHORT_LESSON_WEIGHT = 8.0
+LONG_LESSON_WEIGHT = 4.0
+UNNATURAL_CUT_COST = 36.0
+_EVEN_SPLIT_WEIGHT = 0.01     # between otherwise equal plans, the more even one
 
-    Each lesson runs from its own start to the segment before the next one, the
-    last runs to the end, and any lesson longer than the depth's source-word cap
-    (see :func:`max_source_words_per_lesson`) is split on segment boundaries —
-    which also keeps each script inside the model's output-token ceiling."""
+
+def _lesson_cost(minutes: float) -> float:
+    if minutes < MIN_LESSON_MINUTES:
+        return (MIN_LESSON_MINUTES - minutes) * SHORT_LESSON_WEIGHT
+    past_floor = minutes - MIN_LESSON_MINUTES
+    cost = past_floor + _EVEN_SPLIT_WEIGHT * past_floor * past_floor
+    if minutes > MAX_LESSON_MINUTES:
+        cost += (minutes - MAX_LESSON_MINUTES) * LONG_LESSON_WEIGHT
+    return cost
+
+
+def _chapter_starts(digests: list[dict]) -> set[int]:
+    """Segments that open on a different chapter from the one before them."""
+    def key(d: dict) -> str:
+        return str(d.get("chapter") or "").strip().casefold()
+
+    return {i for i in range(1, len(digests)) if key(digests[i]) != key(digests[i - 1])}
+
+
+def _plan_cuts(digests: list[dict], natural: set[int], depth: Depth) -> list[int]:
+    """The segment each lesson starts on, in order. Always begins with 0.
+
+    ``natural`` is the set of segments a lesson may start on without cutting into
+    a topic. Every other boundary is still available — a source with no structure
+    has to be cut somewhere — but at a price; see the block comment above.
+    """
     total = len(digests)
-    ranges: list[dict] = []
-    for i, entry in enumerate(entries):
-        start = entry["start"]
-        end = (entries[i + 1]["start"] - 1) if i + 1 < len(entries) else total - 1
-        if end < start:                       # degenerate ordering; fold away
-            continue
-        ranges.append({**entry, "end": end})
+    words = [0]
+    concepts = [0]
+    for d in digests:
+        words.append(words[-1] + int(d.get("words") or 0))
+        concepts.append(concepts[-1] + int(d.get("concepts", len(d.get("topics") or []))))
 
-    if not ranges:
-        ranges = [{"start": 0, "end": total - 1, "title": "", "summary": "", "topics": []}]
-    ranges[0]["start"] = 0
-    ranges[-1]["end"] = total - 1
+    def minutes(start: int, stop: int) -> float:
+        """Planned length of a lesson over segments [start, stop)."""
+        return planned_lesson_words(
+            concept_count=concepts[stop] - concepts[start],
+            source_words=words[stop] - words[start],
+            depth=depth,
+        ) / WORDS_PER_MINUTE
+
+    # A work that fits one sitting is one lesson, however many chapters it has.
+    if total <= 1 or minutes(0, total) <= MAX_LESSON_MINUTES:
+        return [0]
+
+    best = [0.0] + [math.inf] * total      # cheapest plan for the first `stop` segments
+    came_from = [0] * (total + 1)
+    for stop in range(1, total + 1):
+        closing = 0.0 if (stop == total or stop in natural) else UNNATURAL_CUT_COST
+        for start in range(stop - 1, -1, -1):
+            length = minutes(start, stop)
+            # Planned length only grows as a lesson reaches further back, so past
+            # twice the cap nothing earlier can be cheaper.
+            if length > 2 * MAX_LESSON_MINUTES and start < stop - 1:
+                break
+            cost = best[start] + _lesson_cost(length) + closing
+            if cost < best[stop]:
+                best[stop], came_from[stop] = cost, start
+
+    cuts: list[int] = []
+    stop = total
+    while stop > 0:
+        stop = came_from[stop]
+        cuts.append(stop)
+    return cuts[::-1]
+
+
+def _resolve_lessons(entries: list[dict], digests: list[dict], depth: Depth) -> list[dict]:
+    """Turn the model's start-points into a complete, non-overlapping cover of the segments.
+
+    The model says where the source changes subject; :func:`_plan_cuts` decides
+    which of those places lessons actually end on, so that each lesson fills a
+    sitting. A proposed part that is too short is folded into its neighbor, and
+    one that is too long is split — which also keeps each script inside the
+    model's output-token ceiling. Titles and topic lists follow the parts they
+    came from.
+    """
+    total = len(digests)
+    parts = sorted(
+        (e for e in entries if 0 <= int(e["start"]) < total), key=lambda e: e["start"]
+    ) or [{"start": 0, "title": "", "summary": "", "topics": []}]
+    parts[0] = {**parts[0], "start": 0}     # the work always starts at its first segment
+    part_starts = [int(p["start"]) for p in parts]
+
+    cuts = _plan_cuts(digests, set(part_starts) | _chapter_starts(digests), depth)
 
     lessons: list[dict] = []
-    for r in ranges:
-        for piece in _split_to_length(r, digests, depth):
-            lessons.append(piece)
+    for i, start in enumerate(cuts):
+        end = (cuts[i + 1] - 1) if i + 1 < len(cuts) else total - 1
+        # The proposed part this lesson opens in, and any that open inside it.
+        owner = max(j for j, s in enumerate(part_starts) if s <= start)
+        opening = [p for p in parts if start < int(p["start"]) <= end]
+
+        first = str(parts[owner].get("title") or "").strip()
+        if first and start != part_starts[owner]:
+            # Opens partway through a proposed part: number it among the lessons
+            # that part was divided into. Its opening is part 1 whether that
+            # stands alone or was folded into the lesson before.
+            earlier = sum(1 for c in cuts if part_starts[owner] < c <= start)
+            first = f"{first} (part {earlier + 1})"
+        names: list[str] = []
+        for name in [first] + [str(p.get("title") or "").strip() for p in opening]:
+            if name and name not in names:
+                names.append(name)
+
+        # The model's topic list describes whole parts. A lesson made of anything
+        # else is refilled below from the segments it actually covers.
+        whole_parts = start == part_starts[owner] and (
+            end == total - 1 or (end + 1) in part_starts
+        )
+        topics = (
+            [t for p in [parts[owner]] + opening for t in (p.get("topics") or [])]
+            if whole_parts else []
+        )
+        # Same convention as a delivery phase's label: one name, or first – last.
+        title = "" if not names else names[0] if len(names) == 1 else f"{names[0]} – {names[-1]}"
+        lessons.append({
+            "start": start,
+            "end": end,
+            "title": title[:160],
+            "summary": str(parts[owner].get("summary") or ""),
+            "topics": topics,
+        })
 
     for i, lesson in enumerate(lessons, start=1):
+        covered = digests[lesson["start"]: lesson["end"] + 1]
         lesson["ordinal"] = i
         lesson["words"] = _range_words(digests, lesson["start"], lesson["end"])
+        lesson["planned_words"] = planned_lesson_words(
+            concept_count=sum(int(d.get("concepts", len(d.get("topics") or []))) for d in covered),
+            source_words=lesson["words"],
+            depth=depth,
+        )
         if not lesson["title"]:
             lesson["title"] = f"Part {i}"
         if not lesson["topics"]:
-            lesson["topics"] = [
-                t for d in digests[lesson["start"]: lesson["end"] + 1] for t in d["topics"]
-            ]
+            lesson["topics"] = [t for d in covered for t in d["topics"]]
     return lessons
-
-
-def _split_to_length(rng: dict, digests: list[dict], depth: Depth) -> list[dict]:
-    """Split one range into contiguous parts that each fit a lesson.
-
-    The cap is in SOURCE words because that is what ``digests`` counts; at the
-    default depth a lesson carries roughly 2.4x the source it used to, so
-    splitting on the raw MAX_LESSON_WORDS would cut every lesson into fragments.
-    """
-    cap = max_source_words_per_lesson(depth)
-    words = _range_words(digests, rng["start"], rng["end"])
-    span = rng["end"] - rng["start"] + 1
-    if words <= cap or span <= 1:
-        return [dict(rng)]
-
-    parts = max(2, math.ceil(words / cap))
-    per_part = words / parts
-    out: list[dict] = []
-    start = rng["start"]
-    running = 0
-    for i in range(rng["start"], rng["end"] + 1):
-        running += digests[i]["words"]
-        last_segment = i == rng["end"]
-        parts_left = parts - len(out)
-        segments_left = rng["end"] - i
-        # Close this part once it has its share, but never leave a later part empty.
-        if last_segment or (running >= per_part and parts_left > 1 and segments_left >= parts_left - 1):
-            out.append({
-                "start": start,
-                "end": i,
-                "title": rng["title"],
-                "summary": rng["summary"],
-                "topics": [],       # refilled from the segments actually covered
-            })
-            start, running = i + 1, 0
-            if len(out) == parts and not last_segment:
-                out[-1]["end"] = rng["end"]
-                break
-
-    for i, piece in enumerate(out):
-        if i and piece["title"]:
-            piece["title"] = f"{piece['title']} (part {i + 1})"
-    return out
 
 
 def _range_words(digests: list[dict], start: int, end: int) -> int:
@@ -1095,9 +1225,6 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     min_words, max_words = lesson_word_budget(
         concept_count=len(checklist), source_words=source_words, depth=depth,
     )
-    # ~1.4 tokens per word, plus headroom, capped at the DeepSeek output ceiling.
-    token_budget = min(8000, int(max_words * 1.7) + 400)
-
     # Lessons are written in ordinal order, so everything before this one is
     # already settled. Handing that over is what stops a course re-teaching the
     # same ground each time the source circles back to it.
@@ -1109,7 +1236,13 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     regen = 0
     for attempt in range(MAX_REGEN + 1):
         regen = attempt
-        script = await client.chat(
+        # chat_to_end, not chat: the writer gets the model's whole output ceiling
+        # and is asked to carry on if it still runs out. The cap used to be sized
+        # from max_words (words * 1.7 + 400 tokens), but max_words is a pacing
+        # hint the writer is free to exceed — it has every note on the list to
+        # teach — and when it did, the reply stopped dead at the cap and was
+        # recorded as it stood, mid-sentence.
+        script, finished = await client.chat_to_end(
             system=prompts.SCRIPT_SYSTEM,
             # Closed-book: the writer gets the concept notes and never the chunk
             # text. chunk_dicts still feed validate_script below — the checker is
@@ -1122,7 +1255,6 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
                 feedback=feedback,
                 previously_taught=prior,
             ),
-            max_output_tokens=token_budget,
             # A retry must not reproduce the rejected script verbatim. The
             # feedback already changes the prompt; a little temperature helps the
             # model leave a phrasing it has settled on. (At temperature 0 with an
@@ -1139,6 +1271,17 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
                 "address, web address or filename — a packaging guard leaked: %s",
                 pid, sess["ordinal"], len(scrubbed), scrubbed[:3],
             )
+        # The other deterministic floor: a lesson never ends on half a sentence.
+        # Reached only when the writer was still cut off after its continuations,
+        # or signed off without finishing one — rare, and worth knowing about,
+        # because whatever followed the cut was never taught.
+        script, fragment = complete_ending(script)
+        if fragment or not finished:
+            log.warning(
+                "Project %s session %s: script did not end on a finished sentence "
+                "(model stopped by its output ceiling: %s) — dropped %r",
+                pid, sess["ordinal"], not finished, fragment[-120:],
+            )
         validation = await validate_script(
             client, script=script, chunks=chunk_dicts,
             concepts=concepts, previously_taught=prior,
@@ -1147,13 +1290,16 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
             break
         feedback = validation.get("flagged") or []
 
+    # Logged for every lesson, in or out of range: the planning figures above
+    # (MIN_LESSON_MINUTES, the Depth table) are estimates of how the writer paces
+    # a lesson, and this line is the measurement they are tuned against.
     written = _word_count(script)
-    if script.strip() and not (min_words <= written <= max_words):
+    if script.strip():
         log.info(
-            "Project %s session %s: %s narration words against a %s-%s target "
-            "(%s source words, %s concepts, %.2fx)",
-            pid, sess["ordinal"], written, min_words, max_words, source_words,
-            len(checklist), written / max(1, source_words),
+            "Project %s session %s: %s narration words (~%.1f min) against a %s-%s "
+            "target (%s source words, %s concepts, %.2fx)",
+            pid, sess["ordinal"], written, written / WORDS_PER_MINUTE, min_words,
+            max_words, source_words, len(checklist), written / max(1, source_words),
         )
 
     if not script.strip():
@@ -1161,8 +1307,8 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
         # blank script and only noticed when the finished course had no audio.
         log.warning(
             "Project %s session %s: model returned an empty script after %s attempt(s) "
-            "(budget %s tokens, %s source words)",
-            pid, sess["ordinal"], regen + 1, token_budget, source_words,
+            "(%s source words, %s concepts)",
+            pid, sess["ordinal"], regen + 1, source_words, len(checklist),
         )
 
     await db.set_session(

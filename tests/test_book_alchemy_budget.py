@@ -20,6 +20,7 @@ from phansora.products.book_alchemy.pipeline import (
     BUDGET_UNDERSHOOT,
     DEPTHS,
     MAX_LESSON_WORDS,
+    TARGET_LESSON_MINUTES,
     Depth,
     _lesson_budget,
     lesson_word_budget,
@@ -143,7 +144,7 @@ def test_a_long_book_becomes_a_listenable_number_of_lessons():
     """A Bible-sized source at the default depth. The old code gave 372 lessons
     and ~108 hours of audio."""
     _, suggested, _ = _lesson_budget(780_000, STANDARD)
-    hours = suggested * 14 / 60          # TARGET_LESSON_MINUTES per lesson
+    hours = suggested * TARGET_LESSON_MINUTES / 60
     assert 20 <= hours <= 50
 
 

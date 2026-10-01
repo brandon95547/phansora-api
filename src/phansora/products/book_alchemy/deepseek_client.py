@@ -25,9 +25,22 @@ from phansora.shared.ai.json_repair import (
     repair_truncated_json as _repair_truncated_json,
 )
 
+from .prompts import CONTINUE_USER
+from .sentences import last_sentence_end
+
 # DeepSeek chat caps output at 8192 tokens; we escalate JSON budgets up to here
 # when a response is truncated.
 MAX_JSON_TOKENS = 8000
+# The same ceiling, for prose. A reply that has to FINISH (a lesson script) is
+# given all of it: tokens are billed as used, so a generous cap costs nothing,
+# while a tight one ends the reply mid-sentence.
+MAX_OUTPUT_TOKENS = MAX_JSON_TOKENS
+# How many times a reply cut off at the ceiling is asked to carry on.
+MAX_CONTINUATIONS = 2
+# A reply that fills the ceiling takes minutes to generate, and the request is not
+# streamed — the config's 180s would time out the longest lessons, retry them into
+# the same timeout, and fail the book.
+LONG_REPLY_TIMEOUT_S = 600
 
 
 class DeepSeekClient:
@@ -52,6 +65,52 @@ class DeepSeekClient:
             json_mode=False,
         )
         return content
+
+    async def chat_to_end(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_output_tokens: int = MAX_OUTPUT_TOKENS,
+        temperature: float = 0.0,
+    ) -> tuple[str, bool]:
+        """Free-form completion that is allowed to finish. Returns ``(text, finished)``.
+
+        ``chat`` throws ``finish_reason`` away, so a reply that hit ``max_tokens``
+        came back looking like any other — and a lesson script cut off that way
+        was recorded exactly as it stood, ending mid-sentence. Here a cut-off
+        reply is trimmed to its last finished sentence and the model is asked to
+        carry on from there, up to MAX_CONTINUATIONS times.
+
+        ``finished`` is False only when the reply was still cut off after that.
+        The text is returned either way; the caller decides what a ragged ending
+        is worth.
+        """
+        timeout_s = max(self.cfg.timeout_s, LONG_REPLY_TIMEOUT_S)
+        text, finish = await self._completion(
+            system=system, user=user,
+            max_output_tokens=max_output_tokens, temperature=temperature,
+            json_mode=False, timeout_s=timeout_s,
+        )
+        for _ in range(MAX_CONTINUATIONS):
+            if finish != "length":
+                break
+            cut = last_sentence_end(text)
+            if cut <= 0:
+                break   # not one finished sentence to resume from
+            said, rest = text[:cut], text[cut:]
+            more, finish = await self._completion(
+                system=system, user=user,
+                max_output_tokens=max_output_tokens, temperature=temperature,
+                json_mode=False, continue_from=said, timeout_s=timeout_s,
+            )
+            if not more:
+                finish = "length"
+                break
+            # Keep the paragraph break if the fragment that was dropped had begun one.
+            gap = rest[: len(rest) - len(rest.lstrip())]
+            text = said + ("\n\n" if "\n" in gap else " ") + more
+        return text, finish != "length"
 
     async def chat_json(
         self,
@@ -101,17 +160,26 @@ class DeepSeekClient:
 
     async def _completion(
         self, *, system: str, user: str, max_output_tokens: int,
-        temperature: float, json_mode: bool,
+        temperature: float, json_mode: bool, continue_from: Optional[str] = None,
+        timeout_s: Optional[float] = None,
     ) -> tuple[str, Optional[str]]:
         cfg = self.cfg
         url = f"{cfg.base_url}/v1/chat/completions"
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        if continue_from:
+            # The reply so far, handed back as the model's own turn, then the ask
+            # to carry on. See chat_to_end.
+            messages += [
+                {"role": "assistant", "content": continue_from},
+                {"role": "user", "content": CONTINUE_USER},
+            ]
         payload: dict[str, Any] = {
             "model": cfg.model,
             "temperature": temperature,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "messages": messages,
             "max_tokens": max_output_tokens,
             "stream": False,
             # The v4 models reason by default and bill those tokens against max_tokens.
@@ -130,7 +198,7 @@ class DeepSeekClient:
             "Authorization": f"Bearer {cfg.api_key}",
             "Content-Type": "application/json",
         }
-        timeout = aiohttp.ClientTimeout(total=cfg.timeout_s)
+        timeout = aiohttp.ClientTimeout(total=timeout_s or cfg.timeout_s)
         last_err: Optional[Exception] = None
 
         for attempt in range(cfg.max_retries + 1):
