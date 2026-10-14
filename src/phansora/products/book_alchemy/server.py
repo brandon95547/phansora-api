@@ -36,6 +36,7 @@ from phansora.shared.utils.uploads import (
 
 
 try:
+    from phansora.products.book_alchemy import cover as ba_cover
     from phansora.products.book_alchemy import db as ba_db
     from phansora.products.book_alchemy import pipeline as ba_pipeline
     from phansora.products.book_alchemy import storage as ba_storage
@@ -140,6 +141,21 @@ if _BOOK_ALCHEMY_OK:
         name = str(value or "").strip().lower()
         return name if name in ba_pipeline.DEPTHS else ba_pipeline.DEFAULT_DEPTH
 
+    def _ba_course_name(value: str) -> str:
+        """A title as its listener typed it: one line, printable, bounded.
+
+        Deliberately not pipeline._sanitize_title. That one tidies a FILENAME into
+        a title and strips a leading "Course:" as debris; here the same words are
+        what someone chose to call their course.
+        """
+        import unicodedata
+
+        # Whitespace first: a tab or a line break is a control character too, and
+        # dropping it with the rest would run the words either side together.
+        text = re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(value or "")))
+        text = "".join(ch for ch in text if ch == " " or unicodedata.category(ch)[0] != "C")
+        return text.strip()[:200]
+
     def _ba_json(value):
         if value is None or isinstance(value, (dict, list)):
             return value
@@ -198,9 +214,21 @@ if _BOOK_ALCHEMY_OK:
     ) -> dict:
         d = dict(row)
         wired = [_ba_phase_wire(p) for p in (phases or [])]
+        options = _ba_json(d.get("options"))
+        options = options if isinstance(options, dict) else {}
         return {
             "project_id": d["id"],
             "name": d["name"],
+            # Lifted from the upload at parse time (cover.py). Both are absent for
+            # a pasted text, a URL, and any course made before they were read —
+            # the dashboard draws its own cover then, and prints no byline.
+            "author": options.get("author") or None,
+            "has_cover": bool(options.get("cover")),
+            # What the course was made with, for the dashboard's "About" panel.
+            # Read-only: all three are fixed once the first lesson is written.
+            "voice": options.get("voice") or "default",
+            "depth": options.get("depth") or ba_pipeline.DEFAULT_DEPTH,
+            "instruct_text": options.get("instruct_text") or "",
             "source_format": d["source_format"],
             "status": d["status"],
             # The internal pipeline cursor. Long omitted here, which is why the
@@ -382,6 +410,48 @@ if _BOOK_ALCHEMY_OK:
         out = _ba_project_wire(row, phases, await ba_db.count_active_projects())
         out["sessions"] = [_ba_session_wire(s, ref_map) for s in sessions]
         return {"ok": True, "project": out}
+
+    @app.get("/projects/{project_id}/cover", response_model=None)
+    async def ba_project_cover(project_id: int, user_id: str) -> FileResponse:
+        """The cover lifted from the uploaded book. 404 when it had none."""
+        uid = _ba_user_id(user_id)
+        project = await ba_db.get_project(project_id, uid)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        options = _ba_json(project["options"])
+        name = options.get("cover") if isinstance(options, dict) else None
+        path = ba_cover.cover_file(ba_storage.project_dir(uid, project_id), name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="This course has no cover.")
+        # private: the URL carries the listener's token, and the image is theirs.
+        # A day, because a cover is written once and never changes.
+        return FileResponse(
+            path=str(path), media_type="image/jpeg",
+            headers={"Cache-Control": "private, max-age=86400"},
+        )
+
+    @app.post("/projects/{project_id}/rename")
+    async def ba_rename_project(
+        project_id: int, user_id: str, name: str = Form(..., max_length=200),
+    ) -> dict:
+        """Give a course the title its listener wants.
+
+        ``named_by_user`` is what keeps it: the parse step tidies the upload's
+        filename into a title of its own, and without the mark that tidy-up would
+        overwrite a rename made while a long book was still being read.
+        """
+        uid = _ba_user_id(user_id)
+        project = await ba_db.get_project(project_id, uid)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        cleaned = _ba_course_name(name)
+        if not cleaned:
+            raise HTTPException(status_code=400, detail="Enter a name for the course.")
+        options = _ba_json(project["options"])
+        options = dict(options) if isinstance(options, dict) else {}
+        options["named_by_user"] = True
+        await ba_db.set_project(project_id, name=cleaned, options=options)
+        return {"ok": True, "name": cleaned}
 
     @app.get("/projects/{project_id}/sessions/{session_id}/audio", response_model=None)
     async def ba_session_audio(project_id: int, session_id: int, user_id: str) -> FileResponse:

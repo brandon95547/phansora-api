@@ -328,11 +328,20 @@ async def count_chunks(project_id: int) -> int:
     ))
 
 
-async def get_chunk_by_ordinal(project_id: int, ordinal: int) -> Optional[asyncpg.Record]:
+async def get_chunks_in_range(project_id: int, start: int, stop: int) -> list[asyncpg.Record]:
+    """The chunks whose ordinal is in ``[start, stop)``, in order.
+
+    One query for a whole analyze batch (pipeline._phase_analyze). A missing
+    ordinal is simply not in the result.
+    """
     pool = await get_pool()
-    return await pool.fetchrow(
-        "SELECT * FROM public.book_alchemy_chunks WHERE project_id = $1 AND ordinal = $2",
-        project_id, ordinal,
+    return await pool.fetch(
+        """
+        SELECT * FROM public.book_alchemy_chunks
+         WHERE project_id = $1 AND ordinal >= $2 AND ordinal < $3
+         ORDER BY ordinal ASC
+        """,
+        project_id, start, stop,
     )
 
 
@@ -380,6 +389,24 @@ async def insert_concepts(project_id: int, concepts: list[dict]) -> None:
             (project_id, c["kind"], _json(c["content"]), c.get("source_chunk_ids", []))
             for c in concepts
         ],
+    )
+
+
+async def delete_concepts_for_chunks(project_id: int, chunk_ids: list[int]) -> None:
+    """Drop whatever is already indexed against these chunks.
+
+    Called before an analyze batch stores its results, so a batch that was
+    interrupted part-way and is being run again does not store its concepts twice.
+    """
+    if not chunk_ids:
+        return
+    pool = await get_pool()
+    await pool.execute(
+        """
+        DELETE FROM public.book_alchemy_concepts
+         WHERE project_id = $1 AND source_chunk_ids && $2::bigint[]
+        """,
+        project_id, chunk_ids,
     )
 
 

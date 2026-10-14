@@ -1,9 +1,10 @@
 """Book Alchemy phase state machine.
 
 The worker repeatedly calls :func:`run_step`, which performs exactly ONE bounded
-unit of work for a project (parse, analyze one chunk, build the curriculum,
-script one session, render one session's audio, finalize) and persists progress
-to Postgres. This guarantees:
+unit of work for a project (parse, analyze one batch of chunks, build the
+curriculum, script one session, render one session's audio — with the next
+session's script written alongside it — finalize) and persists progress to
+Postgres. This guarantees:
 
   * no single AI request ever processes a whole book / all scripts / all audio,
   * crash-resumability (state is in the DB; each phase is idempotent),
@@ -36,6 +37,7 @@ import time
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
+from . import cover as cover_mod
 from . import db, prompts
 from .audio import VoiceServiceBusy, VoiceServiceError, render_script_to_audio
 from .chunking import build_chunks
@@ -253,6 +255,9 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     except UnsupportedSourceError as exc:
         raise TerminalError(str(exc)) from exc
 
+    # The cover and the author, while the file is still here to read them from.
+    await _store_source_meta(project, fmt, source_path)
+
     chunks = await asyncio.to_thread(build_chunks, doc)
     if not chunks:
         raise TerminalError("No readable text could be extracted from the source.")
@@ -270,10 +275,43 @@ async def _phase_parse(project: dict, client: DeepSeekClient) -> None:
     sample = "\n\n".join(c["text"] for c in chunks[:2])[:2000]
     clean = await _clean_title(client, project.get("name") or doc.title, sample)
 
+    # Read again rather than trusted from the top of the step: reading a scanned
+    # book takes hours, and a listener who renamed the course in that time (see
+    # the API's rename route) meant it. Their title outranks ours.
+    latest = await db.get_project(pid)
+    if latest is not None and _as_dict(latest["options"]).get("named_by_user"):
+        clean = latest["name"] or clean
+
     await db.set_project(
         pid, name=clean, phase="analyze", analyze_cursor=0,
         stage="Analyzing with DeepSeek", progress=10,
     )
+
+
+async def _store_source_meta(project: dict, fmt: str, source_path: Optional[str]) -> None:
+    """Lift the cover and author out of the upload and keep them with the project.
+
+    Read from the database rather than from ``project``: options are a single
+    JSON value, so writing back a copy taken at the top of the step would undo
+    anything the API changed on them in the meantime.
+
+    Never fails the parse. A course without a cover is still a course.
+    """
+    if not source_path:
+        return
+    pid = int(project["id"])
+    try:
+        found = await asyncio.to_thread(
+            cover_mod.extract, fmt, source_path, Path(source_path).parent,
+        )
+        if not found:
+            return
+        latest = await db.get_project(pid)
+        options = _as_dict(latest["options"] if latest is not None else project.get("options"))
+        await db.set_project(pid, options={**options, **found})
+        log.info("Project %s: source metadata stored (%s)", pid, ", ".join(sorted(found)))
+    except Exception:  # noqa: BLE001
+        log.warning("Project %s: could not store source metadata", pid, exc_info=True)
 
 
 # ---------------------------------------------------------- front matter
@@ -406,6 +444,17 @@ OCR_PROGRESS_CEILING = 7
 CLEAN_PROGRESS_CEILING = 9
 OCR_PROGRESS_INTERVAL_S = 2.0     # at most one row update this often
 
+# How a scanned book's two slow halves are spread out. Recognition is Tesseract on
+# the CPU, and four pages at once is what the PDF pipeline already ran. The cleaning
+# pass was the narrower half: every five pages are a model call that echoes them
+# back corrected, and only two ran at a time. The batches are independent and are
+# reassembled by position, so the text that comes out is the same. Six, like
+# ANALYZE_CONCURRENCY, is a guess at what the provider serves side by side rather
+# than a measurement — and unlike analysis, a cleanup call that fails outright
+# fails the book, so this is the first number to lower if that starts happening.
+OCR_WORKERS = max(1, int(os.getenv("BOOK_ALCHEMY_OCR_WORKERS", "4")))
+OCR_CLEAN_CONCURRENCY = max(1, int(os.getenv("BOOK_ALCHEMY_OCR_CLEAN_CONCURRENCY", "6")))
+
 
 def _ocr_progress_reporter(pid: int):
     """Build the callback the PDF pipeline ticks, throttled to spare the DB.
@@ -469,7 +518,10 @@ async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
 
         pdf_path = Path(source_path)
         out_txt = pdf_path.with_suffix(".ocr.txt")
-        cfg = PdfToTxtConfig(keep_page_breaks=False, to_chapters=False)
+        cfg = PdfToTxtConfig(
+            keep_page_breaks=False, to_chapters=False,
+            ocr_concurrency=OCR_WORKERS, clean_concurrency=OCR_CLEAN_CONCURRENCY,
+        )
         await PdfConverter(cfg).convert_pdf_to_txt_async(
             pdf_path, out_txt,
             cache_dir=ocr_cache_dir(pdf_path),
@@ -519,7 +571,24 @@ def _ocr_error_message(exc: Exception) -> str:
 
 
 # --------------------------------------------------------------- phase: analyze
+# How many excerpts are indexed at once.
+#
+# This used to be one, and it was most of the wait before a listener heard
+# anything: each excerpt is its own ~15 s model call, a 90,000-word book is about
+# 135 of them, and they ran end to end — over half an hour before lesson 1 could
+# even be planned. They never needed to. An excerpt is indexed from its own text
+# and nothing else (see prompts.analyze_user), so the calls are independent, and
+# what they return is stored in excerpt order whatever order they came back in.
+# The course that results is the same one; it just starts sooner.
+#
+# Eight is a guess at what the model provider serves without throttling, not a
+# measurement. A call that fails in the crowd is tried once more on its own
+# before its excerpt is given up on — see _phase_analyze.
+ANALYZE_CONCURRENCY = max(1, int(os.getenv("BOOK_ALCHEMY_ANALYZE_CONCURRENCY", "8")))
+
+
 async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
+    """Index the next batch of excerpts — ANALYZE_CONCURRENCY of them, side by side."""
     pid = int(project["id"])
     total = await db.count_chunks(pid)
     cursor = int(project["analyze_cursor"])
@@ -527,24 +596,16 @@ async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
         await db.set_project(pid, phase="curriculum", stage="Building curriculum", progress=50)
         return
 
-    chunk = await db.get_chunk_by_ordinal(pid, cursor)
-    if chunk is None:  # gap safety
-        await db.set_project(pid, analyze_cursor=cursor + 1)
-        return
+    stop = min(total, cursor + ANALYZE_CONCURRENCY)
+    started = time.monotonic()
+    # A missing ordinal is simply absent from the batch (gap safety), and an
+    # excerpt the parser already recognized as contents/index/copyright matter is
+    # passed over: indexing it would cost a model call to describe something no
+    # lesson will ever teach.
+    batch = [c for c in await db.get_chunks_in_range(pid, cursor, stop) if _is_teachable(c)]
 
-    if not _is_teachable(chunk):
-        # The parser already recognized this as contents/index/copyright matter.
-        # Indexing it would cost a model call to describe something no lesson
-        # will ever teach.
-        await db.set_project(
-            pid, analyze_cursor=cursor + 1,
-            stage=f"Extracting concepts ({cursor + 1}/{total})",
-            progress=min(10 + int(40 * (cursor + 1) / max(1, total)), 49),
-        )
-        return
-
-    try:
-        extracted = await client.chat_json(
+    async def extract(chunk: Any) -> Any:
+        return await client.chat_json(
             system=prompts.ANALYZE_SYSTEM,
             user=prompts.analyze_user(chunk["text"], chapter=chunk["chapter"]),
             # Sized for the closed-book notes (bodies up to ~60 words), which are
@@ -553,40 +614,70 @@ async def _phase_analyze(project: dict, client: DeepSeekClient) -> None:
             # truncation anyway; starting near the need avoids the doubled call.
             max_output_tokens=6000,
         )
+
+    results: list[Any] = list(
+        await asyncio.gather(*(extract(c) for c in batch), return_exceptions=True)
+    )
+    for i, chunk in enumerate(batch):
+        if not isinstance(results[i], Exception):
+            continue
+        # Failed alongside several others, which is not the same as failing: a
+        # provider that throttles a burst would otherwise cost the course every
+        # excerpt in it. One more try, alone, before the excerpt is skipped.
+        try:
+            results[i] = await extract(chunk)
+        except Exception as exc:  # noqa: BLE001
+            results[i] = exc
+
+    # Everything below is the only part that writes, and it runs in excerpt
+    # order: get_concepts_for_chunks reads concepts back by id and relies on
+    # that being source order.
+    #
+    # A batch interrupted between its first insert and the cursor moving is run
+    # again from the top, so whatever an earlier attempt left on these excerpts
+    # is cleared first — a concept stored twice is an idea counted twice when
+    # the lesson's length is planned.
+    await db.delete_concepts_for_chunks(pid, [int(c["id"]) for c in batch])
+    for chunk, extracted in zip(batch, results):
+        ordinal = int(chunk["ordinal"])
+        if isinstance(extracted, Exception):
+            # One chunk that won't parse (e.g. the model emitted JSON too long for
+            # the token budget and it truncated) must not fail the whole course.
+            # Skip it and advance — the concepts from every other chunk still
+            # build the curriculum, and if *every* chunk fails, _phase_curriculum
+            # raises a TerminalError on zero concepts.
+            log.warning(
+                "Project %s: skipping chunk %s (ordinal) — concept extraction failed: %s",
+                pid, ordinal, extracted,
+            )
+            continue
         # The reader of the excerpt gets the final say on apparatus: it can see
         # that "The book of Job has forty-two chapters" is a chapter listing
         # written as a sentence, which no pattern over line shapes can.
         if isinstance(extracted, dict) and extracted.get("teachable") is False:
             await db.set_chunk_teachable(int(chunk["id"]), False)
             log.info(
-                "Project %s: chunk %s indexed as apparatus, not teachable", pid, cursor
+                "Project %s: chunk %s indexed as apparatus, not teachable", pid, ordinal
             )
-        else:
-            if isinstance(extracted, dict) and extracted.get("truncated"):
-                # The index is the coverage contract now, so a truncated one is
-                # content the lesson will never be required to teach.
-                log.warning(
-                    "Project %s: chunk %s hit the concept-index item ceiling; some "
-                    "ideas in it are outside the coverage contract", pid, cursor,
-                )
-            concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
-            await db.insert_concepts(pid, concepts)
-    except Exception as exc:  # noqa: BLE001
-        # One chunk that won't parse (e.g. the model emitted JSON too long for the
-        # token budget and it truncated) must not fail the whole course. Skip it
-        # and advance — the concepts from every other chunk still build the
-        # curriculum, and if *every* chunk fails, _phase_curriculum raises a
-        # TerminalError on zero concepts.
-        log.warning(
-            "Project %s: skipping chunk %s (ordinal) — concept extraction failed: %s",
-            pid, cursor, exc,
-        )
+            continue
+        if isinstance(extracted, dict) and extracted.get("truncated"):
+            # The index is the coverage contract now, so a truncated one is
+            # content the lesson will never be required to teach.
+            log.warning(
+                "Project %s: chunk %s hit the concept-index item ceiling; some "
+                "ideas in it are outside the coverage contract", pid, ordinal,
+            )
+        concepts = _concepts_from_extraction(extracted, source_chunk_id=int(chunk["id"]))
+        await db.insert_concepts(pid, concepts)
 
-    done = cursor + 1
-    progress = 10 + int(40 * done / max(1, total))
+    log.info(
+        "Project %s: indexed excerpts %s-%s of %s (%s model call(s)) in %.1fs",
+        pid, cursor + 1, stop, total, len(batch), time.monotonic() - started,
+    )
+    progress = 10 + int(40 * stop / max(1, total))
     await db.set_project(
-        pid, analyze_cursor=done,
-        stage=f"Extracting concepts ({done}/{total})", progress=min(progress, 49),
+        pid, analyze_cursor=stop,
+        stage=f"Extracting concepts ({stop}/{total})", progress=min(progress, 49),
     )
 
 
@@ -1175,16 +1266,78 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     # the ones before it), so nothing about what gets written moves.
     ready = await db.next_session_needing(pid, ["validated"], ceiling)
     if _record_before_writing(ready, sess):
-        await _record_lesson(project, ready, total, sessions)
+        if sess is not None and WRITE_AHEAD:
+            await _record_while_writing(project, client, ready, sess, total, sessions)
+        else:
+            await _record_lesson(project, ready, total, sessions)
         return
     if sess is None:
         await db.set_project(pid, phase="audio", stage="Generating audio", progress=80)
         return
 
-    await db.set_project(
-        pid, stage=await _stage_label(pid, f"writing lesson {sess['ordinal']} of {total}"),
-        progress=_course_progress(sessions),
+    await _write_lesson(project, client, sess, sessions)
+
+
+# Whether the next lesson's script is written WHILE the current lesson records.
+#
+# The two used to alternate: write lesson 4, record lesson 4, write lesson 5. So
+# the voice sat idle for the couple of minutes every script took, and the writer
+# sat idle for the many minutes every recording took — on a job whose whole
+# length is set by how long the voice is kept busy. They use different machines
+# (the writer is a model call, the voice is the GPU) and neither needs the
+# other's result: a script is conditioned on the titles and outlines of the
+# lessons before it, which were all fixed at the curriculum step, never on their
+# scripts. So what gets written is unchanged, and so is the order lessons are
+# recorded in. Only the waiting goes.
+#
+# One lesson ahead and no further: the voice is the slower of the two, so a
+# second script would only sit finished behind the first.
+WRITE_AHEAD = os.getenv("BOOK_ALCHEMY_WRITE_AHEAD", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+
+
+async def _record_while_writing(
+    project: dict, client: DeepSeekClient, ready: Any, pending: Any,
+    total: int, sessions: list[Any],
+) -> None:
+    """Record one written lesson and write the next one, at the same time.
+
+    Both are allowed to finish before either failure is reported. The step is one
+    unit as far as the worker is concerned, and a task left running after its
+    step had "failed" would go on writing to a project the worker had already
+    given up on. The recording's failure is raised first: it is the one that
+    decides whether the listener gets this lesson.
+    """
+    outcomes = await asyncio.gather(
+        _record_lesson(project, ready, total, sessions),
+        # Silent: the line under the progress bar says what the listener is
+        # waiting FOR, and that is the recording.
+        _write_lesson(project, client, pending, sessions, announce=False),
+        return_exceptions=True,
     )
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
+
+
+async def _write_lesson(
+    project: dict, client: DeepSeekClient, sess: Any, sessions: list[Any],
+    *, announce: bool = True,
+) -> None:
+    """Write one lesson's script, check it against its source, and store it.
+
+    ``sessions`` is every lesson in the course — see the note at the top of
+    _phase_sessions for why it is never narrowed.
+    """
+    pid = int(project["id"])
+    total = len(sessions)
+    started = time.monotonic()
+    if announce:
+        await db.set_project(
+            pid, stage=await _stage_label(pid, f"writing lesson {sess['ordinal']} of {total}"),
+            progress=_course_progress(sessions),
+        )
 
     chunk_ids = list(sess["source_chunk_ids"] or [])
     chunks = await db.get_chunks_by_ids(pid, chunk_ids)
@@ -1297,9 +1450,11 @@ async def _phase_sessions(project: dict, client: DeepSeekClient) -> None:
     if script.strip():
         log.info(
             "Project %s session %s: %s narration words (~%.1f min) against a %s-%s "
-            "target (%s source words, %s concepts, %.2fx)",
+            "target (%s source words, %s concepts, %.2fx) — written and checked in "
+            "%.0fs over %s attempt(s)",
             pid, sess["ordinal"], written, written / WORDS_PER_MINUTE, min_words,
             max_words, source_words, len(checklist), written / max(1, source_words),
+            time.monotonic() - started, regen + 1,
         )
 
     if not script.strip():
@@ -1434,6 +1589,7 @@ async def _record_lesson(project: dict, sess: Any, total: int, sessions: list[An
     # fault in one render (the 2026-09-27 failure of project 61 left no message at all)
     # is not evidence the next will fail too. A 4xx is the request's own fault and is
     # not retried; neither is anything once the worker is shutting down.
+    started = time.monotonic()
     for attempt in range(1, _LESSON_ATTEMPTS + 1):
         try:
             seconds = await _render_waiting_out_busy(project, sess, out_path, voice, instruct_text)
@@ -1450,6 +1606,18 @@ async def _record_lesson(project: dict, sess: Any, total: int, sessions: list[An
                 str(exc) or type(exc).__name__,
             )
             await asyncio.sleep(_LESSON_RETRY_WAIT_S)
+
+    # The one figure every question about speed comes down to, and it was never
+    # written anywhere: two comments in this codebase put a lesson at "5-8 min"
+    # and "about fourteen". The wall time includes any wait for the voice — a
+    # book standing aside for a person, or behind another book's lesson — so on
+    # a busy box this reads slower than the engine is.
+    took = time.monotonic() - started
+    log.info(
+        "Project %s lesson %s: recorded %ss of audio in %.0fs (%.2fx real time, "
+        "%s attempt(s))",
+        pid, sess["ordinal"], seconds, took, took / max(1, int(seconds or 0)), attempt,
+    )
 
     await db.set_session(
         sess["id"], status="complete", audio_path=str(out_path),
