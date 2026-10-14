@@ -1,0 +1,624 @@
+"""Prompts for the writing model.
+
+Each builder returns ``(system, user)`` for one request. They are written the way a brief
+to a capable colleague would be: who the reader is, what the output is for, and what
+shape it must take, rather than a list of rigid rules. Most of the wording comes from the
+standalone Nebiru app this product replaces.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from .schemas import (
+    AnalyzeRequest,
+    Blueprint,
+    BlueprintRequest,
+    BlueprintSource,
+    ChapterRequest,
+    ChatTurn,
+    IllustrationPromptsRequest,
+    Rewrite,
+    SourceChapterText,
+)
+
+SUMMARY_MARKER = "===SUMMARY==="
+NOTES_MARKER = "===NOTES==="
+# Where a picture goes, written by the model on a line of its own inside the chapter.
+ILLUSTRATION_LINE = "[[ILLUSTRATION: what the picture shows | caption]]"
+
+ROLE = (
+    "You are the writing engine inside Talari Book Studio, where a person plans, writes and illustrates "
+    "a book. What you return is placed straight into their book or their planning screen, and they read "
+    "and edit it there, so write the finished thing itself: no greetings, and no notes about what you did "
+    "unless you are asked for them."
+)
+
+ILLUSTRATION_BRIEF = (
+    "Each picture is described in one or two sentences for an illustrator: a single concrete scene, with "
+    "the subject, what they are doing, the setting, the light and the mood. Describe what is seen, not "
+    "ideas; where the text is about an idea, show a situation, object or place that embodies it. Leave "
+    "out any art style, medium or artist, because the book's illustration style is applied separately, "
+    "and never ask for words, lettering, signs, labels or book titles in the picture."
+)
+
+MARKDOWN = (
+    "Format it as light markdown: \"## \" before each section heading and \"### \" for a smaller heading "
+    "inside a section; paragraphs separated by one blank line; *italics* and **bold** used sparingly; "
+    "\"- \" or \"1. \" entries only where the material truly is a list; \"> \" before a quotation set apart "
+    "from the text. No tables, links, images or code."
+)
+
+DEPTHS = {
+    "light": (
+        "Light: keep the source's structure and meaning, the same chapters in the same order saying the "
+        "same things, in clearer, better language."
+    ),
+    "moderate": (
+        "Moderate: keep the source's substance but reorganise it where that serves the reader (merge, split "
+        "or reorder chapters) and expand explanations that are thin."
+    ),
+    "deep": (
+        "Deep: a distinct new book on the same material, with its own structure, sequence and way of "
+        "presenting things. Draw on the source for substance, not for shape."
+    ),
+    "full": (
+        "Full: the source is broad inspiration only. Plan an original book that takes its subject or "
+        "spirit in its own direction; it need not follow the source's content, structure or order."
+    ),
+}
+
+# How each depth asks for a chapter to be written from its source.
+DEPTH_WRITING = {
+    "light": (
+        "This chapter rewrites the source material below. Keep its structure and everything it says (every "
+        "fact, idea, example, name and event, in the same order) in clearer, better language of your own. "
+        "Build new sentences rather than swapping in synonyms, and keep proper names, numbers, dates and "
+        "technical terms as they are."
+    ),
+    "moderate": (
+        "This chapter is based on the source material below. Keep its substance, reorganise it where that "
+        "helps the reader, and expand explanations that are thin. Write it in your own words throughout."
+    ),
+    "deep": (
+        "This chapter draws on the source material below for substance, but presents it in its own way, "
+        "with its own structure and examples. Write it in your own words throughout."
+    ),
+    "full": (
+        "The source material below is inspiration only. Take from it whatever serves this chapter; the "
+        "chapter itself is original."
+    ),
+}
+
+OPTIONS = {
+    "keep-tone": "Keep the source's tone and voice.",
+    "simplify": "Make it simpler and more accessible than the source.",
+    "expand": "Go further than the source: deeper explanations and more detail.",
+    "modern-examples": "Replace dated examples and references with current ones.",
+    "change-audience": "Write for the audience given in the brief, which is not the source's audience.",
+    "illustrations": "The book will be illustrated: favour moments and ideas that lend themselves to pictures.",
+}
+
+MODES = {
+    "idea": "The author has an idea for a book and wants a plan for it.",
+    "rewrite": "The author is making a new book by rewriting existing material, the sources below.",
+    "extract": (
+        "The author wants a new book drawn out of existing material, the sources below: not the whole of "
+        "it, but what serves the book described in the brief. Use the parts that serve it and leave out "
+        "the rest."
+    ),
+    "documents": (
+        "The author has a set of documents, the sources below, and wants them made into one coherent book: "
+        "combine, order and connect what they hold, without covering the same material twice."
+    ),
+}
+
+LENGTHS = {
+    # chapters, words per chapter
+    "short": (6, 1200),
+    "medium": (10, 2000),
+    "long": (16, 3000),
+}
+
+REVISIONS = {
+    "rewrite": (
+        "Rewrite the passage so it reads better: clearer, more vivid, better paced. Keep the meaning, the "
+        "facts, the point of view and roughly the same length ({words} words)."
+    ),
+    "expand": (
+        "The passage is {words} words. Expand it to about {double} words by developing what is already "
+        "there: more concrete detail, fuller explanation, the steps or beats it currently skips. Do not add "
+        "new plot turns or new factual claims."
+    ),
+    "shorten": (
+        "The passage is {words} words. Cut it to about {half} words. Keep what matters most and the "
+        "author's voice; remove repetition, throat-clearing and anything the passage does not need."
+    ),
+    "simplify": (
+        "Make the passage simpler to read: plainer words, shorter sentences, one idea at a time, and any "
+        "term a newcomer would not know explained where it first appears. Keep everything it says, and "
+        "its voice."
+    ),
+    "tone": (
+        "Rewrite the passage in this tone: {tone}. Keep the meaning, the facts and roughly the same length; "
+        "change the voice, rhythm and word choice."
+    ),
+    "continue": (
+        "Continue the text from where the passage ends: write what comes next, about {more} words, in the "
+        "same voice, carrying it forward naturally{toward}. Return only the new text that follows the "
+        "passage, not the passage itself."
+    ),
+    "flow": (
+        "Improve the flow of the passage: smooth the transitions between its sentences and paragraphs and "
+        "into the text around it, vary the rhythm, and remove abrupt jumps. Keep its content, its facts and "
+        "its length."
+    ),
+    "examples": (
+        "Add one or two concrete examples that make the passage's point clearer, woven in where they fit, "
+        "and keep everything already there. Prefer examples that are plainly illustrative over specific "
+        "factual claims; if you do include a specific fact, name it in a note so the author can check it."
+    ),
+    "custom": "Do what the author asks with the passage: {instruction}",
+}
+
+
+def _lines(*pairs: tuple[str, str]) -> str:
+    return "\n".join(f"{label}: {value.strip()}" for label, value in pairs if value and value.strip())
+
+
+def _clip(text: str, limit: int) -> str:
+    """At most ``limit`` characters, cut at a word and marked when cut."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " […]"
+
+
+def _tail(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return "[…] " + text[-limit:].split(" ", 1)[-1]
+
+
+def sample(text: str, limit: int) -> str:
+    """A chapter cut to ``limit`` characters: its opening, then a passage from its middle."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    head = int(limit * 0.65)
+    middle = limit - head
+    opening = text[:head].rsplit(" ", 1)[0]
+    start = max(head, len(text) // 2 - middle // 2)
+    passage = text[start : start + middle]
+    passage = passage.split(" ", 1)[-1].rsplit(" ", 1)[0]
+    return f"{opening} […]\n\n[…] {passage} […]"
+
+
+def spread(text: str, limit: int, pieces: int = 4) -> str:
+    """At most ``limit`` characters taken from evenly through a text, each piece verbatim."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    size = limit // pieces
+    step = (len(text) - size) // max(1, pieces - 1)
+    taken = []
+    for n in range(pieces):
+        piece = text[n * step : n * step + size]
+        if n:
+            piece = piece.split(" ", 1)[-1]
+        taken.append(piece.rsplit(" ", 1)[0])
+    return " […]\n\n[…] ".join(taken)
+
+
+def _options(rewrite: Rewrite | None) -> str:
+    if not rewrite or not rewrite.options:
+        return ""
+    wanted = [OPTIONS.get(option.strip().lower(), option.strip().replace("-", " ")) for option in rewrite.options]
+    return "The author also asked for this: " + " ".join(w if w.endswith(".") else w + "." for w in wanted if w)
+
+
+# --- reading sources ----------------------------------------------------------
+
+
+def analyze(
+    request: AnalyzeRequest, chapters: Sequence[tuple[SourceChapterText, str]], *, overview: bool
+) -> tuple[str, str]:
+    """Read sampled chapters: with ``overview``, the whole analysis; without, chapter summaries only."""
+    what = "a book" if request.kind == "book" else "a document, or a set of documents"
+    titled = f", titled “{request.title.strip()}”" if request.title.strip() else ""
+    body = "\n\n".join(f"=== [{chapter.index}] {chapter.title or '(untitled)'} ===\n{text}" for chapter, text in chapters)
+    chapter_key = (
+        '- "chapters": one object per chapter above, in the same order, each with "index" (the number in '
+        'square brackets, copied exactly) and "summary" (one to three sentences saying concretely what that '
+        "chapter covers or what happens in it)."
+    )
+    if overview:
+        keys = f"""- "summary": three to five sentences on what the material is, what it covers and how it is organised.
+- "themes": 3 to 8 short phrases naming its main themes.
+- "concepts": the 5 to 15 most important ideas, people, places, methods or events in it, each an object with "name", "description" (one sentence, in terms of this material) and "chapterIndexes" (the numbers in square brackets of the chapters where it matters most).
+- "audience": one sentence on who it is written for.
+- "tone": a few words describing its voice, such as "warm, conversational, practical".
+{chapter_key}"""
+    else:
+        keys = chapter_key
+    user = f"""The author has imported {what}{titled}, to make a new book from. Below is each chapter in order: its number in square brackets, its title, then its text. A long chapter is given as its opening and a passage from its middle, with […] where text was left out.
+
+{body}
+
+Return a JSON object with these keys:
+{keys}
+
+Base everything on the text given. Where a chapter is only sampled, summarise what the sample shows rather than guessing at what was left out."""
+    return ROLE, user
+
+
+def overview(request: AnalyzeRequest, summaries: Sequence[tuple[int, str, str]]) -> tuple[str, str]:
+    """The whole-work analysis from chapter summaries, for material too long to read at once."""
+    what = "a book" if request.kind == "book" else "a document, or a set of documents"
+    titled = f", titled “{request.title.strip()}”" if request.title.strip() else ""
+    body = "\n".join(f"[{index}] {title or '(untitled)'}: {summary}" for index, title, summary in summaries)
+    user = f"""The author has imported {what}{titled}, to make a new book from. It is long, so here is a summary of each chapter in order, with the chapter's number in square brackets:
+
+{body}
+
+Return a JSON object with these keys:
+- "summary": three to five sentences on what the material is, what it covers and how it is organised.
+- "themes": 3 to 8 short phrases naming its main themes.
+- "concepts": the 5 to 15 most important ideas, people, places, methods or events in it, each an object with "name", "description" (one sentence, in terms of this material) and "chapterIndexes" (the numbers in square brackets of the chapters where it matters most).
+- "audience": one sentence on who it is written for.
+- "tone": a few words describing its voice, such as "warm, conversational, practical"."""
+    return ROLE, user
+
+
+# --- planning -----------------------------------------------------------------
+
+
+def _brief(request: BlueprintRequest) -> str:
+    brief = request.brief
+    return _lines(
+        ("The idea", brief.idea),
+        ("Genre", brief.genre),
+        ("Written for", brief.audience),
+        ("Tone", brief.tone),
+        ("Approach", brief.approach),
+        ("The author's instructions", brief.instructions),
+    ) or "(The author gave no further details.)"
+
+
+def source_index(sources: Sequence[BlueprintSource], labels: Sequence[str], limit: int) -> str:
+    """The sources as the model plans from them. Each chapter carries a label such as
+    [S1-3] (source 1, chapter index 3) for the plan to cite; ids from the app could be
+    anything, and a model copies a short label far more reliably than a UUID."""
+    blocks = []
+    for label, source in zip(labels, sources):
+        lines = [f"SOURCE {label}: “{source.title or 'Untitled'}”"]
+        if source.summary:
+            lines.append(f"Summary: {source.summary.strip()}")
+        if source.themes:
+            lines.append("Themes: " + "; ".join(t.strip() for t in source.themes if t.strip()))
+        if source.concepts:
+            lines.append(
+                "Key concepts: "
+                + "; ".join(f"{c.name.strip()} ({c.description.strip()})" if c.description else c.name.strip() for c in source.concepts)
+            )
+        if source.chapters:
+            lines.append("Chapters:")
+            lines += [f"[{label}-{c.index}] {c.title or '(untitled)'}: {c.summary.strip()}" for c in source.chapters]
+        blocks.append("\n".join(lines))
+    text = "\n\n".join(blocks)
+    if len(text) > limit:
+        # Too long to send whole: keep every chapter line, each summary shortened to fit.
+        share = max(80, limit // max(1, sum(len(s.chapters) + 3 for s in sources)))
+        text = "\n".join(_clip(line, share) if line.startswith("[") else _clip(line, share * 4) for line in text.split("\n"))
+    return text
+
+
+def _planning_situation(request: BlueprintRequest, sources: str) -> str:
+    parts = [MODES[request.mode], f"THE BRIEF\n{_brief(request)}"]
+    if request.mode == "rewrite":
+        rewrite = request.rewrite or Rewrite()
+        parts.append(f"How far the new book may move from the source:\n{DEPTHS[rewrite.depth]}")
+    options = _options(request.rewrite)
+    if options:
+        parts.append(options)
+    if sources:
+        parts.append(f"THE SOURCES\n{sources}")
+    return "\n\n".join(parts)
+
+
+def _size(request: BlueprintRequest) -> str:
+    chapters, words = LENGTHS[request.brief.length]
+    if request.brief.chapter_count:
+        return f"The book should have {request.brief.chapter_count} chapters of about {words} words each."
+    if request.mode == "rewrite" and (request.rewrite or Rewrite()).depth == "light" and request.sources:
+        count = sum(len(s.chapters) for s in request.sources)
+        return f"Keep the source's chapters: {count} of them, each about as long as the source's."
+    return f"Plan a {request.brief.length} book: about {chapters} chapters of about {words} words each, or what the material truly needs."
+
+
+def directions(request: BlueprintRequest, sources: str, count: int) -> tuple[str, str]:
+    """Distinct directions for the book, before any is planned in full."""
+    user = f"""{_planning_situation(request, sources)}
+
+The author will be shown {count} different versions of this book to choose from. Propose them. They must differ in substance, in angle, structure or approach (one chronological and one thematic, say, or one a practical guide and one a narrative), not merely in wording. Each must still be the book the brief asks for.{" With a light rewrite the chapters stay the source's, so let the versions differ in framing, emphasis and how each chapter is presented." if request.mode == "rewrite" and (request.rewrite or Rewrite()).depth == "light" else ""}
+
+Return a JSON object with one key, "directions": an array of {count} objects, each with "title" (a working title) and "angle" (two or three sentences: what sets this version apart, how it is structured, and who it suits best)."""
+    return ROLE, user
+
+
+def blueprint(
+    request: BlueprintRequest, sources: str, direction: str | None = None, others: Sequence[str] = ()
+) -> tuple[str, str]:
+    cites = (
+        '  - "sources": the labels in square brackets (such as "S1-3") of the source chapters this chapter draws on; an empty array if none.\n'
+        if request.mode != "idea"
+        else ""
+    )
+    steer = ""
+    if direction:
+        steer = f"\n\nPlan this version of the book:\n{direction}"
+        if others:
+            steer += "\n\nThe author is also being offered these versions, so keep this one clearly distinct from them:\n" + "\n".join(f"- {o}" for o in others)
+    user = f"""{_planning_situation(request, sources)}{steer}
+
+{_size(request)}
+
+Plan the book. Return a JSON object with these keys:
+- "title": a title a reader would pick up, specific to this book rather than a restatement of the request.
+- "subtitle": a subtitle that says what the book offers, or "" if it needs none.
+- "description": two or three sentences in the voice of a back-cover blurb.
+- "audience": one sentence on who the book is for.
+- "tone": a few words describing its voice.
+- "chapters": an array in reading order, each an object with:
+  - "title": the chapter's name only, without "Chapter 1" numbering, which the layout adds.
+  - "summary": one to three sentences saying concretely what the chapter covers or what happens in it, precise enough to write it from.
+  - "sections": two to five objects, each with "title" and "topics" (two to five short phrases naming what that section covers).
+  - "estimatedWords": the chapter's planned length in words.
+{cites}
+Together the chapters should build: an opening that earns attention, a middle that develops, an ending that lands."""
+    return ROLE, user
+
+
+def _plan_text(plan: Blueprint) -> str:
+    lines = [
+        _lines(
+            ("Title", plan.title),
+            ("Subtitle", plan.subtitle),
+            ("Description", plan.description),
+            ("Audience", plan.audience),
+            ("Tone", plan.tone),
+        ),
+        "Chapters:",
+    ]
+    for number, chapter in enumerate(plan.chapters, start=1):
+        words = f" (about {chapter.estimated_words} words)" if chapter.estimated_words else ""
+        lines.append(f"{number}. {chapter.title}{words}")
+        if chapter.summary:
+            lines.append(f"   Summary: {chapter.summary}")
+        if chapter.sections:
+            lines.append(
+                "   Sections: "
+                + "; ".join(f"{s.title} ({', '.join(s.topics)})" if s.topics else s.title for s in chapter.sections)
+            )
+    return "\n".join(lines)
+
+
+def refine(plan: Blueprint, message: str, history: Sequence[ChatTurn]) -> tuple[str, str]:
+    conversation = ""
+    if history:
+        turns = "\n".join(f"{'Author' if t.role == 'user' else 'You'}: {t.content.strip()}" for t in history)
+        conversation = f"\n\nTHE CONVERSATION SO FAR\n{turns}"
+    user = f"""The author is shaping the plan for their book with you.
+
+THE PLAN, AS IT STANDS
+{_plan_text(plan)}{conversation}
+
+The author now says:
+{message.strip()}
+
+Return a JSON object with these keys:
+- "reply": one or two sentences to the author saying what you changed, or answering them if they asked a question.
+- "blueprint": the complete revised plan, with "title", "subtitle", "description", "audience", "tone" and "chapters". "chapters" is an array in reading order, each an object with "from", "title", "summary", "sections" (each with "title" and "topics") and "estimatedWords". "from" is the number of the chapter above that this one continues, even if you retitle, rewrite or move it, a list of numbers if it merges several, or null for a brand-new chapter. If the author asked a question and nothing should change, make "blueprint" null.
+
+When the author says "chapter 3" they mean the one numbered 3 above. Change what they asked for and keep everything else exactly as it is. Chapter titles carry no "Chapter 1" numbering."""
+    return ROLE, user
+
+
+# --- writing ------------------------------------------------------------------
+
+
+def _book_card(request: ChapterRequest) -> str:
+    book = request.book
+    return _lines(
+        ("Title", book.title or "Untitled"),
+        ("Subtitle", book.subtitle),
+        ("About the book", book.description),
+        ("Written for", book.audience),
+        ("Tone", book.tone),
+        ("The author's instructions for the whole book", book.instructions),
+    )
+
+
+def _outline(request: ChapterRequest) -> str:
+    lines = []
+    for index, entry in enumerate(request.outline):
+        marker = "   <- this chapter" if index == request.chapter_index else ""
+        summary = f": {entry.summary.strip()}" if entry.summary.strip() else ""
+        lines.append(f"{index + 1}. {entry.title}{summary}{marker}")
+    return "\n".join(lines)
+
+
+def _source_framing(request: ChapterRequest) -> str:
+    rewrite = request.rewrite or Rewrite()
+    if request.mode == "rewrite":
+        framing = DEPTH_WRITING[rewrite.depth]
+    elif request.mode == "extract":
+        framing = "This chapter draws on the source material below. Use what serves this chapter, in your own words, and leave the rest."
+    elif request.mode == "documents":
+        framing = (
+            "This chapter is built from the documents below. Bring together what they say on this chapter's "
+            "subject into one connected text in your own words."
+        )
+    else:
+        framing = "The author supplied the reference material below for this chapter. Use it where it helps."
+    if not (request.mode == "rewrite" and rewrite.depth in ("deep", "full")) and request.mode != "idea":
+        framing += " Do not add facts, figures or quotations the material does not support, and do not copy its sentences."
+    options = _options(request.rewrite)
+    return f"{framing} {options}".strip()
+
+
+def chapter(request: ChapterRequest, excerpts: str, words: int, pictures: int) -> tuple[str, str]:
+    plan = request.chapter
+    number = request.chapter_index + 1
+    parts = [f"THE BOOK\n{_book_card(request)}"]
+    if request.outline:
+        parts.append(f"THE TABLE OF CONTENTS\n{_outline(request)}")
+    if request.previous_summary.strip() and request.chapter_index > 0:
+        parts.append(f"WHERE THE BOOK STANDS (a recap of the chapter before this one)\n{request.previous_summary.strip()}")
+    this = [f"Write chapter {number}, “{plan.title}”." + (f" It should cover: {plan.summary.strip()}" if plan.summary.strip() else "")]
+    if plan.sections:
+        this.append("Its sections, in order:")
+        this += [f"- {s.title}" + (f": {'; '.join(s.topics)}" if s.topics else "") for s in plan.sections]
+    if plan.instructions.strip():
+        this.append(f"The author's direction for this chapter: {plan.instructions.strip()}")
+    parts.append("THIS CHAPTER\n" + "\n".join(this))
+    if excerpts:
+        parts.append(f"SOURCE MATERIAL\n{_source_framing(request)}\n\n{excerpts}")
+
+    continuity = (
+        " Pick up where the previous chapter left off, so the book reads as one continuous whole, without retelling it."
+        if request.previous_summary.strip() and request.chapter_index > 0
+        else ""
+    )
+    sections = " Use the planned sections as the chapter's sections, in order, each under its own heading." if plan.sections else ""
+    how = [
+        f"Aim for about {words} words. Write it to be read: stay inside this chapter's part of the book without "
+        f"running ahead into later chapters, and end where the chapter ends rather than summarising it.{continuity}{sections}",
+        f"{MARKDOWN} Do not write the chapter title or a \"Chapter {number}\" heading; the layout adds it.",
+    ]
+    if pictures:
+        where = (
+            f"Mark {pictures} places for a picture, spread through the chapter, each right after the passage it illustrates"
+            if pictures > 1
+            else "Mark 1 place for a picture, right after the passage it illustrates"
+        )
+        how.append(
+            f"{where}, with a line of its own in this form: {ILLUSTRATION_LINE}. "
+            f"{ILLUSTRATION_BRIEF} The caption is a line for under the picture, at most 15 words."
+        )
+    how.append(
+        f"After the chapter, on a line by itself, write {SUMMARY_MARKER}, then a recap of about 120 words of "
+        "this chapter, written for whoever writes the next one: where things stand at its end, what was "
+        "established or explained, and any thread left open. The recap is not part of the chapter."
+    )
+    parts.append("HOW TO WRITE IT\n" + "\n\n".join(how))
+    return ROLE, "\n\n".join(parts)
+
+
+def recap(title: str, text: str) -> tuple[str, str]:
+    user = f"""Here is the chapter “{title}” of a book:
+
+{sample(text, 30000)}
+
+Write a recap of about 120 words of this chapter for whoever writes the next one: where things stand at its end, what was established or explained, and any thread left open. Plain prose, one paragraph, nothing else."""
+    return ROLE, user
+
+
+# --- revising -----------------------------------------------------------------
+
+
+def revise(
+    action: str,
+    passage: str,
+    *,
+    instruction: str,
+    tone: str,
+    book_title: str,
+    chapter_title: str,
+    before: str,
+    after: str,
+) -> tuple[str, str]:
+    words = len(passage.split())
+    task = REVISIONS[action].format(
+        words=words,
+        half=max(1, words // 2),
+        # A word target works where "half" or "twice" alone gets a timid edit.
+        double=max(words * 2, words + 60),
+        tone=tone or instruction,
+        more=max(150, min(400, words)),
+        toward=" toward what comes after it" if after else "",
+        instruction=instruction,
+    )
+    if instruction and action not in ("custom", "tone"):
+        task += f" The author adds: {instruction}"
+    where = _lines(("Book", book_title), ("Chapter", chapter_title))
+    parts = [where] if where else []
+    if before:
+        parts.append(f"WHAT COMES BEFORE THE PASSAGE (context only; do not rewrite it)\n{_tail(before, 3000)}")
+    parts.append(f"THE PASSAGE\n{passage or '(empty: the text so far ends just before it)'}")
+    if after:
+        parts.append(f"WHAT COMES AFTER IT (context only)\n{_clip(after, 1500)}")
+    parts.append(task)
+    parts.append(
+        "Return only the text, ready to go into the book: paragraphs separated by one blank line, "
+        "*italics* and **bold** where the text calls for them, no title and no commentary. Then, only if "
+        f"there is something the author should check or know, write {NOTES_MARKER} on a line by itself, "
+        'followed by one short note per line, each beginning with "- ". A note is about the text — a fact '
+        "to check, a name to confirm, a change of meaning the author should know about — never about these "
+        "instructions or how closely you followed them (word counts, length, the request itself)."
+    )
+    return ROLE + " Here you are editing one passage of the author's book.", "\n\n".join(parts)
+
+
+def factcheck(passage: str, book_title: str, chapter_title: str) -> tuple[str, str]:
+    where = _lines(("Book", book_title), ("Chapter", chapter_title))
+    user = f"""{where + chr(10) + chr(10) if where else ""}THE PASSAGE
+{passage}
+
+You cannot look anything up, and you must not judge whether anything in the passage is true. Your job is to point the author at what to check. List the specific factual claims in the passage that a careful author should check against a reliable source before publishing: names, dates, numbers and statistics, quotations and who said them, historical events, and scientific, medical, legal or technical statements. Each note is one sentence naming the claim and what to check, such as "Check the year given for the library's founding (1602) against a reliable source." Never say whether a claim is right or wrong, and never call anything verified, confirmed, accurate or correct. Opinions, the author's own experiences and plainly fictional events are not claims to check.
+
+Return a JSON object with one key, "claims": an array of these notes, or an empty array if the passage makes no claims worth checking."""
+    return ROLE, user
+
+
+# --- illustration -------------------------------------------------------------
+
+
+def illustration_ideas(request: IllustrationPromptsRequest, style: str, text: str, count: int) -> tuple[str, str]:
+    book = request.book
+    card = _lines(("Title", book.title or "Untitled"), ("About the book", book.description), ("Tone", book.tone))
+    plural = count > 1
+    style_line = (
+        f"The pictures will be drawn in this style: {style}. Do not describe the style, medium or artist "
+        "in your descriptions; it is applied separately, but let the subjects suit it."
+        if style
+        else "Do not describe an art style, medium or artist; the book's style is applied separately."
+    )
+    if request.purpose == "cover":
+        opening = f"\n\nFrom the book:\n{text}" if text else ""
+        user = f"""THE BOOK
+{card}{opening}
+
+{style_line}
+
+Propose {count} different concept{'s' if plural else ''} for the art on this book's cover. Each describes the picture only, in one or two sentences: the cover's title and the author's name are set in type over the art separately, so never mention the title, words, lettering or typography. Give it one strong focal point that reads at thumbnail size, and leave a calm, uncluttered area in the upper third for the title. Capture what the book is about and how it feels.
+
+Return a JSON object with one key, "prompts": an array of {count} object{'s' if plural else ''}, each with "prompt" (the picture) and "caption" (a short name for the concept, at most 8 words)."""
+        return ROLE, user
+    title = f"“{request.chapter.title}”" if request.chapter.title else "of the book"
+    user = f"""THE BOOK
+{card}
+
+{style_line}
+
+THE CHAPTER {title}
+{text}
+
+Choose {count} moment{'s' if plural else ''} from this chapter that would make the strongest illustration{'s' if plural else ''}{', spread through the chapter rather than bunched together' if plural else ''}. If the chapter is a list or an index rather than prose, show instead an emblem or scene that stands for the book as a whole. {ILLUSTRATION_BRIEF}
+
+Return a JSON object with one key, "prompts": an array of {count} object{'s' if plural else ''}, each with:
+- "prompt": the picture, as above.
+- "caption": a caption for under the picture, at most 15 words.
+- "anchor": a quotation of 5 to 15 words, copied exactly from the chapter text above, from the passage the picture illustrates."""
+    return ROLE, user

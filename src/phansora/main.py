@@ -6,7 +6,7 @@ This module composes them into one process, mounting each under a path prefix:
     /spokenverse/*   -> SpokenVerse (PDF/OCR, text->audio, Book Alchemy)
     /chrono/*        -> Chrono-Origin (story/myth origin tracing)
     /research-atlas/* -> Research Atlas (organizes research material into a report)
-    /talari/*        -> Talari Book Creator (illustrated books; ComfyUI illustrations for now)
+    /talari/*        -> Talari Book Creator (illustrated books: DeepSeek writing, ComfyUI illustrations)
     /dossier/*       -> alias of /research-atlas, kept so the Node worker keeps
                         resolving during the rename; remove once it points at the new prefix
 

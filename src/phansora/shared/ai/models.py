@@ -47,6 +47,7 @@ PRODUCT_MODEL_VARS = {
     "dossier_nova": "DOSSIER_MODEL",
     "narrava_studio": "NARRAVA_MODEL",
     "spokenverse": "SPOKENVERSE_OCR_MODEL",
+    "talari": "TALARI_MODEL",
 }
 
 # The reasoning/judgment model is resolved the same way, one layer at a time, so a

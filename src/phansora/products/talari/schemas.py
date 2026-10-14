@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -21,6 +21,10 @@ class IllustrationRequest(Model):
     # The book's pages: pictures for dark pages are drawn on a dark ground.
     theme: Literal["light", "dark"] = "light"
     seed: int | None = None
+    # The author's own description of the look, used when style_id is "custom".
+    custom_style: str | None = Field(default=None, max_length=400)
+    palette: Literal["color", "grayscale"] = "color"
+    detail: Literal["simple", "balanced", "rich"] = "balanced"
 
 
 class IllustrationResponse(Model):
@@ -37,3 +41,283 @@ class ServiceState(Model):
 
 class Status(Model):
     illustration: ServiceState
+
+
+# --- writing ----------------------------------------------------------------
+# Requests are lenient where the app may leave a field out (it is optional in the UI),
+# and bounded where an unbounded field would only cost tokens.
+
+
+class Lenient(Model):
+    """A null is a field left out: it takes the field's default. JavaScript sends null for
+    "not set" as readily as it omits the key, and both mean the same thing here. A
+    required field sent as null is still refused."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _nulls_are_absent(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {key: value for key, value in data.items() if value is not None}
+        return data
+
+
+Mode =Literal["idea", "rewrite", "extract", "documents"]
+SourceFormat = Literal["pdf", "epub", "docx", "txt", "md"]
+
+TEXT_MAX = 400_000      # one chapter's text, or a passage being revised
+NOTE_MAX = 4_000        # a brief's free-text fields
+
+
+class ExtractedChapter(Lenient):
+    index: int
+    title: str
+    words: int
+    page_start: int | None = None
+    page_end: int | None = None
+    text: str
+
+
+class ExtractResponse(Lenient):
+    title: str
+    format: SourceFormat
+    pages: int | None = None
+    words: int
+    chapters: list[ExtractedChapter]
+
+
+class SourceChapterText(Lenient):
+    index: int
+    title: str = ""
+    text: str = Field(default="", max_length=TEXT_MAX)
+
+
+class AnalyzeRequest(Lenient):
+    kind: Literal["book", "document"] = "book"
+    title: str = ""
+    chapters: list[SourceChapterText] = Field(min_length=1, max_length=2000)
+
+
+class Concept(Lenient):
+    name: str
+    description: str = ""
+    chapter_indexes: list[int] = Field(default_factory=list)
+
+
+class ChapterSummary(Lenient):
+    index: int
+    title: str = ""
+    summary: str = ""
+
+
+class AnalyzeResponse(Lenient):
+    summary: str
+    themes: list[str]
+    concepts: list[Concept]
+    audience: str
+    tone: str
+    chapters: list[ChapterSummary]
+
+
+class Brief(Lenient):
+    idea: str = Field(default="", max_length=NOTE_MAX)
+    genre: str = ""
+    audience: str = ""
+    tone: str = ""
+    length: Literal["short", "medium", "long"] = "medium"
+    chapter_count: int | None = Field(default=None, ge=1, le=60)
+    approach: str = Field(default="", max_length=NOTE_MAX)
+    instructions: str = Field(default="", max_length=NOTE_MAX)
+
+
+class Rewrite(Lenient):
+    depth: Literal["light", "moderate", "deep", "full"] = "moderate"
+    options: list[str] = Field(default_factory=list, max_length=20)
+
+
+class SourceConcept(Lenient):
+    name: str
+    description: str = ""
+
+
+class BlueprintSource(Lenient):
+    id: str
+    title: str = ""
+    summary: str = ""
+    themes: list[str] = Field(default_factory=list)
+    concepts: list[SourceConcept] = Field(default_factory=list)
+    chapters: list[ChapterSummary] = Field(default_factory=list)
+
+
+class BlueprintRequest(Lenient):
+    mode: Mode
+    brief: Brief = Field(default_factory=Brief)
+    rewrite: Rewrite | None = None
+    sources: list[BlueprintSource] = Field(default_factory=list, max_length=50)
+    count: int = Field(default=1, ge=1, le=3)
+
+
+class Section(Lenient):
+    title: str
+    topics: list[str] = Field(default_factory=list)
+
+
+class SourceRef(Lenient):
+    source_id: str
+    chapter_index: int
+
+
+class BlueprintChapter(Lenient):
+    title: str
+    summary: str = ""
+    sections: list[Section] = Field(default_factory=list)
+    estimated_words: int = 0
+    source_refs: list[SourceRef] = Field(default_factory=list)
+
+
+class Blueprint(Lenient):
+    title: str
+    subtitle: str = ""
+    description: str = ""
+    audience: str = ""
+    tone: str = ""
+    chapters: list[BlueprintChapter]
+
+
+class BlueprintResponse(Lenient):
+    proposals: list[Blueprint]
+
+
+class ChatTurn(Lenient):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=20_000)
+
+
+class RefineRequest(Lenient):
+    blueprint: Blueprint
+    message: str = Field(min_length=1, max_length=NOTE_MAX)
+    history: list[ChatTurn] = Field(default_factory=list)
+
+
+class RefineResponse(Lenient):
+    reply: str
+    blueprint: Blueprint
+
+
+class BookInfo(Lenient):
+    title: str = ""
+    subtitle: str = ""
+    description: str = ""
+    audience: str = ""
+    tone: str = ""
+    instructions: str = Field(default="", max_length=NOTE_MAX)
+
+
+class OutlineEntry(Lenient):
+    title: str = ""
+    summary: str = ""
+
+
+class ChapterPlan(Lenient):
+    title: str
+    summary: str = ""
+    sections: list[Section] = Field(default_factory=list)
+    estimated_words: int = Field(default=1500, ge=0, le=50_000)
+    instructions: str = Field(default="", max_length=NOTE_MAX)
+
+
+class Excerpt(Lenient):
+    title: str = ""
+    text: str = Field(default="", max_length=TEXT_MAX)
+
+
+class IllustrationPlan(Lenient):
+    enabled: bool = False
+    per_chapter: int = Field(default=1, ge=0, le=6)
+
+
+class ChapterRequest(Lenient):
+    book: BookInfo = Field(default_factory=BookInfo)
+    outline: list[OutlineEntry] = Field(default_factory=list)
+    chapter_index: int = Field(default=0, ge=0)
+    chapter: ChapterPlan
+    previous_summary: str = Field(default="", max_length=NOTE_MAX)
+    source_excerpts: list[Excerpt] = Field(default_factory=list, max_length=50)
+    mode: Mode = "idea"
+    rewrite: Rewrite | None = None
+    illustrations: IllustrationPlan = Field(default_factory=IllustrationPlan)
+
+
+class Block(Lenient):
+    """One piece of a chapter. ``html`` and ``items`` hold inline HTML only: escaped text
+    with <em> and <strong>. Fields that do not apply are left out of the JSON."""
+
+    type: Literal["heading", "paragraph", "quote", "list"]
+    level: Literal[2, 3] | None = None
+    html: str | None = None
+    items: list[str] | None = None
+    # Present (true) only on a numbered list, whose order is part of what it says.
+    ordered: bool | None = None
+
+
+class PlacedIllustration(Lenient):
+    # The picture goes after this block (an index into ``blocks``).
+    after_block: int
+    prompt: str
+    caption: str = ""
+
+
+class ChapterResponse(Lenient):
+    blocks: list[Block]
+    summary: str
+    illustrations: list[PlacedIllustration]
+
+
+class ReviseContext(Lenient):
+    book_title: str = ""
+    chapter_title: str = ""
+    before: str = Field(default="", max_length=TEXT_MAX)
+    after: str = Field(default="", max_length=TEXT_MAX)
+
+
+class ReviseRequest(Lenient):
+    action: Literal["rewrite", "expand", "shorten", "simplify", "tone", "continue", "flow", "examples", "factcheck", "custom"]
+    html: str = Field(default="", max_length=TEXT_MAX)
+    instruction: str = Field(default="", max_length=NOTE_MAX)
+    tone: str = Field(default="", max_length=500)
+    context: ReviseContext = Field(default_factory=ReviseContext)
+
+
+class ReviseResponse(Lenient):
+    html: str
+    notes: list[str]
+
+
+class IllustrationBook(Lenient):
+    title: str = ""
+    description: str = ""
+    tone: str = ""
+
+
+class IllustrationChapter(Lenient):
+    title: str = ""
+    text: str = Field(default="", max_length=TEXT_MAX)
+
+
+class IllustrationPromptsRequest(Lenient):
+    book: IllustrationBook = Field(default_factory=IllustrationBook)
+    chapter: IllustrationChapter = Field(default_factory=IllustrationChapter)
+    style_id: str = ""
+    custom_style: str | None = Field(default=None, max_length=400)
+    count: int = Field(default=1, ge=1, le=6)
+    purpose: Literal["interior", "cover"] = "interior"
+
+
+class IllustrationIdea(Lenient):
+    prompt: str
+    caption: str = ""
+    # A short verbatim quote from the chapter the picture illustrates; empty for a cover.
+    anchor: str = ""
+
+
+class IllustrationPromptsResponse(Lenient):
+    prompts: list[IllustrationIdea]

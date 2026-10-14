@@ -10,7 +10,7 @@ serves all products, each under a path prefix:
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 | **Book Alchemy** | `/book-alchemy` | book → structured audio course |
 | **Narrava Studio** | `/studio` | documentary editor: script, storyboard, AI media generation |
-| **Talari Book Creator** | `/talari` | illustrated books — for now, its illustrations: FLUX.1 Dev drawn by ComfyUI |
+| **Talari Book Creator** | `/talari` | illustrated books: document import, planning and chapter writing (DeepSeek), illustrations (FLUX.1 Dev drawn by ComfyUI) |
 
 System packages: `ffmpeg`, `tesseract-ocr`.
 
@@ -37,6 +37,7 @@ which is what exceeding the model's real output ceiling looks like.
 | Dossier Nova | research synthesis, dossier writing | — (DeepSeek only) | `DEEPSEEK_MODEL` |
 | Book Alchemy | book → course structure + lesson text | — (DeepSeek only) | `BOOK_ALCHEMY_MODEL` → `DEEPSEEK_MODEL` |
 | SpokenVerse | OCR cleanup / page merge on scanned PDFs | — (DeepSeek only) | `SPOKENVERSE_OCR_MODEL` → `DEEPSEEK_MODEL` |
+| Talari Book Creator | source analysis, book plans, chapters, revisions, illustration ideas | — (DeepSeek only) | `TALARI_MODEL` → `DEEPSEEK_MODEL` |
 
 Reasoning-model overrides (`<PRODUCT>_REASONING_MODEL` → `{OPENAI,DEEPSEEK}_REASONING_MODEL`)
 apply on the research paths; unset means "reason with the chat model", not an error.

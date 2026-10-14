@@ -140,11 +140,14 @@ async def _chat_completion(
     user_text: str,
     max_output_tokens: int,
     disable_thinking: bool = False,
+    # 0 suits cleaning and extraction. Writing prose wants more (DeepSeek's own guidance
+    # puts creative writing well above 1), so callers that write can ask for it.
+    temperature: float = 0,
 ) -> str:
     url = f"{cfg.base_url}/v1/chat/completions"
     payload = {
         "model": cfg.model,
-        "temperature": 0,
+        "temperature": temperature,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
