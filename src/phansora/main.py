@@ -6,6 +6,7 @@ This module composes them into one process, mounting each under a path prefix:
     /spokenverse/*   -> SpokenVerse (PDF/OCR, text->audio, Book Alchemy)
     /chrono/*        -> Chrono-Origin (story/myth origin tracing)
     /research-atlas/* -> Research Atlas (organizes research material into a report)
+    /talari/*        -> Talari Book Creator (illustrated books; ComfyUI illustrations for now)
     /dossier/*       -> alias of /research-atlas, kept so the Node worker keeps
                         resolving during the rename; remove once it points at the new prefix
 
@@ -47,6 +48,7 @@ _PRODUCT_APPS = {
     "/dossier": "phansora.products.research_atlas.api:app",
     "/book-alchemy": "phansora.products.book_alchemy.server:app",
     "/studio": "phansora.products.narrava_studio.server:app",
+    "/talari": "phansora.products.talari.server:app",
 }
 # prefix -> product key (used in the root() response)
 _PREFIX_TO_KEY = {
@@ -56,6 +58,7 @@ _PREFIX_TO_KEY = {
     "/dossier": "research_atlas",
     "/book-alchemy": "book_alchemy",
     "/studio": "narrava_studio",
+    "/talari": "talari",
 }
 
 

@@ -10,6 +10,7 @@ serves all products, each under a path prefix:
 | **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
 | **Book Alchemy** | `/book-alchemy` | book → structured audio course |
 | **Narrava Studio** | `/studio` | documentary editor: script, storyboard, AI media generation |
+| **Talari Book Creator** | `/talari` | illustrated books — for now, its illustrations: FLUX.1 Dev drawn by ComfyUI |
 
 System packages: `ffmpeg`, `tesseract-ocr`.
 
