@@ -465,3 +465,104 @@ def test_confidence_is_judged_a_line_at_a_time_not_a_word_at_a_time(monkeypatch)
         [(1.0, 1.4)] * 6, total_duration_sec=10.0,
     )
     assert out["guessed"] == [False, False, False, True, True, True]
+
+
+# ── Where the aligner cannot hear, the transcript can ─────────────────────────
+# On the prod song every chorus scored 0.02-0.11 with the forced aligner — a held, layered
+# vocal it has no letters for — and its lines landed 2-7 seconds off the singing, while
+# whisper had heard every one of them, if not always the words.
+
+
+def test_a_misheard_line_keeps_the_seconds_it_was_sung_at(monkeypatch):
+    # Whisper wrote "Played on the, yeah, we been" for the second line: the wrong words, one
+    # for one, at exactly the seconds the right ones were sung.
+    out = _aligned(
+        monkeypatch,
+        "They don't know what we've seen\nThey don't know where we've been",
+        _heard(("They", 80.5, 81.0), ("don't", 81.0, 81.3), ("know", 81.3, 81.8),
+               ("what", 82.4, 83.1), ("we've", 83.1, 84.0), ("seen", 84.0, 84.3),
+               ("Played", 86.3, 86.9), ("on", 86.9, 87.2), ("the", 87.2, 87.7),
+               ("yeah", 87.7, 88.6), ("we", 88.6, 89.9), ("been", 89.9, 90.2)),
+        total=120.0,
+    )
+    assert [round(s, 2) for s, _ in out["words"][6:]] == [86.3, 86.9, 87.2, 87.7, 88.6, 89.9]
+    # Stand-ins are a reading of WHEN, not of what — they stay marked for checking.
+    assert out["guessed"][6:11] == [True] * 5
+    assert out["guessed"][11] is False
+
+
+def test_a_stand_in_needs_a_stretch_of_about_its_own_length():
+    from phansora.products.narrava_studio.services import align
+
+    said = ["they", "don't", "know", "where", "we've", "been"]
+    # Five sheet words opposite one heard one is a missed line, not a misheard one.
+    heard = [("yeah", 87.7, 88.6), ("been", 89.9, 90.2)]
+    times, _ = align._anchored(said, heard)
+    assert align._stand_ins(said, heard, times)[:5] == [None] * 5
+
+
+def test_a_line_the_aligner_cannot_find_takes_the_transcripts_times(monkeypatch):
+    from phansora.products.narrava_studio.services import align, forced_align
+
+    monkeypatch.setattr(forced_align, "enabled", lambda: True)
+    # Line one is found. Line two scores nothing, and its "spans" are wherever the path
+    # through those frames happened to go — 5s early.
+    monkeypatch.setattr(forced_align, "align", lambda *a, **k: [
+        (77.4, 77.8, 0.60), (77.9, 78.3, 0.55), (78.4, 79.5, 0.50),
+        (79.6, 79.7, 0.03), (79.8, 80.0, 0.02), (80.1, 81.0, 0.04),
+    ])
+    heard = [(77.2, 77.7), (77.8, 78.2), (78.3, 79.4), (86.3, 86.9), (86.9, 87.2), (89.9, 90.2)]
+    out = align._measured(
+        "song.mp3", "plant the seeds\nwhere we've been",
+        heard, evidence=heard, total_duration_sec=120.0,
+    )
+    # The measured line is the aligner's, untouched; the unfound one is where it was heard.
+    assert out["words"][:3] == [(77.4, 77.8), (77.9, 78.3), (78.4, 79.5)]
+    assert out["words"][3:] == [(86.3, 86.9), (86.9, 87.2), (89.9, 90.2)]
+    assert out["guessed"] == [False, False, False, True, True, True]
+
+
+def test_a_transcript_time_never_pushes_a_measured_line(monkeypatch):
+    from phansora.products.narrava_studio.services import align, forced_align
+
+    monkeypatch.setattr(forced_align, "enabled", lambda: True)
+    monkeypatch.setattr(forced_align, "align", lambda *a, **k: [
+        (10.0, 10.4, 0.60), (10.5, 11.0, 0.60),
+        (11.1, 11.2, 0.02), (11.3, 11.4, 0.02),
+        (14.0, 14.4, 0.60), (14.5, 15.0, 0.60),
+    ])
+    # Whisper put the middle line's second word AFTER the measured line that follows it.
+    evidence = [None, None, (12.0, 12.5), (14.2, 14.6), None, None]
+    out = align._measured(
+        "song.mp3", "take me\nhome now\nand stay", [(10.0, 15.0)] * 6,
+        evidence=evidence, total_duration_sec=30.0,
+    )
+    assert out["words"][4:] == [(14.0, 14.4), (14.5, 15.0)]
+    assert out["words"][2] == (12.0, 12.5)
+    assert 12.5 <= out["words"][3][0] <= 14.0
+
+
+def test_the_rest_between_two_lines_goes_at_the_line_break():
+    from phansora.products.narrava_studio.services import align
+
+    # "a b c / d e f": only the first and last words were heard, 8 seconds apart. The rest
+    # belongs between "c" and "d", not smeared through both lines.
+    paces = [0.25] * 6
+    filled = align._fill_gaps(
+        [(1.0, 1.2), None, None, None, None, (9.0, 9.3)], 30.0,
+        weights=[1] * 6, paces=paces, breaks=[False, False, True, False, False, False],
+    )
+    assert filled[1:5] == [
+        pytest.approx((1.2, 1.45)), pytest.approx((1.45, 1.7)),
+        pytest.approx((8.5, 8.75)), pytest.approx((8.75, 9.0)),
+    ]
+
+
+def test_without_line_breaks_a_gap_is_spread_as_before():
+    from phansora.products.narrava_studio.services import align
+
+    times = [(1.0, 1.2), None, None, (9.0, 9.3)]
+    assert align._fill_gaps(times, 30.0, weights=[1] * 4, paces=[0.25] * 4) == align._fill_gaps(
+        times, 30.0, weights=[1] * 4, paces=[0.25] * 4, breaks=[False] * 4)
+    # A narration never passes breaks at all, and its gap is still split evenly.
+    assert align._fill_gaps(times, 30.0, weights=[1] * 4)[2][0] == pytest.approx(5.1)

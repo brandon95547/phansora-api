@@ -186,6 +186,54 @@ def _anchored(
     return times, ratio
 
 
+# A stretch SequenceMatcher calls a "replace" is the sheet's words opposite the wrong words —
+# and on a song the wrong words are usually the right ones misheard, sung at the same seconds.
+# On the prod song whisper wrote "Played on the, yeah, we been" for "They don't know where
+# we've been", one word for one, at exactly the seconds it was sung. Treating the sheet's side
+# as unheard threw those seconds away and spread the line across the rest in front of it.
+#
+# Only where the two sides are close in length. Five sheet words opposite two heard ones is
+# not a stand-in, it is a line the transcript missed with something else heard nearby, and
+# pairing them would squeeze the whole line into two words' time.
+_STAND_IN_RATIO = 0.5
+
+
+def _stand_ins(
+    said: List[str],
+    heard: List[Tuple[str, float, float]],
+    times: List[Optional[Tuple[float, float]]],
+) -> List[Optional[Tuple[float, float]]]:
+    """``times`` with each word whisper MISHEARD given the time of the word heard in its place.
+
+    Positional within the stretch, so a line keeps its rests: the third sheet word takes the
+    third heard word's time rather than a share of the whole stretch. Words ``_anchored``
+    matched keep their time, and a word with no stand-in stays None for the gap filler.
+    Never counted as heard — ``_anchored``'s ratio is what says whether this is the song.
+    """
+    s_exp, s_src = _expand(said)
+    h_exp, h_src = _expand([w for w, _, _ in heard])
+    found: Dict[int, Tuple[float, float]] = {}
+    matcher = SequenceMatcher(None, s_exp, h_exp, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace":
+            continue
+        n, m = i2 - i1, j2 - j1
+        if min(n, m) / max(n, m) < _STAND_IN_RATIO:
+            continue
+        for k in range(n):
+            word = s_src[i1 + k]
+            if times[word] is not None:
+                continue
+            _, start, end = heard[h_src[j1 + k * m // n]]
+            current = found.get(word)
+            found[word] = (start, end) if current is None else (
+                min(current[0], start), max(current[1], end))
+    out = list(times)
+    for word, span in found.items():
+        out[word] = span
+    return out
+
+
 _MODEL = None
 _MODEL_NAME: Optional[str] = None
 _MODEL_LOCK = Lock()
@@ -374,11 +422,60 @@ def aligned_words(
     }
 
 
+def _around_the_break(
+    first: int,
+    last: int,
+    left: float,
+    right: float,
+    weights: Optional[List[int]],
+    paces: List[float],
+    breaks: List[bool],
+) -> Optional[List[Tuple[float, float]]]:
+    """Words ``first..last-1`` placed between ``left`` and ``right`` with the rest at the line
+    break — or None when no line breaks among them, or they will not fit at their pace.
+
+    A singer rests between lines, not inside one. Spread evenly, a run that ends one line and
+    starts the next puts the rest INSIDE both, so the next line's card goes up while the
+    singer is still silent: on the prod song "They don't know" came out 1.4s before it was
+    sung. So the words finishing the left word's line follow it at their pace, the words
+    starting the right word's line lead into it at theirs, and any whole lines nobody heard
+    share what is left between them.
+    """
+    cuts = [b for b in range(first - 1, last) if b >= 0 and breaks[b]]
+    if not cuts:
+        return None
+    head = range(first, cuts[0] + 1)
+    middle = range(cuts[0] + 1, cuts[-1] + 1)
+    tail = range(cuts[-1] + 1, last)
+    lead_in = sum(paces[k] for k in tail)
+    if sum(paces[k] for k in head) + lead_in > right - left:
+        return None
+    out: List[Tuple[float, float]] = []
+    at = left
+    for k in head:
+        out.append((at, at + paces[k]))
+        at += paces[k]
+    room = max(0.0, right - lead_in - at)
+    share = [max(1, weights[k]) if weights else 1 for k in middle]
+    whole = sum(share) or 1
+    acc = 0
+    for piece in share:
+        start = at + room * (acc / whole)
+        acc += piece
+        out.append((start, at + room * (acc / whole)))
+    at = right - lead_in
+    for k in tail:
+        out.append((at, at + paces[k]))
+        at += paces[k]
+    return out
+
+
 def _fill_gaps(
     times: List[Optional[Tuple[float, float]]],
     total: Optional[float],
     weights: Optional[List[int]] = None,
     paces: Optional[List[float]] = None,
+    breaks: Optional[List[bool]] = None,
 ) -> Optional[List[Tuple[float, float]]]:
     """Interpolate the words the transcript missed, then force the result monotonic.
 
@@ -400,6 +497,10 @@ def _fill_gaps(
 
     Without ``paces`` the old behaviour stands, which is right for a narration: the voice
     starts when the recording does, so second zero is a real edge there.
+
+    ``breaks`` — one per word, whether a line break follows it — is for a sung text, and
+    moves the rest in a run between two anchors to the line break it spans (see
+    _around_the_break). Without it, or with no break in the run, the run is spread as above.
     """
     known = [t for t in times if t]
     if not known:
@@ -428,14 +529,21 @@ def _fill_gaps(
                 left = max(0.0, right - span)
             elif out and run_end >= len(times):
                 right = min(tail, left + span)
-        width = max(0.0, right - left)
-        share = [max(1, weights[k]) if weights else 1 for k in range(i, run_end)]
-        whole = sum(share)
-        acc = 0
-        for piece in share:
-            start = left + width * (acc / whole)
-            acc += piece
-            out.append((start, left + width * (acc / whole)))
+        placed = (
+            _around_the_break(i, run_end, left, right, weights, paces, breaks)
+            if breaks and paces and out and run_end < len(times) else None
+        )
+        if placed is None:
+            width = max(0.0, right - left)
+            share = [max(1, weights[k]) if weights else 1 for k in range(i, run_end)]
+            whole = sum(share)
+            acc = 0
+            placed = []
+            for piece in share:
+                start = left + width * (acc / whole)
+                acc += piece
+                placed.append((start, left + width * (acc / whole)))
+        out.extend(placed)
         i = run_end
 
     # Whisper can emit a word that starts before the previous one ended; a clock that goes
@@ -767,15 +875,29 @@ def clean_lyrics(text: str) -> str:
     return out.strip()
 
 
+def _line_breaks(text: str) -> List[bool]:
+    """One per WORD_RE match over ``text``: whether a line break follows that word."""
+    matches = list(_WORD_RE.finditer(text))
+    return [
+        i + 1 < len(matches) and "\n" in text[m.end():matches[i + 1].start()]
+        for i, m in enumerate(matches)
+    ]
+
+
 def _measured(
     audio_path: str,
     text: str,
     inferred: List[Tuple[float, float]],
     *,
+    evidence: Optional[List[Optional[Tuple[float, float]]]] = None,
     total_duration_sec: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     """The same words, timed by reading the audio — or None to keep what came from the
     transcript.
+
+    ``evidence`` is what the transcript actually yielded per word — heard, or heard as a
+    stand-in — with None where it yielded nothing. It is what a line the model cannot find
+    falls back to; absent, ``inferred`` stands in for it.
 
     Never raises. This is an improvement on an answer that already exists, so every way it
     can fail (no torchaudio, no weights, no GPU memory, an audio file ffmpeg will not open)
@@ -802,16 +924,6 @@ def _measured(
         logger.info("Forced alignment unavailable, keeping the inferred timings: %s", exc)
         return None
 
-    # A word the model's alphabet cannot spell is left for the gap-filler to place between
-    # its MEASURED neighbours. Handing it the time the transcript gave it would look like
-    # the obvious thing and is wrong: the two are different readings of the recording, and
-    # dropping one of whisper's numbers into a run of measured ones puts it out of order as
-    # often as not — which the monotonic pass then resolves by flattening the word to zero
-    # width. Interpolating between two measurements keeps one frame of reference.
-    out: List[Optional[Tuple[float, float]]] = []
-    for span in spans:
-        out.append(None if span is None else (span[0], span[1]))
-
     # Whether to tell the user to read a cue is decided a LINE at a time. The model's
     # confidence in a single sung word is too noisy to act on — see forced_align — but over
     # a line it separates cleanly: on the prod song the lines that match score 0.22 to 0.82
@@ -825,11 +937,53 @@ def _measured(
     }
     guessed = [span is None or weak.get(line, False) for line, span in zip(line_of, spans)]
 
+    # A word the model's alphabet cannot spell is left for the gap-filler to place between
+    # its MEASURED neighbours. Handing it the time the transcript gave it would look like
+    # the obvious thing and is wrong: the two are different readings of the recording, and
+    # dropping one of whisper's numbers into a run of measured ones puts it out of order as
+    # often as not — which the monotonic pass then resolves by flattening the word to zero
+    # width. Interpolating between two measurements keeps one frame of reference.
+    #
+    # A LINE the model could not find is the opposite case, and takes the transcript's
+    # times. Its spans are not a measurement — a score that low says the model found
+    # nothing there, and the path through those frames is wherever the other lines left room
+    # for it. On the prod song every sung chorus scored 0.02-0.11 (a held, layered vocal over
+    # the band, which a speech model has no letters for) and its lines landed 2-7 seconds off
+    # the singing, while whisper had heard all of them, if not always the words. There is no
+    # measurement in that line to keep consistent with, so the transcript's answer is the
+    # best one there is.
+    fallback = evidence if evidence is not None else inferred
+    out: List[Optional[Tuple[float, float]]] = []
+    for k, (line, span) in enumerate(zip(line_of, spans)):
+        if weak.get(line, False):
+            out.append(fallback[k])
+        else:
+            out.append(None if span is None else (span[0], span[1]))
+
+    # Two readings of the recording still disagree by a few tenths, so a transcript time is
+    # only kept where it falls between the measured words either side of it. Past them it
+    # would push a measured line out of place on the monotonic pass; dropped, the word is
+    # placed between its neighbours like any other.
+    measured = [not weak.get(line, False) and span is not None for line, span in zip(line_of, spans)]
+    after = 0.0
+    for k in range(len(out)):
+        if measured[k]:
+            after = out[k][1]
+        elif out[k] is not None and out[k][0] < after:
+            out[k] = None
+    before = float("inf")
+    for k in range(len(out) - 1, -1, -1):
+        if measured[k]:
+            before = out[k][0]
+        elif out[k] is not None and out[k][0] > before:
+            out[k] = None
+
     cleaned = _fill_gaps(
         out,
         total_duration_sec,
         weights=[len(w) for w in words],
         paces=[_syllables(w) * _SEC_PER_SYLLABLE for w in words],
+        breaks=_line_breaks(text),
     )
     if cleaned is None:
         return None
@@ -889,14 +1043,21 @@ def lyric_alignment(
             "them to caption from the singing instead."
         )
 
+    # The words whisper misheard still say WHEN they were sung — see _stand_ins. They are
+    # not counted as heard (the ratio above is what decides this is the song), and they stay
+    # marked for checking if they reach a caption.
+    evidence = _stand_ins(said, heard, times)
+
     # A sheet's words are SUNG, so how long each takes is knowable — the same syllable pace
     # the onset recovery above uses. It is what keeps a run the transcript missed at either
-    # end of the sheet from being stretched across an instrumental intro or outro.
+    # end of the sheet from being stretched across an instrumental intro or outro, and,
+    # with the sheet's line breaks, what puts a rest between lines rather than inside one.
     filled = _fill_gaps(
-        times,
+        evidence,
         total_duration_sec,
         weights=[len(w) for w in said],
         paces=[_syllables(w) * _SEC_PER_SYLLABLE for w in said],
+        breaks=_line_breaks(said_text),
     )
     if filled is None:
         raise AlignmentFailed("The song produced no usable word timings for these lyrics.")
@@ -906,9 +1067,10 @@ def lyric_alignment(
     # the audio instead — which is a measurement, and on singing the difference is not
     # small (see services/forced_align.py). The work above is not wasted: it is what says
     # WHERE in the recording this sheet sits, and the aligner needs that window or it will
-    # wander off into a later chorus.
+    # wander off into a later chorus — and it is the answer for any line the aligner then
+    # cannot find.
     measured = _measured(
-        audio_path, said_text, filled, total_duration_sec=total_duration_sec,
+        audio_path, said_text, filled, evidence=evidence, total_duration_sec=total_duration_sec,
     )
     if measured is not None:
         return {
