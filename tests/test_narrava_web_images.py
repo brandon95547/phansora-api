@@ -109,3 +109,20 @@ def test_limit_is_honoured(monkeypatch):
         {"image": f"https://example.com/{i}.jpg", "url": "https://example.com/"} for i in range(100)
     ]))
     assert len(web_images.search_web_images("anything", limit=12)) == 12
+
+
+def test_crawler_only_links_are_not_offered(monkeypatch):
+    # Facebook's lookaside links answer anyone but Facebook's crawler with an HTML page:
+    # a tile that shows nothing and that the import route refuses.
+    _use(monkeypatch, _ddg([
+        {"title": "Clinic", "image": "https://lookaside.fbsbx.com/lookaside/crawler/media/?media_id=1",
+         "thumbnail": "https://tse1.mm.bing.net/th?id=OIP.a", "url": "https://www.facebook.com/p/clinic"},
+        {"title": "Clinic sign", "image": "https://lookaside.instagram.com/seo/google_widget/crawler/?media_id=2",
+         "thumbnail": "https://tse1.mm.bing.net/th?id=OIP.b", "url": "https://www.instagram.com/p/x"},
+        {"title": "Clinic front", "image": "https://example.org/clinic.jpg",
+         "thumbnail": "https://tse1.mm.bing.net/th?id=OIP.c", "url": "https://example.org/about"},
+    ]))
+
+    clips = web_images.search_web_images("clinic")
+
+    assert [c.url for c in clips] == ["https://example.org/clinic.jpg"]

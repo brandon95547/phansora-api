@@ -43,6 +43,12 @@ _GATE = threading.Semaphore(2)
 # format would be a tile you can select and then cannot add.
 _UNSTORABLE = (".svg", ".avif", ".bmp", ".tif", ".tiff", ".ico", ".heic")
 
+# Hosts whose image links serve the picture only to the site's own crawler. Everyone else —
+# a browser, and the import route on this server — gets a small HTML page in its place, so
+# the tile shows nothing and its import is refused ("That file type is not supported here").
+# DuckDuckGo found the picture through that crawler, which is why it offers the link at all.
+_CRAWLER_ONLY = ("lookaside.fbsbx.com", "lookaside.instagram.com")
+
 # Recorded as the licence so the credits list says it in so many words. The link beside it
 # (license_url) is the page the picture was found on, which is where the rights are.
 RIGHTS_UNKNOWN = "Rights unknown — check the source page before publishing"
@@ -105,6 +111,8 @@ def _clips(items: list, *, query: str, limit: int) -> List[MediaClip]:
         if parts.scheme not in ("http", "https") or not parts.netloc:
             continue
         if parts.path.lower().endswith(_UNSTORABLE) or image in seen:
+            continue
+        if (parts.hostname or "").lower() in _CRAWLER_ONLY:
             continue
         seen.add(image)
         page_url = str(it.get("url") or "").strip()
