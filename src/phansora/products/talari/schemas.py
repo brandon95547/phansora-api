@@ -123,7 +123,10 @@ class Brief(Lenient):
     genre: str = ""
     audience: str = ""
     tone: str = ""
+    # An idea's length. A book made from sources is sized by them instead: target_words is
+    # the length the app estimates its material supports, and when it is set, it wins.
     length: Literal["short", "medium", "long"] = "medium"
+    target_words: int = Field(default=0, ge=0, le=1_000_000)
     chapter_count: int | None = Field(default=None, ge=1, le=60)
     approach: str = Field(default="", max_length=NOTE_MAX)
     instructions: str = Field(default="", max_length=NOTE_MAX)
@@ -139,13 +142,18 @@ class SourceConcept(Lenient):
     description: str = ""
 
 
+class SourceChapterSummary(ChapterSummary):
+    # How much text the chapter holds, so a plan can give it the room its material needs.
+    words: int = Field(default=0, ge=0)
+
+
 class BlueprintSource(Lenient):
     id: str
     title: str = ""
     summary: str = ""
     themes: list[str] = Field(default_factory=list)
     concepts: list[SourceConcept] = Field(default_factory=list)
-    chapters: list[ChapterSummary] = Field(default_factory=list)
+    chapters: list[SourceChapterSummary] = Field(default_factory=list)
 
 
 class BlueprintRequest(Lenient):

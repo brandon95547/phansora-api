@@ -297,6 +297,41 @@ def test_a_long_book_is_summarized_in_batches_then_as_a_whole(client: TestClient
     assert "[3] C3: Summary 3." in deepseek.calls[-1]["user"]
 
 
+
+def test_parts_without_chapter_titles_are_given_real_ones(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [
+        {
+            "summary": "A piano method.",
+            "themes": ["reading music"],
+            "concepts": [],
+            "audience": "Adult beginners.",
+            "tone": "encouraging",
+            "chapters": [
+                {"index": 0, "title": "“Middle C Position and Finger Numbers”", "summary": "Sitting, fingers, Middle C."},
+                {"index": 1, "title": "Part 2", "summary": "The G7 chord."},
+                {"index": 2, "title": "A renamed real chapter", "summary": "Waltz time."},
+            ],
+        }
+    ]
+    chapters = [
+        {"index": 0, "title": "Part 1", "text": "How to Sit at the Piano. Finger Numbers. " + words(40)},
+        {"index": 1, "title": "Part 2", "text": "The G7 Chord. " + words(40)},
+        {"index": 2, "title": "Waltz Time", "text": "Three beats to a measure. " + words(40)},
+    ]
+    body = client.post("/users/7/sources/analyze", json={"title": "Alfred", "chapters": chapters}).json()
+    # A placeholder takes the model's title, quotes stripped; a title the model left as a
+    # placeholder stays as it was; a chapter the source named keeps the source's name.
+    assert [c["title"] for c in body["chapters"]] == ["Middle C Position and Finger Numbers", "Part 2", "Waltz Time"]
+    prompt = deepseek.calls[0]["user"]
+    assert "only a placeholder" in prompt and '"title"' in prompt
+
+
+def test_a_source_with_its_own_chapter_titles_is_not_asked_to_rename_them(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"summary": "Boats.", "themes": [], "concepts": [], "audience": "", "tone": "", "chapters": []}]
+    client.post("/users/7/sources/analyze", json={"title": "Boats", "chapters": [{"index": 0, "title": "Hull", "text": "Planks."}]})
+    assert "only a placeholder" not in deepseek.calls[0]["user"]
+
+
 # --- planning -------------------------------------------------------------------------
 
 PLAN = {
@@ -330,6 +365,43 @@ def test_an_idea_becomes_a_plan(client: TestClient, deepseek: FakeDeepSeek) -> N
     assert second["sections"] == [{"title": "Arrival", "topics": []}] and second["estimatedWords"] == 1200
     assert "A sailing memoir" in deepseek.calls[0]["user"]
 
+
+
+def test_a_book_from_documents_is_sized_by_its_material_not_a_length(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{**PLAN, "chapters": [{"title": "One", "summary": "s"}, {"title": "Two", "summary": "s"}]}]
+    request = {
+        "mode": "documents",
+        "brief": {"idea": "A field guide", "length": "long", "targetWords": 9000},
+        "sources": [
+            {"id": "d1", "title": "Interviews", "chapters": [{"index": 0, "title": "Notes", "summary": "Talks.", "words": 6000}]},
+            {"id": "d2", "title": "Papers", "chapters": [{"index": 0, "title": "Study", "summary": "Data.", "words": 4000}]},
+        ],
+    }
+    response = client.post("/users/7/blueprints", json=request)
+    assert response.status_code == 200, response.text
+    prompt = deepseek.calls[0]["user"]
+    # The material's size, not the menu's: "long" is an idea's length and is ignored here.
+    assert "about 10,000 words, so the book should come to about 9,000 words in all" in prompt
+    assert "[S1-0] Notes (6,000 words): Talks." in prompt and "[S2-0] Papers" not in prompt
+    assert "Plan a long book" not in prompt
+    # A chapter the model gave no length takes its share of the material: 9,000 over 4 chapters.
+    (plan,) = response.json()["proposals"]
+    assert [c["estimatedWords"] for c in plan["chapters"]] == [2250, 2250]
+
+
+def test_an_idea_keeps_the_length_chosen_for_it(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [PLAN]
+    client.post("/users/7/blueprints", json={"mode": "idea", "brief": {"idea": "A memoir", "length": "long", "targetWords": 9000}})
+    assert "Plan a long book" in deepseek.calls[0]["user"]
+
+
+def test_a_chapter_from_sources_is_told_not_to_pad(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [WRITTEN, WRITTEN]
+    client.post("/users/7/chapters/write", json={**CHAPTER, "mode": "documents", "rewrite": None})
+    client.post("/users/7/chapters/write", json={**CHAPTER, "mode": "idea", "rewrite": None, "sourceExcerpts": []})
+    from_sources, from_idea = (call["user"] for call in deepseek.calls)
+    assert "let the material set the length" in from_sources and "about 2000 words" in from_sources
+    assert "let the material set the length" not in from_idea and "about 2000 words" in from_idea
 
 def test_several_versions_are_planned_from_distinct_directions(client: TestClient, deepseek: FakeDeepSeek) -> None:
     def answer(_system: str, user: str) -> Any:

@@ -8,6 +8,7 @@ standalone Nebiru app this product replaces.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from .schemas import (
@@ -114,11 +115,18 @@ MODES = {
 }
 
 LENGTHS = {
-    # chapters, words per chapter
+    # chapters, words per chapter — for an idea; a book from sources is sized by them
     "short": (6, 1200),
     "medium": (10, 2000),
     "long": (16, 3000),
 }
+# The chapter length a book from sources is divided by, for the count it is planned at.
+SOURCE_CHAPTER_WORDS = 2500
+
+
+def source_chapters(target_words: int) -> int:
+    """How many chapters a book of ``target_words`` from sources is planned at."""
+    return max(1, round(target_words / SOURCE_CHAPTER_WORDS))
 
 REVISIONS = {
     "rewrite": (
@@ -221,6 +229,15 @@ def _options(rewrite: Rewrite | None) -> str:
 # --- reading sources ----------------------------------------------------------
 
 
+# The titles sources.py gives text it could not find chapters in: "Part 3", "Opening".
+_PLACEHOLDER_TITLE = re.compile(r"(?:part\s+\d+|opening|\(?untitled\)?)", re.IGNORECASE)
+
+
+def placeholder_title(title: str | None) -> bool:
+    """Whether a chapter's title is one Talari made up rather than one the source has."""
+    return not (title or "").strip() or bool(_PLACEHOLDER_TITLE.fullmatch((title or "").strip()))
+
+
 def analyze(
     request: AnalyzeRequest, chapters: Sequence[tuple[SourceChapterText, str]], *, overview: bool
 ) -> tuple[str, str]:
@@ -233,6 +250,13 @@ def analyze(
         'square brackets, copied exactly) and "summary" (one to three sentences saying concretely what that '
         "chapter covers or what happens in it)."
     )
+    if any(placeholder_title(chapter.title) for chapter, _ in chapters):
+        chapter_key += (
+            ' A chapter whose title above is only a placeholder ("Part 3", "Opening" or "(untitled)") also '
+            'gets "title": a real title for it, 2 to 8 words, made from the headings or lesson names its text '
+            "shows where it has any, otherwise naming what it covers. No numbering, no \"Part\", no quotation marks. "
+            "Its summary does not mention the placeholder."
+        )
     if overview:
         keys = f"""- "summary": three to five sentences on what the material is, what it covers and how it is organised.
 - "themes": 3 to 8 short phrases naming its main themes.
@@ -304,7 +328,10 @@ def source_index(sources: Sequence[BlueprintSource], labels: Sequence[str], limi
             )
         if source.chapters:
             lines.append("Chapters:")
-            lines += [f"[{label}-{c.index}] {c.title or '(untitled)'}: {c.summary.strip()}" for c in source.chapters]
+            lines += [
+                f"[{label}-{c.index}] {c.title or '(untitled)'}{f' ({c.words:,} words)' if c.words else ''}: {c.summary.strip()}"
+                for c in source.chapters
+            ]
         blocks.append("\n".join(lines))
     text = "\n\n".join(blocks)
     if len(text) > limit:
@@ -328,6 +355,16 @@ def _planning_situation(request: BlueprintRequest, sources: str) -> str:
 
 
 def _size(request: BlueprintRequest) -> str:
+    target = request.brief.target_words if request.mode != "idea" else 0
+    if target:
+        material = sum(c.words for s in request.sources for c in s.chapters)
+        held = f"The sources hold about {material:,} words, so the" if material else "The"
+        return (
+            f"{held} book should come to about {target:,} words in all: the length its material supports, not "
+            f"a length to fill. Give each chapter the room its material needs (each source chapter's length is "
+            f"shown beside it), plus only the context a reader needs to follow it. Plan no chapter for which there "
+            f"is not enough material, and leave out nothing the book needs."
+        )
     chapters, words = LENGTHS[request.brief.length]
     if request.brief.chapter_count:
         return f"The book should have {request.brief.chapter_count} chapters of about {words} words each."
@@ -492,8 +529,15 @@ def chapter(request: ChapterRequest, excerpts: str, words: int, pictures: int) -
         else ""
     )
     sections = " Use the planned sections as the chapter's sections, in order, each under its own heading." if plan.sections else ""
+    # From sources, the length is the material's: a guide, never a quota to pad toward.
+    measure = (
+        f"Aim for about {words} words, but let the material set the length: when it is covered, stop, rather "
+        "than restating it to reach a number; when it needs more to be clear, give it more."
+        if request.mode != "idea" and excerpts
+        else f"Aim for about {words} words."
+    )
     how = [
-        f"Aim for about {words} words. Write it to be read: stay inside this chapter's part of the book without "
+        f"{measure} Write it to be read: stay inside this chapter's part of the book without "
         f"running ahead into later chapters, and end where the chapter ends rather than summarising it.{continuity}{sections}",
         f"{MARKDOWN} Do not write the chapter title or a \"Chapter {number}\" heading; the layout adds it.",
     ]

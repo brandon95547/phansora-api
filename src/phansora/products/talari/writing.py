@@ -182,6 +182,22 @@ def _chapter_summaries(data: dict[str, Any], indexes: set[int]) -> dict[int, str
     return found
 
 
+TITLE_MAX_CHARS = 80
+
+
+def _chapter_titles(data: dict[str, Any], placeholders: set[int]) -> dict[int, str]:
+    """The titles the model gave chapters that only had a placeholder ("Part 3")."""
+    found: dict[int, str] = {}
+    for entry in data.get("chapters") if isinstance(data.get("chapters"), list) else []:
+        if not isinstance(entry, dict):
+            continue
+        index = _int(entry.get("index"))
+        title = " ".join(_text(entry.get("title")).strip("\"'“”‘’ ").split())
+        if index in placeholders and title and len(title) <= TITLE_MAX_CHARS and not prompts.placeholder_title(title):
+            found[index] = title
+    return found
+
+
 async def _summarize(request: AnalyzeRequest, chapters: list[SourceChapterText], *, overview: bool) -> dict[str, Any]:
     texts = [c.text for c in chapters]
     sampled = [(c, prompts.sample(c.text, limit)) for c, limit in zip(chapters, _share(texts, ANALYZE_BUDGET))]
@@ -199,14 +215,20 @@ def _opening(text: str, words: int = 40) -> str:
 async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     chapters = request.chapters
     indexes = {c.index for c in chapters}
+    # Text the source gave no chapters is cut into "Part 1", "Part 2"…; the model that
+    # summarises each part names it too, so the overview lists real titles.
+    placeholders = {c.index for c in chapters if prompts.placeholder_title(c.title)}
+    titles: dict[int, str] = {}
     batches = [chapters[i : i + ANALYZE_BATCH] for i in range(0, len(chapters), ANALYZE_BATCH)]
     if len(batches) == 1:
         overview = await _summarize(request, chapters, overview=True)
         summaries = _chapter_summaries(overview, indexes)
+        titles.update(_chapter_titles(overview, placeholders))
     else:
         summaries = {}
         for data in await _gather(_summarize(request, batch, overview=False) for batch in batches):
             summaries.update(_chapter_summaries(data, indexes))
+            titles.update(_chapter_titles(data, placeholders))
 
     missing = [c for c in chapters if c.index not in summaries]
     if missing:
@@ -215,12 +237,14 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         # opening words rather than failing the whole analysis.
         try:
             for batch in [missing[i : i + ANALYZE_BATCH] for i in range(0, len(missing), ANALYZE_BATCH)]:
-                summaries.update(_chapter_summaries(await _summarize(request, batch, overview=False), indexes))
+                data = await _summarize(request, batch, overview=False)
+                summaries.update(_chapter_summaries(data, indexes))
+                titles.update(_chapter_titles(data, placeholders))
         except ServiceError as error:
             logger.warning("Talari: %d chapters left unsummarized: %s", len(missing), error.message)
 
     if len(batches) > 1:
-        lines = [(c.index, c.title, summaries.get(c.index, "")) for c in chapters]
+        lines = [(c.index, titles.get(c.index, c.title), summaries.get(c.index, "")) for c in chapters]
         limits = _share([s for _, _, s in lines], OVERVIEW_BUDGET)
         clipped = [(i, t, prompts.sample(s, limit)) for (i, t, s), limit in zip(lines, limits)]
         system, user = prompts.overview(request, clipped)
@@ -247,7 +271,9 @@ async def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
         audience=_text(overview.get("audience")),
         tone=_text(overview.get("tone")),
         chapters=[
-            ChapterSummary(index=c.index, title=c.title, summary=summaries.get(c.index) or _opening(c.text))
+            ChapterSummary(
+                index=c.index, title=titles.get(c.index, c.title), summary=summaries.get(c.index) or _opening(c.text)
+            )
             for c in chapters
         ],
     )
@@ -332,14 +358,18 @@ async def blueprints(request: BlueprintRequest) -> BlueprintResponse:
     labels = _labels(request.sources)
     known = {f"{label}-{c.index}": (s.id, c.index) for label, s in zip(labels, request.sources) for c in s.chapters}
     sources = prompts.source_index(request.sources, labels, SOURCES_BUDGET) if request.sources else ""
-    default_words = prompts.LENGTHS[request.brief.length][1]
+    # An idea is planned to the length chosen for it; a book from sources to the length its
+    # material supports, when the app says what that is.
+    target = request.brief.target_words if request.mode != "idea" else 0
+    planned = prompts.source_chapters(target) if target else prompts.LENGTHS[request.brief.length][0]
+    default_words = (
+        max(MIN_CHAPTER_WORDS, round(target / planned)) if target else prompts.LENGTHS[request.brief.length][1]
+    )
 
     def refs(entry: dict[str, Any]) -> list[SourceRef]:
         return [] if request.mode == "idea" else _refs(entry.get("sources") or entry.get("sourceRefs"), known)
 
-    expected = request.brief.chapter_count or max(
-        prompts.LENGTHS[request.brief.length][0], sum(len(s.chapters) for s in request.sources)
-    )
+    expected = request.brief.chapter_count or max(planned, sum(len(s.chapters) for s in request.sources))
     tokens = min(llm.MAX_OUTPUT_TOKENS, 260 * expected + 1000)
 
     async def plan(direction: str | None = None, others: list[str] | None = None) -> Blueprint:
