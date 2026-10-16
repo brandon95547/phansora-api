@@ -354,7 +354,13 @@ PICTURE_MAX = 40_000_000    # base64 of one picture
 
 
 class LabRequest(Lenient):
+    # FLUX reads a prompt with two text encoders, which CLIPTextEncodeFlux feeds separately:
+    # `clip_l` (CLIP-L: short, about 77 tokens; keywords, style, mood) and `t5xxl` (T5-XXL:
+    # long, plain sentences). `prompt` sends one text to both (CLIPTextEncode), and is what a
+    # checkpoint model reads; given either of the two, the two win.
     prompt: str = Field(default="", max_length=4000)
+    clip_l: str = Field(default="", max_length=4000)
+    t5xxl: str = Field(default="", max_length=4000)
     negative_prompt: str = Field(default="", max_length=4000)
     # A file from the lab's model list; empty for the one Talari draws with.
     model: str = Field(default="", max_length=300)
@@ -363,7 +369,8 @@ class LabRequest(Lenient):
     seed: int | None = Field(default=None, ge=0, le=2**64 - 1)
     steps: int = Field(default=24, ge=1, le=80)
     cfg: float = Field(default=1.0, ge=0, le=30)
-    # FLUX's prompt strength (FluxGuidance); ignored by a checkpoint model.
+    # FLUX's prompt strength (FluxGuidance, or inside CLIPTextEncodeFlux); ignored by a
+    # checkpoint model.
     guidance: float = Field(default=3.5, ge=0, le=30)
     denoise: float = Field(default=1.0, ge=0, le=1)
     sampler_name: str = Field(default="euler", max_length=64)
@@ -383,7 +390,7 @@ class LabRequest(Lenient):
 
     @model_validator(mode="after")
     def _something_to_draw(self) -> "LabRequest":
-        if not self.prompt.strip() and not self.image and not self.style_image:
+        if not (self.prompt + self.clip_l + self.t5xxl).strip() and not self.image and not self.style_image:
             raise ValueError("Write a prompt, or give a picture to start from or to take a style from.")
         if self.mask and not self.image:
             raise ValueError("A mask marks part of a picture: give the picture (image) too.")

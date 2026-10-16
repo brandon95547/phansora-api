@@ -530,12 +530,22 @@ def lab_workflow(
         wf["3"] = {"class_type": "VAELoader", "inputs": {"vae_name": settings.flux_vae}}
         model_out, clip, vae = ["1", 0], ["2", 0], ["3", 0]
 
-    # prompt → the positive conditioning; FLUX's guidance, then the style picture, act on it.
-    wf["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": request.prompt, "clip": clip}}
-    positive = ["4", 0]
-    if loader != "checkpoint":
-        wf["5"] = {"class_type": "FluxGuidance", "inputs": {"conditioning": positive, "guidance": request.guidance}}
-        positive = ["5", 0]
+    # The positive conditioning; the style picture then acts on it. FLUX with clip_l / t5xxl:
+    # one text per encoder, guidance included (CLIPTextEncodeFlux). Otherwise one text for
+    # both (CLIPTextEncode), and for FLUX its guidance after (FluxGuidance).
+    if loader != "checkpoint" and (request.clip_l.strip() or request.t5xxl.strip()):
+        wf["4"] = {
+            "class_type": "CLIPTextEncodeFlux",
+            "inputs": {"clip": clip, "clip_l": request.clip_l, "t5xxl": request.t5xxl, "guidance": request.guidance},
+        }
+        positive = ["4", 0]
+    else:
+        text = request.prompt or request.t5xxl or request.clip_l
+        wf["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": text, "clip": clip}}
+        positive = ["4", 0]
+        if loader != "checkpoint":
+            wf["5"] = {"class_type": "FluxGuidance", "inputs": {"conditioning": positive, "guidance": request.guidance}}
+            positive = ["5", 0]
     if style_image:
         wf["30"] = {"class_type": "LoadImage", "inputs": {"image": style_image}}
         wf["31"] = {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_vision}}

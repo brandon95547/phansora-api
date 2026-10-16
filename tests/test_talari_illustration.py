@@ -450,3 +450,26 @@ def test_the_lab_lists_what_this_comfyui_has(make_client, network: Recorder) -> 
     assert options["clipVision"] == ["sigclip_vision_patch14_384.safetensors"]
     assert options["strengthTypes"] == ["multiply", "attn_bias"]
     assert options["defaults"]["cfg"] == 1.0 and options["defaults"]["guidance"] == 3.5
+
+
+def test_flux_reads_clip_l_and_t5xxl_separately_with_its_guidance_inside(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    body = {
+        "model": "flux1-dev-Q4_K_S.gguf", "clip_l": "watercolor, soft light", "t5xxl": "A lighthouse on a rocky coast at dusk.",
+        "guidance": 4.5, "style_image": REFERENCE,
+    }
+    assert client.post("/users/7/lab/illustrations", json=body).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["4"] == {
+        "class_type": "CLIPTextEncodeFlux",
+        "inputs": {"clip": ["2", 0], "clip_l": "watercolor, soft light", "t5xxl": "A lighthouse on a rocky coast at dusk.", "guidance": 4.5},
+    }
+    assert "5" not in workflow  # no separate FluxGuidance: it is inside
+    assert workflow["34"]["inputs"]["conditioning"] == ["4", 0] and workflow["8"]["inputs"]["positive"] == ["34", 0]
+    # Either one alone is enough to draw; neither, nor a prompt, nor a picture, is not.
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "prompt": "", "t5xxl": "A fox."}).status_code == 200
+    assert client.post("/users/7/lab/illustrations", json={"model": "flux1-dev-Q4_K_S.gguf", "clip_l": " ", "t5xxl": ""}).status_code == 422
+    # A checkpoint model has one text encoder: it reads the T5 text.
+    assert client.post("/users/7/lab/illustrations", json={"model": "sdxl_base.safetensors", "t5xxl": "A fox."}).status_code == 200
+    assert network.bodies("/prompt")[-1]["prompt"]["4"] == {"class_type": "CLIPTextEncode", "inputs": {"text": "A fox.", "clip": ["1", 1]}}
