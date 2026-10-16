@@ -1020,7 +1020,7 @@ def _measured(
     guessed = [span is None or weak.get(line, False) for line, span in zip(line_of, spans)]
 
     # A word the model's alphabet cannot spell is left for the gap-filler to place between
-    # its MEASURED neighbours. Handing it the time the transcript gave it would look like
+    # its MEASURED neighbors. Handing it the time the transcript gave it would look like
     # the obvious thing and is wrong: the two are different readings of the recording, and
     # dropping one of whisper's numbers into a run of measured ones puts it out of order as
     # often as not — which the monotonic pass then resolves by flattening the word to zero
@@ -1045,7 +1045,7 @@ def _measured(
     # Two readings of the recording still disagree by a few tenths, so a transcript time is
     # only kept where it falls between the measured words either side of it. Past them it
     # would push a measured line out of place on the monotonic pass; dropped, the word is
-    # placed between its neighbours like any other.
+    # placed between its neighbors like any other.
     measured = [not weak.get(line, False) and span is not None for line, span in zip(line_of, spans)]
     after = 0.0
     for k in range(len(out)):
