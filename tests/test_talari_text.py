@@ -742,6 +742,14 @@ def test_custom_styles_palette_and_detail_reach_the_picture(tmp_path: Path) -> N
     )
     assert "colour" in negative and "lettering" in negative
     assert build_prompts("A fox", "custom", "interior")[0] == build_prompts("A fox", "watercolor", "interior")[0]
+    # The look as the app now picks it: an art style, then its medium; "auto" adds no medium.
+    # A known art style wins over the older style id, which an unknown one falls back to.
+    positive, _ = build_prompts("A fox", "watercolor", "interior", art_style="realism", medium="oil-painting")
+    assert positive.startswith("A fox, realistic illustration") and "oil painting, rich impasto" in positive
+    assert "watercolor illustration" not in positive
+    auto, _ = build_prompts("A fox", "", "interior", art_style="anime", medium="auto")
+    assert auto == "A fox, anime and manga style, expressive large eyes, clean cel-shaded line art, vibrant colors"
+    assert build_prompts("A fox", "ink", "interior", art_style="cubism")[0] == build_prompts("A fox", "ink", "interior")[0]
     # "none": the prompt as written, nothing added — what the styleguide's ComfyUI page sends.
     assert build_prompts("A fox in the snow", "none", "interior")[0] == "A fox in the snow"
     for style in ("childrens", "lineart", "comic", "vintage", "minimal", "digital"):

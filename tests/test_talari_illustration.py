@@ -473,3 +473,12 @@ def test_flux_reads_clip_l_and_t5xxl_separately_with_its_guidance_inside(make_cl
     # A checkpoint model has one text encoder: it reads the T5 text.
     assert client.post("/users/7/lab/illustrations", json={"model": "sdxl_base.safetensors", "t5xxl": "A fox."}).status_code == 200
     assert network.bodies("/prompt")[-1]["prompt"]["4"] == {"class_type": "CLIPTextEncode", "inputs": {"text": "A fox.", "clip": ["1", 1]}}
+
+
+def test_a_picture_is_drawn_in_its_art_style_and_medium(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    body = {**REQUEST, "artStyle": "art-nouveau", "medium": "woodcut"}
+    assert client.post("/users/7/illustrations", json=body).status_code == 200
+    text = network.bodies("/prompt")[0]["prompt"]["2"]["inputs"]["text"]
+    assert text.startswith("A lighthouse at dusk, art nouveau illustration") and "woodcut print" in text
+    assert "pen and ink" not in text  # the older styleId ("ink") gives way

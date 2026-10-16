@@ -312,6 +312,8 @@ class ComfyUI:
             custom_style=request.custom_style,
             palette=request.palette,
             detail=request.detail,
+            art_style=request.art_style,
+            medium=request.medium,
         )
         width, height = dimensions(request.aspect, settings.comfyui_base_size)
         custom = self._custom_workflow

@@ -506,7 +506,11 @@ async def illustration_prompts(request: IllustrationPromptsRequest) -> Illustrat
     if request.purpose == "interior" and not text:
         raise ServiceError("The chapter has no text to illustrate.", status=422)
     # Without a style (a chapter asking for pictures has none to give), none is named.
-    style = style_text(request.style_id, request.custom_style) if request.style_id else ""
+    style = (
+        style_text(request.style_id, request.custom_style, request.art_style, request.medium)
+        if request.style_id or request.art_style
+        else ""
+    )
     sampled = prompts.spread(text, ILLUSTRATION_TEXT_BUDGET) if request.purpose == "interior" else prompts.sample(text, 3000)
     system, user = prompts.illustration_ideas(request, style, sampled, request.count)
     data = await llm.ask_json(system, user, max_tokens=300 * request.count + 400, temperature=TEMPERATURE["illustrations"])
