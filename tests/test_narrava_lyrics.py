@@ -566,3 +566,35 @@ def test_without_line_breaks_a_gap_is_spread_as_before():
         times, 30.0, weights=[1] * 4, paces=[0.25] * 4, breaks=[False] * 4)
     # A narration never passes breaks at all, and its gap is still split evenly.
     assert align._fill_gaps(times, 30.0, weights=[1] * 4)[2][0] == pytest.approx(5.1)
+
+
+def test_a_chorus_heard_cleanly_once_is_not_paired_with_the_wrong_copy(monkeypatch):
+    # The prod song's chorus is sung three times. One run, whisper heard the LAST one cleanly
+    # and the others only in pieces, so that clean chorus was the longest run the two sides
+    # shared — and SequenceMatcher, which takes the longest run first, paired it with the
+    # sheet's FIRST chorus. Every verse between them then had nothing to match: 27% found,
+    # and the sheet refused as the wrong song.
+    from phansora.products.narrava_studio.services import align
+
+    verse = [
+        "bricks blocks gates locks mothers talk",
+        "scales chains judgment names rules written",
+        "blood bond right wrong people gone",
+    ]
+    chorus = "they don't know what we've seen"
+    sheet = "\n".join(f"{v}\n{chorus}" for v in verse)
+    # Every other word misheard, so no run is longer than one word — except the last chorus.
+    broken = lambda line: " ".join(w if k % 2 == 0 else "mm" for k, w in enumerate(line.split()))
+    sung = [broken(verse[0]), broken(chorus), broken(verse[1]), broken(chorus), broken(verse[2]), chorus]
+    words = " ".join(sung).split()
+    heard = [(w, float(k), k + 0.5) for k, w in enumerate(words)]
+
+    said = [align.normalize(m.group(0)) for m in align.WORD_RE.finditer(sheet)]
+    times, ratio = align._anchored(said, [(align.normalize(w), s, e) for w, s, e in heard])
+    assert ratio > 0.5
+    # The sheet's first chorus is timed where the first chorus was sung, not 24s later.
+    assert times[6] == (6.0, 6.5)
+    assert times[-6:] == [(30.0 + k, 30.5 + k) for k in range(6)]
+
+    out = _aligned(monkeypatch, sheet, _heard(*heard), total=60.0)
+    assert out["heard_ratio"] > 0.5

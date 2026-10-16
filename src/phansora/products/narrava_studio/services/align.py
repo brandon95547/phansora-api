@@ -158,6 +158,84 @@ def _expand(tokens: List[str]) -> Tuple[List[str], List[int]]:
     return exp, src
 
 
+# ── Matching a text that repeats itself ───────────────────────────────────────
+# SequenceMatcher takes the LONGEST run the two sides share first, then matches what is left
+# on either side of it separately. On a text that says the same thing more than once that
+# first choice can be the wrong copy, and nothing afterwards can undo it. A song's chorus is
+# exactly that: on the prod song, whisper heard the LAST chorus cleanly enough for it to be
+# the longest run, SequenceMatcher paired it with the sheet's FIRST chorus — 80 seconds
+# against 248 — and every verse between them was left with nothing on the other side to
+# match. 81% of the sheet found became 27%, the sheet was refused as the wrong song, and
+# whether that happened depended only on how cleanly whisper heard one chorus that run.
+#
+# So the anchors are chosen by the alignment that matches the most words IN ORDER, which
+# can never pair the first chorus with the last because that would cost it every verse in
+# between. Runs of _ANCHOR_RUN words or more from it are kept as anchors; SequenceMatcher
+# then matches the stretches between them exactly as it always did, but bounded, so it can
+# only ever choose among the copies that sit between the same two anchors.
+_ANCHOR_RUN = 3
+
+
+def _ordered_runs(a: List[str], b: List[str]) -> List[Tuple[int, int, int]]:
+    """``(i, j, size)`` runs of the longest in-order matching of ``a`` against ``b``.
+
+    The textbook longest-common-subsequence table, a row at a time in numpy: a song sheet
+    against its transcript is ~600 x 600, a long narration ~4,000 x 4,000, and both are
+    milliseconds this way where a Python double loop over the second is seconds.
+    """
+    import numpy as np
+
+    if not a or not b:
+        return []
+    vocab: Dict[str, int] = {}
+    a_ids = np.array([vocab.setdefault(w, len(vocab)) for w in a])
+    b_ids = np.array([vocab.setdefault(w, len(vocab)) for w in b])
+    n, m = len(a), len(b)
+    table = np.zeros((n + 1, m + 1), dtype=np.int16 if min(n, m) < 32000 else np.int32)
+    for i in range(1, n + 1):
+        # best[i][j] = max(best[i-1][j], best[i-1][j-1] + same, best[i][j-1]); the last
+        # term is a running maximum along the row.
+        step = np.maximum(table[i - 1, 1:], table[i - 1, :-1] + (b_ids == a_ids[i - 1]))
+        table[i, 1:] = np.maximum.accumulate(step)
+
+    pairs: List[Tuple[int, int]] = []
+    i, j = n, m
+    while i and j:
+        if a[i - 1] == b[j - 1] and table[i, j] == table[i - 1, j - 1] + 1:
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+        elif table[i - 1, j] >= table[i, j - 1]:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+
+    runs: List[Tuple[int, int, int]] = []
+    for i, j in pairs:
+        if runs and runs[-1][0] + runs[-1][2] == i and runs[-1][1] + runs[-1][2] == j:
+            runs[-1] = (runs[-1][0], runs[-1][1], runs[-1][2] + 1)
+        else:
+            runs.append((i, j, 1))
+    return runs
+
+
+def _matching_blocks(a: List[str], b: List[str]) -> List[Tuple[int, int, int]]:
+    """SequenceMatcher's matching blocks, anchored so a repeated passage cannot cross-pair."""
+    blocks: List[Tuple[int, int, int]] = []
+    at_a = at_b = 0
+    anchors = [run for run in _ordered_runs(a, b) if run[2] >= _ANCHOR_RUN]
+    for i, j, size in anchors + [(len(a), len(b), 0)]:
+        if i > at_a and j > at_b:
+            between = SequenceMatcher(None, a[at_a:i], b[at_b:j], autojunk=False)
+            blocks.extend(
+                (at_a + x, at_b + y, n) for x, y, n in between.get_matching_blocks() if n
+            )
+        if size:
+            blocks.append((i, j, size))
+        at_a, at_b = i + size, j + size
+    return blocks
+
+
 def _anchored(
     said: List[str],
     heard: List[Tuple[str, float, float]],
@@ -171,9 +249,8 @@ def _anchored(
     """
     s_exp, s_src = _expand(said)
     h_exp, h_src = _expand([w for w, _, _ in heard])
-    matcher = SequenceMatcher(None, s_exp, h_exp, autojunk=False)
     times: List[Optional[Tuple[float, float]]] = [None] * len(said)
-    for i, j, size in matcher.get_matching_blocks():
+    for i, j, size in _matching_blocks(s_exp, h_exp):
         for k in range(size):
             original = s_src[i + k]
             _, start, end = heard[h_src[j + k]]
@@ -213,10 +290,15 @@ def _stand_ins(
     s_exp, s_src = _expand(said)
     h_exp, h_src = _expand([w for w, _, _ in heard])
     found: Dict[int, Tuple[float, float]] = {}
-    matcher = SequenceMatcher(None, s_exp, h_exp, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag != "replace":
-            continue
+    # The stretches between two matched blocks that are unmatched on BOTH sides — what
+    # SequenceMatcher's opcodes call a "replace" — from the same blocks _anchored used.
+    gaps = []
+    at_s = at_h = 0
+    for i, j, size in _matching_blocks(s_exp, h_exp) + [(len(s_exp), len(h_exp), 0)]:
+        if i > at_s and j > at_h:
+            gaps.append((at_s, i, at_h, j))
+        at_s, at_h = i + size, j + size
+    for i1, i2, j1, j2 in gaps:
         n, m = i2 - i1, j2 - j1
         if min(n, m) / max(n, m) < _STAND_IN_RATIO:
             continue
