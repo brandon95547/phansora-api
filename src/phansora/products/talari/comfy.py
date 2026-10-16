@@ -10,6 +10,8 @@ Sharing the card's memory is handled on ComfyUI's side (``--cache-none --reserve
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import math
 import random
@@ -31,8 +33,13 @@ MIN_SIZE = 256
 
 # Values a custom workflow file may ask for. A string that is exactly one of
 # the numeric tokens becomes a number; the text tokens are replaced in place.
-NUMERIC_TOKENS = ("%seed%", "%width%", "%height%", "%steps%", "%cfg%")
-TEXT_TOKENS = ("%prompt%", "%negative%", "%checkpoint%", "%sampler%", "%scheduler%")
+# %image% is the uploaded reference picture's name (empty without one) and %denoise% how
+# far to move from it (1.0 without one), for a custom workflow that redraws.
+NUMERIC_TOKENS = ("%seed%", "%width%", "%height%", "%steps%", "%cfg%", "%denoise%")
+TEXT_TOKENS = ("%prompt%", "%negative%", "%checkpoint%", "%sampler%", "%scheduler%", "%image%")
+
+# What a reference picture's bytes have to start with: PNG, JPEG, WebP.
+_IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8", "jpg"), (b"RIFF", "webp"))
 
 
 def dimensions(aspect: float, base: int) -> tuple[int, int]:
@@ -74,6 +81,36 @@ def checkpoint_workflow(values: dict[str, Any]) -> dict[str, Any]:
         "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
         "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0], "filename_prefix": "talari"}},
     }
+
+
+def with_reference(
+    workflow: dict[str, Any],
+    *,
+    latent: str,
+    sampler: str,
+    vae: list[Any],
+    image: str,
+    width: int,
+    height: int,
+    denoise: float,
+) -> dict[str, Any]:
+    """A text-to-image workflow turned into image-to-image.
+
+    The empty latent the sampler starts from is replaced by the reference picture: loaded,
+    scaled and center-cropped to the picture's own shape (so a landscape photo becomes a
+    portrait page picture without stretching), encoded with the workflow's own VAE. The
+    sampler then starts from it at `denoise` — how far it may move — instead of from noise.
+    Core ComfyUI nodes only; nothing to install.
+    """
+    out = {key: {**node, "inputs": dict(node["inputs"])} for key, node in workflow.items()}
+    out["20"] = {"class_type": "LoadImage", "inputs": {"image": image}}
+    out["21"] = {
+        "class_type": "ImageScale",
+        "inputs": {"image": ["20", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"},
+    }
+    out[latent] = {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": vae}}
+    out[sampler]["inputs"]["denoise"] = denoise
+    return out
 
 
 def fill_workflow(node: Any, values: dict[str, Any]) -> Any:
@@ -234,7 +271,33 @@ class ComfyUI:
             return error.message
         return None
 
-    async def _workflow(self, request: IllustrationRequest, seed: int) -> dict[str, Any]:
+    async def _upload_reference(self, data: str) -> str:
+        """Send a reference picture to ComfyUI's input folder; returns the name to load it by."""
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError):
+            raise ServiceError("The reference picture could not be read.") from None
+        ext = next((e for magic, e in _IMAGE_MAGIC if raw.startswith(magic)), None)
+        if ext is None or (ext == "webp" and raw[8:12] != b"WEBP"):
+            raise ServiceError("The reference picture is not a PNG, JPEG or WebP.")
+        try:
+            uploaded = await self._client.post(
+                f"{self._settings.comfyui_url}/upload/image",
+                files={"image": (f"talari-ref-{uuid.uuid4().hex}.{ext}", raw, f"image/{'jpeg' if ext == 'jpg' else ext}")},
+                data={"type": "input", "overwrite": "true"},
+                timeout=60.0,
+            )
+        except httpx.HTTPError:
+            raise NotConfigured(f"ComfyUI is not reachable at {self._settings.comfyui_url}.") from None
+        if uploaded.status_code != 200:
+            raise ServiceError(f"ComfyUI would not take the reference picture (HTTP {uploaded.status_code}).")
+        info = uploaded.json()
+        name = info.get("name")
+        if not name:
+            raise ServiceError("ComfyUI did not say where it put the reference picture.")
+        return f"{info['subfolder']}/{name}" if info.get("subfolder") else name
+
+    async def _workflow(self, request: IllustrationRequest, seed: int, reference: str | None = None) -> dict[str, Any]:
         settings = self._settings
         positive, negative = build_prompts(
             request.prompt,
@@ -259,7 +322,13 @@ class ComfyUI:
             "%scheduler%": settings.comfyui_scheduler,
             # A custom workflow names its own models, so only look one up when it asks.
             "%checkpoint%": settings.comfyui_checkpoint,
+            "%image%": reference or "",
+            "%denoise%": request.strength if reference else 1.0,
         }
+        redraw = (
+            {"image": reference, "width": width, "height": height, "denoise": request.strength}
+            if reference else None
+        )
         if custom is None and settings.comfyui_pipeline == "flux":
             values.update(
                 {
@@ -270,10 +339,12 @@ class ComfyUI:
                     "%guidance%": settings.flux_guidance,
                 }
             )
-            return flux_workflow(values)
+            flow = flux_workflow(values)
+            return with_reference(flow, latent="7", sampler="8", vae=["3", 0], **redraw) if redraw else flow
         if custom is None:
             values["%checkpoint%"] = await self._checkpoint()
-            return checkpoint_workflow(values)
+            flow = checkpoint_workflow(values)
+            return with_reference(flow, latent="4", sampler="5", vae=["1", 2], **redraw) if redraw else flow
         try:
             raw = custom.read_text()
             template = json.loads(raw)
@@ -287,7 +358,8 @@ class ComfyUI:
         """Draw one picture. Returns the image bytes and the seed used."""
         settings = self._settings
         seed = request.seed if request.seed is not None else random.randrange(2**32)
-        workflow = await self._workflow(request, seed)
+        reference = await self._upload_reference(request.reference) if request.reference else None
+        workflow = await self._workflow(request, seed, reference)
 
         try:
             queued = await self._client.post(

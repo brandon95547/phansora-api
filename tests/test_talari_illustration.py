@@ -88,6 +88,8 @@ def comfy(history: dict | None = None, checkpoints: list[str] | None = None, que
             return httpx.Response(200, json={"job-1": done})
         if path == "/view":
             return httpx.Response(200, content=PNG)
+        if path == "/upload/image":
+            return httpx.Response(200, json={"name": "talari-ref.png", "subfolder": "", "type": "input"})
         return httpx.Response(404)
 
     return handler
@@ -248,3 +250,74 @@ def test_pictures_for_dark_pages_and_covers_ask_for_it() -> None:
     cover, _ = build_prompts("A moonlit tower", "ink", "cover")
     assert "black background" in dark
     assert "book cover" in cover
+
+
+# ── Redrawing from a reference picture (image-to-image) ──────────────────────
+# A page built from an imported picture: the picture is the starting point, and the book's
+# style is what it is redrawn in. The engine gets the picture uploaded, and a workflow that
+# starts the sampler from it rather than from noise.
+
+import base64 as _b64
+
+REFERENCE = _b64.b64encode(b"\x89PNG\r\n\x1a\n a reference picture").decode()
+
+
+def test_a_reference_is_uploaded_and_the_sampler_starts_from_it(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    response = client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE, "strength": 0.45})
+    assert response.status_code == 200
+
+    upload = next(r for r in network.requests if r.url.path == "/upload/image")
+    assert b"a reference picture" in upload.content and b'name="type"' in upload.content
+
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["20"] == {"class_type": "LoadImage", "inputs": {"image": "talari-ref.png"}}
+    # Scaled and cropped to the picture's own shape, never stretched to it.
+    assert workflow["21"]["class_type"] == "ImageScale"
+    assert (workflow["21"]["inputs"]["width"], workflow["21"]["inputs"]["height"]) == (896, 1152)
+    assert workflow["21"]["inputs"]["crop"] == "center"
+    # The empty latent is gone: the sampler starts from the encoded reference, at the strength asked.
+    assert workflow["4"] == {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["1", 2]}}
+    assert workflow["5"]["inputs"]["latent_image"] == ["4", 0]
+    assert workflow["5"]["inputs"]["denoise"] == 0.45
+
+
+def test_flux_redraws_with_its_own_vae(make_client, network: Recorder) -> None:
+    client = make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf")
+    network.handler = comfy()
+    assert client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE}).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["7"] == {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["3", 0]}}
+    assert workflow["8"]["inputs"]["denoise"] == 0.6  # the default
+    assert workflow["8"]["inputs"]["cfg"] == 1.0
+
+
+def test_without_a_reference_nothing_is_uploaded_and_it_draws_from_noise(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    assert client.post("/users/7/illustrations", json=REQUEST).status_code == 200
+    assert not any(r.url.path == "/upload/image" for r in network.requests)
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["4"]["class_type"] == "EmptyLatentImage" and workflow["5"]["inputs"]["denoise"] == 1.0
+
+
+def test_a_reference_alone_is_enough_but_nothing_at_all_is_refused(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    assert client.post("/users/7/illustrations", json={**REQUEST, "prompt": "", "reference": REFERENCE}).status_code == 200
+    assert client.post("/users/7/illustrations", json={**REQUEST, "prompt": ""}).status_code == 422
+
+
+def test_a_reference_that_is_not_a_picture_is_refused_before_comfyui_sees_it(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    not_a_picture = _b64.b64encode(b"%PDF-1.7 not a picture").decode()
+    response = client.post("/users/7/illustrations", json={**REQUEST, "reference": not_a_picture})
+    assert response.status_code == 502
+    assert "PNG, JPEG or WebP" in response.json()["detail"]
+    assert not any(r.url.path in ("/upload/image", "/prompt") for r in network.requests)
+
+
+def test_a_custom_workflow_gets_the_reference_and_the_denoise() -> None:
+    template = {"load": {"inputs": {"image": "%image%"}}, "sample": {"inputs": {"denoise": "%denoise%", "seed": "%seed%"}}}
+    values = {token: "" for token in comfy_module.TEXT_TOKENS} | {token: 0 for token in comfy_module.NUMERIC_TOKENS}
+    values.update({"%image%": "talari-ref.png", "%denoise%": 0.45, "%seed%": 7})
+    filled = fill_workflow(template, values)
+    assert filled == {"load": {"inputs": {"image": "talari-ref.png"}}, "sample": {"inputs": {"denoise": 0.45, "seed": 7}}}

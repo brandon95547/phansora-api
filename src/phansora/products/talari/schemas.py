@@ -13,7 +13,9 @@ class Model(BaseModel):
 
 
 class IllustrationRequest(Model):
-    prompt: str = Field(min_length=1, max_length=4000)
+    # What to draw. May be empty when the picture is redrawn from a reference (below): the
+    # reference is the subject then, and the style still comes from style_id.
+    prompt: str = Field(default="", max_length=4000)
     style_id: str
     # Width over height. The picture keeps the base size's pixel budget at this shape.
     aspect: float = Field(gt=0.2, lt=5)
@@ -25,6 +27,17 @@ class IllustrationRequest(Model):
     custom_style: str | None = Field(default=None, max_length=400)
     palette: Literal["color", "grayscale"] = "color"
     detail: Literal["simple", "balanced", "rich"] = "balanced"
+    # Image-to-image: a picture to redraw instead of drawing from nothing — base64 of a PNG,
+    # JPEG or WebP — and how far to move from it. `strength` is the sampler's denoise: near 0
+    # keeps the reference as it is, 1 ignores it entirely.
+    reference: str | None = Field(default=None, max_length=40_000_000)
+    strength: float = Field(default=0.6, ge=0.05, le=1.0)
+
+    @model_validator(mode="after")
+    def _something_to_draw(self) -> "IllustrationRequest":
+        if not self.prompt.strip() and not self.reference:
+            raise ValueError("Describe the picture, or give a reference picture to redraw.")
+        return self
 
 
 class IllustrationResponse(Model):
