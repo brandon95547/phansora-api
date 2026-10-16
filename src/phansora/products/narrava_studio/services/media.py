@@ -475,6 +475,14 @@ def _ia_file(identifier: Optional[str], exts: tuple) -> Optional[str]:
 
 
 # ── Wikimedia Commons (keyless) ──────────────────────────────────────────────
+# What the studio can import and render as it is: a web raster (phansora's import route takes
+# png, jpg, gif and webp). Commons also holds SVG, TIFF, XCF, DjVu and PDF pages as "images",
+# and a result linking to one of those originals was refused on import ("That file type is not
+# supported here") and left hotlinked. For those, the result links to the PNG or JPEG Commons
+# renders of the file instead — the same rendering its thumbnail is.
+_WEB_RASTERS = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+
+
 def _wikimedia_images(query: str, *, segment_id: str, limit: int) -> List[MediaClip]:
     resp = httpx.get(
         "https://commons.wikimedia.org/w/api.php",
@@ -490,17 +498,21 @@ def _wikimedia_images(query: str, *, segment_id: str, limit: int) -> List[MediaC
     out: List[MediaClip] = []
     for page in list(pages.values())[:limit]:
         info = (page.get("imageinfo") or [{}])[0]
-        if not str(info.get("mime") or "").startswith("image/"):
+        mime = str(info.get("mime") or "").lower()
+        if not mime.startswith("image/"):
             continue
         url = info.get("thumburl") or info.get("url")
         if not url:
+            continue
+        full = info.get("url") if mime in _WEB_RASTERS else info.get("thumburl")
+        if not full:
             continue
         meta = info.get("extmetadata") or {}
         artist = _strip_html((meta.get("Artist") or {}).get("value")) or "Unknown"
         lic = _strip_html((meta.get("LicenseShortName") or {}).get("value")) or "See source"
         out.append(_clip(
             segment_id=segment_id, type="image",
-            url=info.get("url") or url, thumbnail_url=url,
+            url=full, thumbnail_url=url,
             source="Wikimedia Commons", license=lic, license_url=info.get("descriptionurl"),
             attribution=f"{artist} ({lic}) via Wikimedia Commons",
             title=str(page.get("title") or query).replace("File:", ""), query=query,
@@ -514,8 +526,9 @@ def _placeholder(query: str, *, segment_id: str, media_type: str) -> MediaClip:
     return _clip(
         segment_id=segment_id,
         type="video" if media_type == "video" else "image",
-        url=f"https://placehold.co/1280x720/1e293b/94a3b8?text={label}",
-        thumbnail_url=f"https://placehold.co/320x180/1e293b/94a3b8?text={label}",
+        # PNG, not placehold.co's default SVG, which the studio's import refuses.
+        url=f"https://placehold.co/1280x720/1e293b/94a3b8/png?text={label}",
+        thumbnail_url=f"https://placehold.co/320x180/1e293b/94a3b8/png?text={label}",
         source="placeholder", license="Placeholder",
         attribution="Placeholder — replace before publishing.",
         title=query or "Placeholder", query=query,
