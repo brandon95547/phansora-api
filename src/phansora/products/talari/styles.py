@@ -78,6 +78,9 @@ STYLES: dict[str, Style] = {
 
 DEFAULT_STYLE = "watercolor"
 CUSTOM_STYLE = "custom"
+# No style's words at all: the prompt goes to the model as written. For trying the model
+# itself (styleguide/comfyui.html in the app), where any added words would get in the way.
+NO_STYLE = "none"
 CUSTOM_STYLE_MAX = 400
 
 BASE_NEGATIVE = "text, lettering, words, watermark, signature, logo, frame, border, blurry, low quality, deformed"
@@ -112,6 +115,8 @@ def custom_style_text(custom_style: str | None) -> str:
 
 def style_text(style_id: str, custom_style: str | None = None) -> str:
     """The style's prompt language: what a picture in this style looks like."""
+    if style_id == NO_STYLE:
+        return ""
     if style_id == CUSTOM_STYLE:
         custom = custom_style_text(custom_style)
         if custom:
@@ -132,10 +137,13 @@ def build_prompts(
     """The positive and negative prompt for one picture.
 
     A custom style with no description falls back to the default style, the same as an
-    unknown id does.
+    unknown id does; "none" adds no style's words at all.
     """
     custom = custom_style_text(custom_style) if style_id == CUSTOM_STYLE else ""
-    style = Style(custom) if custom else STYLES.get(style_id, STYLES[DEFAULT_STYLE])
+    if style_id == NO_STYLE:
+        style = Style("")
+    else:
+        style = Style(custom) if custom else STYLES.get(style_id, STYLES[DEFAULT_STYLE])
     parts = [_clean(prompt), style.positive]
     if palette == "grayscale":
         parts.append(GRAYSCALE_POSITIVE)

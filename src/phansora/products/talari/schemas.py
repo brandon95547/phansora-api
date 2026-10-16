@@ -342,3 +342,71 @@ class IllustrationIdea(Lenient):
 
 class IllustrationPromptsResponse(Lenient):
     prompts: list[IllustrationIdea]
+
+
+# --- the ComfyUI lab ------------------------------------------------------------------
+# The styleguide's ComfyUI test page (styleguide/comfyui.html in the app) drives this: every
+# input a FLUX or Stable Diffusion workflow has, passed through as given, so ComfyUI itself
+# can be tried. None of Talari's styles, sizes or fixed settings apply. Field names are
+# ComfyUI's own (negative_prompt, sampler_name…); the camelCase spellings work too.
+
+PICTURE_MAX = 40_000_000    # base64 of one picture
+
+
+class LabRequest(Lenient):
+    prompt: str = Field(default="", max_length=4000)
+    negative_prompt: str = Field(default="", max_length=4000)
+    # A file from the lab's model list; empty for the one Talari draws with.
+    model: str = Field(default="", max_length=300)
+    width: int = Field(default=1024, ge=256, le=2048)
+    height: int = Field(default=1024, ge=256, le=2048)
+    seed: int | None = Field(default=None, ge=0, le=2**64 - 1)
+    steps: int = Field(default=24, ge=1, le=80)
+    cfg: float = Field(default=1.0, ge=0, le=30)
+    # FLUX's prompt strength (FluxGuidance); ignored by a checkpoint model.
+    guidance: float = Field(default=3.5, ge=0, le=30)
+    denoise: float = Field(default=1.0, ge=0, le=1)
+    sampler_name: str = Field(default="euler", max_length=64)
+    scheduler: str = Field(default="simple", max_length=64)
+    # Base64 PNG, JPEG or WebP. `image` is the source picture the sampler starts from; `mask`
+    # (needs `image`) is black and white, white where the picture may change; `style_image`
+    # is a separate picture whose look is applied (FLUX Redux), by `style_image_weight`.
+    image: str | None = Field(default=None, max_length=PICTURE_MAX)
+    mask: str | None = Field(default=None, max_length=PICTURE_MAX)
+    style_image: str | None = Field(default=None, max_length=PICTURE_MAX)
+    style_image_weight: float = Field(default=1.0, ge=0, le=10)
+    style_strength_type: Literal["multiply", "attn_bias"] = "multiply"
+    # Files for the style picture: a style model and the vision model it reads pictures
+    # with; empty for the first ComfyUI has.
+    style_model: str = Field(default="", max_length=300)
+    clip_vision: str = Field(default="", max_length=300)
+
+    @model_validator(mode="after")
+    def _something_to_draw(self) -> "LabRequest":
+        if not self.prompt.strip() and not self.image and not self.style_image:
+            raise ValueError("Write a prompt, or give a picture to start from or to take a style from.")
+        if self.mask and not self.image:
+            raise ValueError("A mask marks part of a picture: give the picture (image) too.")
+        return self
+
+
+class LabResponse(Model):
+    src: str
+    seed: int
+    width: int
+    height: int
+    # The workflow ComfyUI was given, pictures named by their upload names.
+    workflow: dict[str, Any]
+
+
+class LabOptions(Model):
+    """What this ComfyUI has to choose from, and what the lab starts with."""
+
+    models: list[str]
+    default_model: str
+    samplers: list[str]
+    schedulers: list[str]
+    style_models: list[str]
+    clip_vision: list[str]
+    strength_types: list[str]
+    defaults: dict[str, Any]

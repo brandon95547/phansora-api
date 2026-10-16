@@ -6,6 +6,12 @@ Illustrations, drawn by ComfyUI:
     POST /users/{user_id}/illustrations            draw one picture (about 85 s on the A4000)
     GET  /users/{user_id}/images/{name}            a picture drawn earlier
 
+The ComfyUI lab, for the styleguide's test page — every workflow input passed through as
+given, open only to the accounts in TALARI_LAB_USERS (and the app's internal key):
+
+    GET  /users/{user_id}/lab/options              the models, samplers, schedulers, style files
+    POST /users/{user_id}/lab/illustrations        draw one picture with exactly these settings
+
 Text, written by DeepSeek (writing.py), and imported documents (sources.py):
 
     POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters
@@ -58,6 +64,9 @@ from .schemas import (
     IllustrationPromptsResponse,
     IllustrationRequest,
     IllustrationResponse,
+    LabOptions,
+    LabRequest,
+    LabResponse,
     RefineRequest,
     RefineResponse,
     ReviseRequest,
@@ -115,6 +124,32 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
         return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
+
+    # --- the ComfyUI lab --------------------------------------------------------------
+
+    def lab_user(user_id: str, request: Request) -> None:
+        """The lab runs any settings on the GPU, unmetered: only the app and named accounts."""
+        # No auth on the request means no gate in front (tests, local development), the same
+        # as enforce_user_scope reads it.
+        auth = getattr(request.state, "auth", None)
+        if auth is None or auth.get("internal") or user_id in settings.lab_users:
+            return
+        raise HTTPException(status_code=403, detail="The ComfyUI lab is not open to this account.")
+
+    @app.get("/users/{user_id}/lab/options", response_model=LabOptions, response_model_by_alias=True)
+    async def lab_options(user_id: str, request: Request) -> LabOptions:
+        lab_user(user_id, request)
+        return await request.app.state.comfy.lab_options()
+
+    @app.post("/users/{user_id}/lab/illustrations", response_model=LabResponse, response_model_by_alias=True)
+    async def lab_illustrate(user_id: str, body: LabRequest, request: Request) -> LabResponse:
+        lab_user(user_id, request)
+        folder = user_images(user_id)
+        image, seed, width, height, workflow = await request.app.state.comfy.lab(body)
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{uuid.uuid4().hex}.png"
+        (folder / name).write_bytes(image)
+        return LabResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed, width=width, height=height, workflow=workflow)
 
     @app.get("/users/{user_id}/images/{name}")
     def image(user_id: str, name: str) -> FileResponse:

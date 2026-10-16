@@ -321,3 +321,132 @@ def test_a_custom_workflow_gets_the_reference_and_the_denoise() -> None:
     values.update({"%image%": "talari-ref.png", "%denoise%": 0.45, "%seed%": 7})
     filled = fill_workflow(template, values)
     assert filled == {"load": {"inputs": {"image": "talari-ref.png"}}, "sample": {"inputs": {"denoise": 0.45, "seed": 7}}}
+
+
+# --- the ComfyUI lab ----------------------------------------------------------------------
+# The styleguide's ComfyUI test page: every workflow input passed through as given.
+
+LAB_INFO = {
+    "UnetLoaderGGUF": {"input": {"required": {"unet_name": [["flux1-dev-Q4_K_S.gguf"], {}]}}},
+    "UNETLoader": {"input": {"required": {"unet_name": [[], {}]}}},
+    "KSampler": {"input": {"required": {"sampler_name": [["euler", "dpmpp_2m"], {}], "scheduler": [["simple", "karras"], {}]}}},
+    "StyleModelLoader": {"input": {"required": {"style_model_name": [["flux1-redux-dev.safetensors"], {}]}}},
+    "CLIPVisionLoader": {"input": {"required": {"clip_name": [["sigclip_vision_patch14_384.safetensors"], {}]}}},
+    "StyleModelApply": {"input": {"required": {"strength_type": ["COMBO", {"options": ["multiply", "attn_bias"]}]}}},
+}
+LAB = {"prompt": "A lighthouse at dusk", "model": "flux1-dev-Q4_K_S.gguf"}
+
+
+def lab_client(make_client, **overrides: Any) -> TestClient:
+    return make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf", **overrides)
+
+
+def test_the_lab_is_open_only_to_the_named_accounts_and_the_app(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    named = lab_client(make_client, auth={"internal": False, "user_id": "7"}, lab_users=frozenset({"7"}))
+    assert named.post("/users/7/lab/illustrations", json=LAB).status_code == 200
+    assert named.get("/users/7/lab/options").status_code == 200
+    other = lab_client(make_client, auth={"internal": False, "user_id": "8"}, lab_users=frozenset({"7"}))
+    refused = other.post("/users/8/lab/illustrations", json=LAB)
+    assert refused.status_code == 403 and "lab" in refused.json()["detail"]
+    assert other.get("/users/8/lab/options").status_code == 403
+    app = lab_client(make_client, auth={"internal": True})
+    assert app.post("/users/9/lab/illustrations", json=LAB).status_code == 200
+
+
+def test_the_lab_passes_every_setting_through_untouched(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    settings = {
+        **LAB, "negative_prompt": "fog", "width": 1010, "height": 640, "seed": 2**40, "steps": 9, "cfg": 2.5,
+        "guidance": 5.0, "denoise": 0.9, "sampler_name": "dpmpp_2m", "scheduler": "karras",
+    }
+    response = client.post("/users/7/lab/illustrations", json=settings)
+    assert response.status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert response.json()["workflow"] == workflow
+    assert (response.json()["width"], response.json()["height"]) == (1008, 640)  # 16-pixel steps
+    assert workflow["1"] == {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux1-dev-Q4_K_S.gguf"}}
+    # The prompt exactly as written: no style's words, no cover or page wording.
+    assert workflow["4"]["inputs"]["text"] == "A lighthouse at dusk"
+    assert workflow["5"] == {"class_type": "FluxGuidance", "inputs": {"conditioning": ["4", 0], "guidance": 5.0}}
+    assert workflow["6"]["inputs"]["text"] == "fog"
+    assert workflow["7"] == {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1008, "height": 640, "batch_size": 1}}
+    assert workflow["8"]["inputs"] | {"model": None} == {
+        "model": None, "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": 2**40,
+        "steps": 9, "cfg": 2.5, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 0.9,
+    }
+    # The camelCase spellings mean the same.
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "negativePrompt": "rain", "samplerName": "euler"}).status_code == 200
+    again = network.bodies("/prompt")[1]["prompt"]
+    assert again["6"]["inputs"]["text"] == "rain" and again["8"]["inputs"]["sampler_name"] == "euler"
+
+
+def test_the_lab_redraws_a_picture_inside_its_mask(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    response = client.post("/users/7/lab/illustrations", json={**LAB, "image": REFERENCE, "mask": REFERENCE, "denoise": 0.7, "width": 832, "height": 1216})
+    assert response.status_code == 200
+    uploads = [r.content for r in network.requests if r.url.path == "/upload/image"]
+    assert any(b'filename="lab-image-' in u for u in uploads) and any(b'filename="lab-mask-' in u for u in uploads)
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["21"]["inputs"] | {"image": None} == {"image": None, "upscale_method": "lanczos", "width": 832, "height": 1216, "crop": "center"}
+    assert workflow["7"] == {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["3", 0]}}
+    # The mask is cut to the same size and shape as the picture, then limits the noise.
+    assert workflow["22"]["class_type"] == "LoadImageMask" and workflow["22"]["inputs"]["channel"] == "red"
+    assert (workflow["24"]["inputs"]["width"], workflow["24"]["inputs"]["height"], workflow["24"]["inputs"]["crop"]) == (832, 1216, "center")
+    assert workflow["26"] == {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["7", 0], "mask": ["25", 0]}}
+    assert workflow["8"]["inputs"]["latent_image"] == ["26", 0] and workflow["8"]["inputs"]["denoise"] == 0.7
+
+
+def test_the_lab_applies_a_style_picture_with_its_weight(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    body = {**LAB, "style_image": REFERENCE, "style_image_weight": 0.4, "style_strength_type": "attn_bias"}
+    assert client.post("/users/7/lab/illustrations", json=body).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["31"]["inputs"]["clip_name"] == "sigclip_vision_patch14_384.safetensors"
+    assert workflow["33"]["inputs"]["style_model_name"] == "flux1-redux-dev.safetensors"
+    assert workflow["34"]["inputs"] | {"style_model": None, "clip_vision_output": None} == {
+        "conditioning": ["5", 0], "style_model": None, "clip_vision_output": None, "strength": 0.4, "strength_type": "attn_bias",
+    }
+    assert workflow["8"]["inputs"]["positive"] == ["34", 0]
+
+
+def test_a_style_picture_without_the_style_models_says_what_is_missing(make_client, network: Recorder) -> None:
+    info = {**LAB_INFO, "StyleModelLoader": {"input": {"required": {"style_model_name": [[], {}]}}}}
+    network.handler = comfy(object_info=info)
+    response = lab_client(make_client).post("/users/7/lab/illustrations", json={**LAB, "style_image": REFERENCE})
+    assert response.status_code == 503 and "style model" in response.json()["detail"]
+    assert not network.bodies("/prompt")
+
+
+def test_the_lab_refuses_a_mask_without_a_picture_and_an_empty_request(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "mask": REFERENCE}).status_code == 422
+    assert client.post("/users/7/lab/illustrations", json={"model": "flux1-dev-Q4_K_S.gguf"}).status_code == 422
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "steps": 500}).status_code == 422
+
+
+def test_a_checkpoint_model_loads_from_one_file_without_flux_guidance(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "model": "sdxl_base.safetensors", "cfg": 6}).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["1"] == {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "sdxl_base.safetensors"}}
+    assert "5" not in workflow and workflow["8"]["inputs"]["positive"] == ["4", 0]
+    assert workflow["7"]["class_type"] == "EmptyLatentImage"
+    assert workflow["4"]["inputs"]["clip"] == ["1", 1] and workflow["9"]["inputs"]["vae"] == ["1", 2]
+
+
+def test_the_lab_lists_what_this_comfyui_has(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    options = lab_client(make_client).get("/users/7/lab/options").json()
+    assert options["models"] == ["flux1-dev-Q4_K_S.gguf", "sdxl_base.safetensors", "other.safetensors"]
+    assert options["defaultModel"] == "flux1-dev-Q4_K_S.gguf"
+    assert options["samplers"] == ["euler", "dpmpp_2m"] and options["schedulers"] == ["simple", "karras"]
+    assert options["styleModels"] == ["flux1-redux-dev.safetensors"]
+    assert options["clipVision"] == ["sigclip_vision_patch14_384.safetensors"]
+    assert options["strengthTypes"] == ["multiply", "attn_bias"]
+    assert options["defaults"]["cfg"] == 1.0 and options["defaults"]["guidance"] == 3.5

@@ -742,6 +742,8 @@ def test_custom_styles_palette_and_detail_reach_the_picture(tmp_path: Path) -> N
     )
     assert "colour" in negative and "lettering" in negative
     assert build_prompts("A fox", "custom", "interior")[0] == build_prompts("A fox", "watercolor", "interior")[0]
+    # "none": the prompt as written, nothing added — what the styleguide's ComfyUI page sends.
+    assert build_prompts("A fox in the snow", "none", "interior")[0] == "A fox in the snow"
     for style in ("childrens", "lineart", "comic", "vintage", "minimal", "digital"):
         assert build_prompts("A fox", style, "interior")[0] != build_prompts("A fox", "watercolor", "interior")[0]
 

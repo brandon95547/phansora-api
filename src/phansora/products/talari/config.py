@@ -54,6 +54,10 @@ class Settings:
     # Progress file the ComfyUI container writes while it downloads its models; read so
     # the status can say "downloading, 43%" rather than "not reachable".
     model_status_file: Path | None = None
+    # User ids the ComfyUI lab (/users/{id}/lab/...) answers for, besides the app itself.
+    # The lab runs whatever settings it is given on the GPU and is not metered, so it is
+    # open only to the accounts named here (TALARI_LAB_USERS=1,5); empty, to nobody.
+    lab_users: frozenset[str] = frozenset()
 
     @property
     def images_dir(self) -> Path:
@@ -83,4 +87,5 @@ def load_settings() -> Settings:
         flux_vae=os.getenv("FLUX_VAE_FILE", "").strip() or "ae.safetensors",
         flux_guidance=_float("FLUX_GUIDANCE", 3.5),
         model_status_file=_path("COMFYUI_MODEL_STATUS_FILE"),
+        lab_users=frozenset(u.strip() for u in os.getenv("TALARI_LAB_USERS", "").split(",") if u.strip()),
     )

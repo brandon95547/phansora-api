@@ -24,7 +24,7 @@ import httpx
 
 from .config import Settings
 from .errors import NotConfigured, ServiceError
-from .schemas import IllustrationRequest
+from .schemas import IllustrationRequest, LabOptions, LabRequest
 from .styles import build_prompts
 
 POLL_INTERVAL_S = 1.0
@@ -273,28 +273,33 @@ class ComfyUI:
 
     async def _upload_reference(self, data: str) -> str:
         """Send a reference picture to ComfyUI's input folder; returns the name to load it by."""
+        return await self._upload_picture(data, "reference picture", "talari-ref")
+
+    async def _upload_picture(self, data: str, what: str, prefix: str) -> str:
+        """Send a picture (base64 PNG, JPEG or WebP) to ComfyUI's input folder, under a fresh
+        name starting with `prefix`; returns the name to load it by. `what` names it in errors."""
         try:
             raw = base64.b64decode(data, validate=True)
         except (binascii.Error, ValueError):
-            raise ServiceError("The reference picture could not be read.") from None
+            raise ServiceError(f"The {what} could not be read.") from None
         ext = next((e for magic, e in _IMAGE_MAGIC if raw.startswith(magic)), None)
         if ext is None or (ext == "webp" and raw[8:12] != b"WEBP"):
-            raise ServiceError("The reference picture is not a PNG, JPEG or WebP.")
+            raise ServiceError(f"The {what} is not a PNG, JPEG or WebP.")
         try:
             uploaded = await self._client.post(
                 f"{self._settings.comfyui_url}/upload/image",
-                files={"image": (f"talari-ref-{uuid.uuid4().hex}.{ext}", raw, f"image/{'jpeg' if ext == 'jpg' else ext}")},
+                files={"image": (f"{prefix}-{uuid.uuid4().hex}.{ext}", raw, f"image/{'jpeg' if ext == 'jpg' else ext}")},
                 data={"type": "input", "overwrite": "true"},
                 timeout=60.0,
             )
         except httpx.HTTPError:
             raise NotConfigured(f"ComfyUI is not reachable at {self._settings.comfyui_url}.") from None
         if uploaded.status_code != 200:
-            raise ServiceError(f"ComfyUI would not take the reference picture (HTTP {uploaded.status_code}).")
+            raise ServiceError(f"ComfyUI would not take the {what} (HTTP {uploaded.status_code}).")
         info = uploaded.json()
         name = info.get("name")
         if not name:
-            raise ServiceError("ComfyUI did not say where it put the reference picture.")
+            raise ServiceError(f"ComfyUI did not say where it put the {what}.")
         return f"{info['subfolder']}/{name}" if info.get("subfolder") else name
 
     async def _workflow(self, request: IllustrationRequest, seed: int, reference: str | None = None) -> dict[str, Any]:
@@ -356,11 +361,14 @@ class ComfyUI:
 
     async def generate(self, request: IllustrationRequest) -> tuple[bytes, int]:
         """Draw one picture. Returns the image bytes and the seed used."""
-        settings = self._settings
         seed = request.seed if request.seed is not None else random.randrange(2**32)
         reference = await self._upload_reference(request.reference) if request.reference else None
         workflow = await self._workflow(request, seed, reference)
+        return await self.run(workflow), seed
 
+    async def run(self, workflow: dict[str, Any]) -> bytes:
+        """Queue a workflow, wait for it, and return the first picture it saved."""
+        settings = self._settings
         try:
             queued = await self._client.post(
                 f"{settings.comfyui_url}/prompt",
@@ -406,4 +414,187 @@ class ComfyUI:
         )
         if picture.status_code != 200 or not picture.content:
             raise ServiceError("ComfyUI drew the image but it could not be downloaded.")
-        return picture.content, seed
+        return picture.content
+
+    # --- the lab ------------------------------------------------------------------------
+    # The styleguide's ComfyUI test page: every input passed through as given (LabRequest).
+
+    async def lab_options(self) -> LabOptions:
+        """The model files, samplers, schedulers and style files this ComfyUI has."""
+        settings = self._settings
+        models = [
+            *(await self._choices("UnetLoaderGGUF", "unet_name") or []),
+            *(await self._choices("UNETLoader", "unet_name") or []),
+            *(await self.checkpoints()),
+        ]
+        default = settings.flux_unet if settings.comfyui_pipeline == "flux" else (settings.comfyui_checkpoint or "")
+        return LabOptions(
+            models=models,
+            default_model=default if default in models else (models[0] if models else ""),
+            samplers=await self._choices("KSampler", "sampler_name") or [],
+            schedulers=await self._choices("KSampler", "scheduler") or [],
+            style_models=await self._choices("StyleModelLoader", "style_model_name") or [],
+            clip_vision=await self._choices("CLIPVisionLoader", "clip_name") or [],
+            strength_types=await self._choices("StyleModelApply", "strength_type") or [],
+            defaults={
+                "steps": settings.comfyui_steps,
+                "cfg": 1.0 if settings.comfyui_pipeline == "flux" else settings.comfyui_cfg,
+                "guidance": settings.flux_guidance,
+                "sampler_name": settings.comfyui_sampler,
+                "scheduler": settings.comfyui_scheduler,
+                "width": 1024,
+                "height": 1024,
+                "denoise": 1.0,
+                "style_image_weight": 1.0,
+            },
+        )
+
+    async def lab(self, request: LabRequest) -> tuple[bytes, int, int, int, dict[str, Any]]:
+        """Draw one picture from a lab request. Returns the picture, the seed, the size it
+        was drawn at, and the workflow ComfyUI was given."""
+        settings = self._settings
+        seed = request.seed if request.seed is not None else random.randrange(2**32)
+        model = request.model or settings.flux_unet
+        checkpoints = await self.checkpoints()
+        style_model = clip_vision = ""
+        if request.style_image:
+            style_model = request.style_model or next(iter(await self._choices("StyleModelLoader", "style_model_name") or []), "")
+            clip_vision = request.clip_vision or next(iter(await self._choices("CLIPVisionLoader", "clip_name") or []), "")
+            if not style_model or not clip_vision:
+                raise NotConfigured(
+                    "ComfyUI has no style model or no vision model installed, which a style picture needs "
+                    "(models/style_models and models/clip_vision)."
+                )
+        image = await self._upload_picture(request.image, "picture", "lab-image") if request.image else ""
+        mask = await self._upload_picture(request.mask, "mask", "lab-mask") if request.mask else ""
+        style = await self._upload_picture(request.style_image, "style picture", "lab-style") if request.style_image else ""
+        width, height = _snap16(request.width), _snap16(request.height)
+        workflow = lab_workflow(
+            request,
+            seed=seed,
+            width=width,
+            height=height,
+            loader="checkpoint" if model in checkpoints else "gguf" if model.endswith(".gguf") else "unet",
+            model=model,
+            settings=settings,
+            image=image,
+            mask=mask,
+            style_image=style,
+            style_model=style_model,
+            clip_vision=clip_vision,
+        )
+        return await self.run(workflow), seed, width, height, workflow
+
+
+def _snap16(value: int) -> int:
+    """FLUX and SD3 latents come in 16-pixel steps."""
+    return max(256, round(value / 16) * 16)
+
+
+def lab_workflow(
+    request: LabRequest,
+    *,
+    seed: int,
+    width: int,
+    height: int,
+    loader: str,
+    model: str,
+    settings: Settings,
+    image: str = "",
+    mask: str = "",
+    style_image: str = "",
+    style_model: str = "",
+    clip_vision: str = "",
+) -> dict[str, Any]:
+    """The lab's workflow: one node per input of LabRequest, core ComfyUI nodes only (plus the
+    GGUF loader for a .gguf model).
+
+    `loader` is how the model is loaded: "gguf" or "unet" (a diffusion model, with FLUX's text
+    encoders, VAE and FluxGuidance) or "checkpoint" (model, text encoder and VAE in one file,
+    as SD 1.5 and SDXL come). `image`, `mask` and `style_image` are upload names, or empty.
+    """
+    wf: dict[str, Any] = {}
+    if loader == "checkpoint":
+        wf["1"] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": model}}
+        model_out, clip, vae = ["1", 0], ["1", 1], ["1", 2]
+    else:
+        wf["1"] = (
+            {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": model}}
+            if loader == "gguf"
+            else {"class_type": "UNETLoader", "inputs": {"unet_name": model, "weight_dtype": "default"}}
+        )
+        wf["2"] = {
+            "class_type": "DualCLIPLoader",
+            "inputs": {"clip_name1": settings.flux_t5, "clip_name2": settings.flux_clip_l, "type": "flux"},
+        }
+        wf["3"] = {"class_type": "VAELoader", "inputs": {"vae_name": settings.flux_vae}}
+        model_out, clip, vae = ["1", 0], ["2", 0], ["3", 0]
+
+    # prompt → the positive conditioning; FLUX's guidance, then the style picture, act on it.
+    wf["4"] = {"class_type": "CLIPTextEncode", "inputs": {"text": request.prompt, "clip": clip}}
+    positive = ["4", 0]
+    if loader != "checkpoint":
+        wf["5"] = {"class_type": "FluxGuidance", "inputs": {"conditioning": positive, "guidance": request.guidance}}
+        positive = ["5", 0]
+    if style_image:
+        wf["30"] = {"class_type": "LoadImage", "inputs": {"image": style_image}}
+        wf["31"] = {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_vision}}
+        wf["32"] = {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["31", 0], "image": ["30", 0], "crop": "center"}}
+        wf["33"] = {"class_type": "StyleModelLoader", "inputs": {"style_model_name": style_model}}
+        wf["34"] = {
+            "class_type": "StyleModelApply",
+            "inputs": {
+                "conditioning": positive,
+                "style_model": ["33", 0],
+                "clip_vision_output": ["32", 0],
+                "strength": request.style_image_weight,
+                "strength_type": request.style_strength_type,
+            },
+        }
+        positive = ["34", 0]
+    # negative_prompt → the negative conditioning. It only acts when cfg is above 1.
+    wf["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": request.negative_prompt, "clip": clip}}
+
+    # The canvas: the source picture, scaled and center-cropped to the size, or an empty one.
+    if image:
+        wf["20"] = {"class_type": "LoadImage", "inputs": {"image": image}}
+        wf["21"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": ["20", 0], "upscale_method": "lanczos", "width": width, "height": height, "crop": "center"},
+        }
+        wf["7"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": vae}}
+        latent = ["7", 0]
+        if mask:
+            # White is where the picture may change. Scaled and cropped exactly as the picture.
+            wf["22"] = {"class_type": "LoadImageMask", "inputs": {"image": mask, "channel": "red"}}
+            wf["23"] = {"class_type": "MaskToImage", "inputs": {"mask": ["22", 0]}}
+            wf["24"] = {
+                "class_type": "ImageScale",
+                "inputs": {"image": ["23", 0], "upscale_method": "bilinear", "width": width, "height": height, "crop": "center"},
+            }
+            wf["25"] = {"class_type": "ImageToMask", "inputs": {"image": ["24", 0], "channel": "red"}}
+            wf["26"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": latent, "mask": ["25", 0]}}
+            latent = ["26", 0]
+    else:
+        empty = "EmptyLatentImage" if loader == "checkpoint" else "EmptySD3LatentImage"
+        wf["7"] = {"class_type": empty, "inputs": {"width": width, "height": height, "batch_size": 1}}
+        latent = ["7", 0]
+
+    wf["8"] = {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": model_out,
+            "positive": positive,
+            "negative": ["6", 0],
+            "latent_image": latent,
+            "seed": seed,
+            "steps": request.steps,
+            "cfg": request.cfg,
+            "sampler_name": request.sampler_name,
+            "scheduler": request.scheduler,
+            "denoise": request.denoise,
+        },
+    }
+    wf["9"] = {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": vae}}
+    wf["10"] = {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "lab"}}
+    return wf
