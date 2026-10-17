@@ -1,0 +1,49 @@
+# deploy/phansora-api.service — the production API under systemd (see the README's Run section).
+# Copy to /etc/systemd/system/ with deploy/phansora-api.service.d/, then:
+# systemctl daemon-reload && systemctl enable --now phansora-api
+[Unit]
+Description=Phansora API (FastAPI — all products) and the Book Alchemy worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/phansora-api
+EnvironmentFile=/var/www/phansora-api/.env
+
+# Two processes, one unit: the API, and the Book Alchemy worker beside it (until
+# 2026-10-16 its own unit, phansora-book-worker.service; a copy of that is in
+# /root/systemd-backup-2026-10-16). The worker turns uploaded books into audiobooks: it
+# claims a book from Postgres and POSTs each script to this API's
+# /spokenverse/txt-to-audio, so one warmed TTS model (in the API process) does all the
+# synthesis.
+#
+# uvicorn is the main process (exec). 1 worker: Chatterbox loads the TTS model into VRAM
+# per process (>1 worker = 2x VRAM).
+#
+# The book worker runs in a loop beside it: if it crashes, it is started again 5 s later
+# (what its own unit's Restart=always did); a crash mid-book is fine, it reclaims the book
+# once the lease expires and resumes from the last committed phase. When this unit stops,
+# every process in it gets SIGINT: the worker finishes its in-flight DB writes and exits
+# cleanly (status 0), which ends the loop. Its settings, from its old unit:
+# PHANSORA_API_BASE points it at this API; PYTORCH_CUDA_ALLOC_CONF is a harmless stopgap
+# against CUDA fragmentation. Both processes log here: journalctl -u phansora-api (the
+# worker's lines say book_alchemy.worker).
+ExecStart=/bin/bash -c '( until PHANSORA_API_BASE=http://127.0.0.1:8000 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True /var/www/phansora-api/.venv/bin/python -m phansora.products.book_alchemy.worker; do sleep 5; done ) & exec /var/www/phansora-api/.venv/bin/uvicorn phansora.main:app --host 0.0.0.0 --port 8000 --workers 1'
+
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=phansora-api
+
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/www/phansora-api/data
+
+[Install]
+WantedBy=multi-user.target

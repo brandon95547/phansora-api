@@ -81,6 +81,8 @@ data/chrono_origin/cache/*
 
 # systemd unit files are environment-specific
 *.service
+# …except the production unit kept under deploy/, the one to copy onto a new server.
+!deploy/phansora-api.service
 
 # prompt_lab scratch file — an experiment in progress, not source
 chrono-prompt.txt

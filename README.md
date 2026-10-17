@@ -281,8 +281,19 @@ make dev      # uvicorn --reload on http://localhost:8000
 make worker   # Book Alchemy job runner — SEPARATE process, only needed for Book Alchemy
 ```
 
-**Prod (Linux GPU):** `phansora-api` and `phansora-worker` run under **systemd**
-(not `make`), behind **nginx**. Two nginx settings this API needs:
+**Prod (Linux GPU):** one **systemd** service, `deploy/phansora-api.service`, runs the API
+and, beside it, the Book Alchemy worker (restarted 5 s after a crash, stopped with the API),
+behind **nginx**. Install it with its drop-ins (`deploy/phansora-api.service.d/`):
+
+```bash
+sudo cp deploy/phansora-api.service /etc/systemd/system/
+sudo cp -r deploy/phansora-api.service.d /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now phansora-api
+```
+
+Both processes log to `journalctl -u phansora-api` (the worker's lines say
+`book_alchemy.worker`). Two nginx settings this API needs:
 - `proxy_read_timeout 300s` — the first TTS request after a restart loads the model
   (~10–30 s on GPU) and otherwise times out; generations themselves are quick.
 - `client_max_body_size 25m` — create-voice uploads a reference clip; nginx's 1 MB
