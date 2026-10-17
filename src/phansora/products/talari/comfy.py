@@ -28,6 +28,12 @@ from .schemas import IllustrationRequest, LabOptions, LabRequest
 from .styles import build_prompts
 
 POLL_INTERVAL_S = 1.0
+
+# The files a style picture needs (USO, ByteDance's style reference for FLUX.1 Dev), as
+# ComfyUI's template names them and Phansora's ComfyUI container fetches them.
+USO_LORA = "uso-flux1-dit-lora-v1.safetensors"
+USO_PROJECTOR = "uso-flux1-projector-v1.safetensors"
+USO_VISION = "sigclip_vision_patch14_384.safetensors"
 SIZE_STEP = 64
 MIN_SIZE = 256
 
@@ -430,14 +436,14 @@ class ComfyUI:
             *(await self.checkpoints()),
         ]
         default = settings.flux_unet if settings.comfyui_pipeline == "flux" else (settings.comfyui_checkpoint or "")
+        missing = await self._uso_missing()
         return LabOptions(
             models=models,
             default_model=default if default in models else (models[0] if models else ""),
             samplers=await self._choices("KSampler", "sampler_name") or [],
             schedulers=await self._choices("KSampler", "scheduler") or [],
-            style_models=await self._choices("StyleModelLoader", "style_model_name") or [],
-            clip_vision=await self._choices("CLIPVisionLoader", "clip_name") or [],
-            strength_types=await self._choices("StyleModelApply", "strength_type") or [],
+            style_ready=not missing,
+            style_missing=missing,
             defaults={
                 "steps": settings.comfyui_steps,
                 "cfg": 1.0 if settings.comfyui_pipeline == "flux" else settings.comfyui_cfg,
@@ -458,15 +464,12 @@ class ComfyUI:
         seed = request.seed if request.seed is not None else random.randrange(2**32)
         model = request.model or settings.flux_unet
         checkpoints = await self.checkpoints()
-        style_model = clip_vision = ""
         if request.style_image:
-            style_model = request.style_model or next(iter(await self._choices("StyleModelLoader", "style_model_name") or []), "")
-            clip_vision = request.clip_vision or next(iter(await self._choices("CLIPVisionLoader", "clip_name") or []), "")
-            if not style_model or not clip_vision:
-                raise NotConfigured(
-                    "ComfyUI has no style model or no vision model installed, which a style picture needs "
-                    "(models/style_models and models/clip_vision)."
-                )
+            missing = await self._uso_missing()
+            if missing:
+                raise NotConfigured(f"A style picture needs {' and '.join(missing)} in ComfyUI, which it does not have yet.")
+            if model in checkpoints:
+                raise ServiceError("A style picture works with FLUX (USO); pick a FLUX model for it.", status=422)
         image = await self._upload_picture(request.image, "picture", "lab-image") if request.image else ""
         mask = await self._upload_picture(request.mask, "mask", "lab-mask") if request.mask else ""
         style = await self._upload_picture(request.style_image, "style picture", "lab-style") if request.style_image else ""
@@ -482,10 +485,18 @@ class ComfyUI:
             image=image,
             mask=mask,
             style_image=style,
-            style_model=style_model,
-            clip_vision=clip_vision,
         )
         return await self.run(workflow), seed, width, height, workflow
+
+    async def _uso_missing(self) -> list[str]:
+        """What a style picture needs and ComfyUI does not have: the files below, in the folders
+        Phansora's ComfyUI container fetches them into (docker/comfyui/fetch_models.py)."""
+        have = {
+            USO_LORA: await self._choices("LoraLoaderModelOnly", "lora_name") or [],
+            USO_PROJECTOR: await self._choices("ModelPatchLoader", "name") or [],
+            USO_VISION: await self._choices("CLIPVisionLoader", "clip_name") or [],
+        }
+        return [name for name, available in have.items() if name not in available]
 
 
 def _snap16(value: int) -> int:
@@ -505,15 +516,16 @@ def lab_workflow(
     image: str = "",
     mask: str = "",
     style_image: str = "",
-    style_model: str = "",
-    clip_vision: str = "",
 ) -> dict[str, Any]:
     """The lab's workflow: one node per input of LabRequest, core ComfyUI nodes only (plus the
     GGUF loader for a .gguf model).
 
     `loader` is how the model is loaded: "gguf" or "unet" (a diffusion model, with FLUX's text
     encoders, VAE and FluxGuidance) or "checkpoint" (model, text encoder and VAE in one file,
-    as SD 1.5 and SDXL come). `image`, `mask` and `style_image` are upload names, or empty.
+    as SD 1.5 and SDXL come). `image`, `mask` and `style_image` are upload names, or empty. A
+    style picture is ComfyUI's own USO style reference (its "Flux.1 Dev USO Reference Image
+    Generation" template, style only): USO's LoRA on the model, then USOStyleReference, which
+    adds the picture as the vision model reads it — its style, not its subject.
     """
     wf: dict[str, Any] = {}
     if loader == "checkpoint":
@@ -550,20 +562,18 @@ def lab_workflow(
             positive = ["5", 0]
     if style_image:
         wf["30"] = {"class_type": "LoadImage", "inputs": {"image": style_image}}
-        wf["31"] = {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": clip_vision}}
+        wf["31"] = {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": USO_VISION}}
         wf["32"] = {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["31", 0], "image": ["30", 0], "crop": "center"}}
-        wf["33"] = {"class_type": "StyleModelLoader", "inputs": {"style_model_name": style_model}}
-        wf["34"] = {
-            "class_type": "StyleModelApply",
-            "inputs": {
-                "conditioning": positive,
-                "style_model": ["33", 0],
-                "clip_vision_output": ["32", 0],
-                "strength": request.style_image_weight,
-                "strength_type": request.style_strength_type,
-            },
+        wf["33"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {"model": model_out, "lora_name": USO_LORA, "strength_model": request.style_image_weight},
         }
-        positive = ["34", 0]
+        wf["34"] = {"class_type": "ModelPatchLoader", "inputs": {"name": USO_PROJECTOR}}
+        wf["35"] = {
+            "class_type": "USOStyleReference",
+            "inputs": {"model": ["33", 0], "model_patch": ["34", 0], "clip_vision_output": ["32", 0]},
+        }
+        model_out = ["35", 0]
     # negative_prompt → the negative conditioning. It only acts when cfg is above 1.
     wf["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": request.negative_prompt, "clip": clip}}
 

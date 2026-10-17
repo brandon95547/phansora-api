@@ -383,16 +383,13 @@ class LabRequest(Lenient):
     scheduler: str = Field(default="simple", max_length=64)
     # Base64 PNG, JPEG or WebP. `image` is the source picture the sampler starts from; `mask`
     # (needs `image`) is black and white, white where the picture may change; `style_image`
-    # is a separate picture whose look is applied (FLUX Redux), by `style_image_weight`.
+    # is a separate picture whose style alone is applied — not its subject — by ByteDance's
+    # USO (USOStyleReference). `style_image_weight` is the strength of USO's LoRA, its one
+    # dial: 1 is ComfyUI's template, lower applies the style more lightly.
     image: str | None = Field(default=None, max_length=PICTURE_MAX)
     mask: str | None = Field(default=None, max_length=PICTURE_MAX)
     style_image: str | None = Field(default=None, max_length=PICTURE_MAX)
-    style_image_weight: float = Field(default=1.0, ge=0, le=10)
-    style_strength_type: Literal["multiply", "attn_bias"] = "multiply"
-    # Files for the style picture: a style model and the vision model it reads pictures
-    # with; empty for the first ComfyUI has.
-    style_model: str = Field(default="", max_length=300)
-    clip_vision: str = Field(default="", max_length=300)
+    style_image_weight: float = Field(default=1.0, ge=0, le=2)
 
     @model_validator(mode="after")
     def _something_to_draw(self) -> "LabRequest":
@@ -419,7 +416,8 @@ class LabOptions(Model):
     default_model: str
     samplers: list[str]
     schedulers: list[str]
-    style_models: list[str]
-    clip_vision: list[str]
-    strength_types: list[str]
+    # Whether ComfyUI has what a style picture needs: USO's LoRA and projector, and the vision
+    # model it reads the picture with.
+    style_ready: bool
+    style_missing: list[str]
     defaults: dict[str, Any]

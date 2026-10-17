@@ -330,9 +330,10 @@ LAB_INFO = {
     "UnetLoaderGGUF": {"input": {"required": {"unet_name": [["flux1-dev-Q4_K_S.gguf"], {}]}}},
     "UNETLoader": {"input": {"required": {"unet_name": [[], {}]}}},
     "KSampler": {"input": {"required": {"sampler_name": [["euler", "dpmpp_2m"], {}], "scheduler": [["simple", "karras"], {}]}}},
-    "StyleModelLoader": {"input": {"required": {"style_model_name": [["flux1-redux-dev.safetensors"], {}]}}},
+    # What a style picture (USO) needs: its LoRA, its projector, and the vision model.
+    "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [["uso-flux1-dit-lora-v1.safetensors"], {}]}}},
+    "ModelPatchLoader": {"input": {"required": {"name": ["COMBO", {"options": ["uso-flux1-projector-v1.safetensors"]}]}}},
     "CLIPVisionLoader": {"input": {"required": {"clip_name": [["sigclip_vision_patch14_384.safetensors"], {}]}}},
-    "StyleModelApply": {"input": {"required": {"strength_type": ["COMBO", {"options": ["multiply", "attn_bias"]}]}}},
 }
 LAB = {"prompt": "A lighthouse at dusk", "model": "flux1-dev-Q4_K_S.gguf"}
 
@@ -399,26 +400,45 @@ def test_the_lab_redraws_a_picture_inside_its_mask(make_client, network: Recorde
     assert workflow["8"]["inputs"]["latent_image"] == ["26", 0] and workflow["8"]["inputs"]["denoise"] == 0.7
 
 
-def test_the_lab_applies_a_style_picture_with_its_weight(make_client, network: Recorder) -> None:
+def test_the_lab_applies_a_style_picture_with_uso_as_comfyuis_template_does(make_client, network: Recorder) -> None:
     network.handler = comfy(object_info=LAB_INFO)
     client = lab_client(make_client)
-    body = {**LAB, "style_image": REFERENCE, "style_image_weight": 0.4, "style_strength_type": "attn_bias"}
+    body = {**LAB, "style_image": REFERENCE, "style_image_weight": 0.8}
     assert client.post("/users/7/lab/illustrations", json=body).status_code == 200
+    upload = [r.content for r in network.requests if r.url.path == "/upload/image"]
+    assert any(b'filename="lab-style-' in u for u in upload)
     workflow = network.bodies("/prompt")[0]["prompt"]
-    assert workflow["31"]["inputs"]["clip_name"] == "sigclip_vision_patch14_384.safetensors"
-    assert workflow["33"]["inputs"]["style_model_name"] == "flux1-redux-dev.safetensors"
-    assert workflow["34"]["inputs"] | {"style_model": None, "clip_vision_output": None} == {
-        "conditioning": ["5", 0], "style_model": None, "clip_vision_output": None, "strength": 0.4, "strength_type": "attn_bias",
+    # The vision model reads the picture; USO's LoRA goes on the model, then the style.
+    assert workflow["31"] == {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": "sigclip_vision_patch14_384.safetensors"}}
+    assert workflow["32"]["inputs"] | {"image": None} == {"clip_vision": ["31", 0], "image": None, "crop": "center"}
+    assert workflow["33"] == {
+        "class_type": "LoraLoaderModelOnly",
+        "inputs": {"model": ["1", 0], "lora_name": "uso-flux1-dit-lora-v1.safetensors", "strength_model": 0.8},
     }
-    assert workflow["8"]["inputs"]["positive"] == ["34", 0]
+    assert workflow["34"] == {"class_type": "ModelPatchLoader", "inputs": {"name": "uso-flux1-projector-v1.safetensors"}}
+    assert workflow["35"] == {
+        "class_type": "USOStyleReference",
+        "inputs": {"model": ["33", 0], "model_patch": ["34", 0], "clip_vision_output": ["32", 0]},
+    }
+    # The style acts on the model the sampler draws with; the prompt stays the prompt.
+    assert workflow["8"]["inputs"]["model"] == ["35", 0] and workflow["8"]["inputs"]["positive"] == ["5", 0]
+    # Nothing of Redux is left.
+    assert not {"StyleModelLoader", "StyleModelApply"} & {n["class_type"] for n in workflow.values()}
 
 
-def test_a_style_picture_without_the_style_models_says_what_is_missing(make_client, network: Recorder) -> None:
-    info = {**LAB_INFO, "StyleModelLoader": {"input": {"required": {"style_model_name": [[], {}]}}}}
+def test_a_style_picture_says_which_uso_files_are_missing(make_client, network: Recorder) -> None:
+    info = {**LAB_INFO, "ModelPatchLoader": {"input": {"required": {"name": ["COMBO", {"options": []}]}}}}
     network.handler = comfy(object_info=info)
-    response = lab_client(make_client).post("/users/7/lab/illustrations", json={**LAB, "style_image": REFERENCE})
-    assert response.status_code == 503 and "style model" in response.json()["detail"]
+    client = lab_client(make_client)
+    response = client.post("/users/7/lab/illustrations", json={**LAB, "style_image": REFERENCE})
+    assert response.status_code == 503 and "uso-flux1-projector-v1.safetensors" in response.json()["detail"]
     assert not network.bodies("/prompt")
+    options = client.get("/users/7/lab/options").json()
+    assert options["styleReady"] is False and options["styleMissing"] == ["uso-flux1-projector-v1.safetensors"]
+    # A checkpoint model cannot take USO, which is made for FLUX.
+    network.handler = comfy(object_info=LAB_INFO)
+    refused = client.post("/users/7/lab/illustrations", json={**LAB, "model": "sdxl_base.safetensors", "style_image": REFERENCE})
+    assert refused.status_code == 422 and "FLUX" in refused.json()["detail"]
 
 
 def test_the_lab_refuses_a_mask_without_a_picture_and_an_empty_request(make_client, network: Recorder) -> None:
@@ -446,9 +466,7 @@ def test_the_lab_lists_what_this_comfyui_has(make_client, network: Recorder) -> 
     assert options["models"] == ["flux1-dev-Q4_K_S.gguf", "sdxl_base.safetensors", "other.safetensors"]
     assert options["defaultModel"] == "flux1-dev-Q4_K_S.gguf"
     assert options["samplers"] == ["euler", "dpmpp_2m"] and options["schedulers"] == ["simple", "karras"]
-    assert options["styleModels"] == ["flux1-redux-dev.safetensors"]
-    assert options["clipVision"] == ["sigclip_vision_patch14_384.safetensors"]
-    assert options["strengthTypes"] == ["multiply", "attn_bias"]
+    assert options["styleReady"] is True and options["styleMissing"] == []
     assert options["defaults"]["cfg"] == 1.0 and options["defaults"]["guidance"] == 3.5
 
 
@@ -466,7 +484,7 @@ def test_flux_reads_clip_l_and_t5xxl_separately_with_its_guidance_inside(make_cl
         "inputs": {"clip": ["2", 0], "clip_l": "watercolor, soft light", "t5xxl": "A lighthouse on a rocky coast at dusk.", "guidance": 4.5},
     }
     assert "5" not in workflow  # no separate FluxGuidance: it is inside
-    assert workflow["34"]["inputs"]["conditioning"] == ["4", 0] and workflow["8"]["inputs"]["positive"] == ["34", 0]
+    assert workflow["8"]["inputs"]["positive"] == ["4", 0] and workflow["8"]["inputs"]["model"] == ["35", 0]
     # Either one alone is enough to draw; neither, nor a prompt, nor a picture, is not.
     assert client.post("/users/7/lab/illustrations", json={**LAB, "prompt": "", "t5xxl": "A fox."}).status_code == 200
     assert client.post("/users/7/lab/illustrations", json={"model": "flux1-dev-Q4_K_S.gguf", "clip_l": " ", "t5xxl": ""}).status_code == 422
