@@ -251,11 +251,15 @@ def _parts(chapters: list[_Chapter]) -> list[_Chapter]:
 
 def extract(
     path: Path, fmt: str, *, filename: str | None, title: str | None, pictures: material.Pictures | None = None,
+    assets: bool = True, budget: float = material.ASSET_SECONDS,
 ) -> ExtractResponse:
     """Read a saved upload into chapters. Blocking (PDF parsing is CPU work): run it in a thread.
 
     With ``pictures`` (where to keep them), the response also carries the sections under
-    the chapters and the pictures, drawings and tables found in the file."""
+    the chapters and the pictures, drawings and tables found in the file — a PDF's only
+    with ``assets``, since finding them can take minutes (``assetsPending`` says they were
+    left for later). The same file read twice is read the same, so the chapter and section
+    numbers of one reading hold for the other."""
     try:
         if fmt in ("txt", "md"):
             doc = parse_source(source_format=fmt, text=_decode(path.read_bytes()), title_hint=_title_from_filename(filename))
@@ -329,7 +333,10 @@ def extract(
         )
     found = material.Material()
     if pictures is not None:
-        found = material.read(path, fmt, out, outline=outline, pictures=pictures, docx_sections=docx_sections, docx_assets=docx_assets)
+        found = material.read(
+            path, fmt, out, outline=outline, pictures=pictures, docx_sections=docx_sections, docx_assets=docx_assets,
+            assets=assets, budget=budget,
+        )
     return ExtractResponse(
         title=" ".join((title or "").split()) or doc.title or _title_from_filename(filename),
         format=fmt,
@@ -350,4 +357,5 @@ def extract(
             )
             for index, a in enumerate(found.assets)
         ],
+        assets_pending=fmt == "pdf" and pictures is not None and not assets,
     )

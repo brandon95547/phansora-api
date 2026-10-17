@@ -134,6 +134,9 @@ class ExtractResponse(Lenient):
     assets: list[ExtractedAsset] = Field(default_factory=list)
     # The upload as it came, kept for its pages to be looked at again (GET …/pages/{n}).
     original: str | None = None
+    # A PDF read without looking for its pictures and tables: ask for them with
+    # POST …/sources/{original}/assets.
+    assets_pending: bool = False
 
 
 class ClassifyPicture(Lenient):

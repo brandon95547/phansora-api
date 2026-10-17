@@ -16,6 +16,9 @@ Text, written by DeepSeek (writing.py), and imported documents (sources.py):
 
     POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters, with
                                                    its sections, pictures, drawings and tables
+    POST /users/{user_id}/sources/{name}/assets    a PDF imported earlier, read again with its pictures,
+                                                   drawings and tables (the slow part, left out of the
+                                                   upload with assets=false)
     GET  /users/{user_id}/sources/{name}/pages/{n} a page of a PDF imported earlier, as a picture
     POST /users/{user_id}/sources/analyze          what imported material holds: summary, themes, concepts
     POST /users/{user_id}/sources/classify         what kind each picture and section is (library.py)
@@ -187,7 +190,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         return settings.data_dir / "sources" / user_id
 
     @app.post("/users/{user_id}/sources/extract", response_model=ExtractResponse, response_model_by_alias=True)
-    async def extract(user_id: str, file: UploadFile = File(...), title: str = Form("")) -> ExtractResponse:
+    async def extract(user_id: str, file: UploadFile = File(...), title: str = Form(""), assets: bool = Form(True)) -> ExtractResponse:
         check_user(user_id)
         fmt = sources.source_format(file.filename)
         if fmt is None:
@@ -197,7 +200,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             await sources.save_upload(file, path)
             pictures = material.Pictures(user_images(user_id), user_id)
             # Parsing a long PDF is seconds of CPU; off the event loop, so other requests carry on.
-            found = await asyncio.to_thread(sources.extract, path, fmt, filename=file.filename, title=title, pictures=pictures)
+            found = await asyncio.to_thread(sources.extract, path, fmt, filename=file.filename, title=title, pictures=pictures, assets=assets)
             # Kept as it came, by its content: the same file imported twice is one copy.
             digest = await asyncio.to_thread(lambda: hashlib.sha256(path.read_bytes()).hexdigest())
             keep = user_sources(user_id)
@@ -207,6 +210,20 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
                 shutil.copyfile(path, original)
             found.original = original.name
             return found
+
+    @app.post("/users/{user_id}/sources/{name}/assets", response_model=ExtractResponse, response_model_by_alias=True)
+    async def source_assets(user_id: str, name: str) -> ExtractResponse:
+        """A PDF kept from an import, read again with its pictures, drawings and tables: the
+        same chapters and sections as the upload's reading, and what was found beside them."""
+        if not ORIGINAL_NAME.match(name) or not name.endswith(".pdf"):
+            raise HTTPException(status_code=404, detail="No such file.")
+        path = user_sources(user_id) / name
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No such file.")
+        pictures = material.Pictures(user_images(user_id), user_id)
+        found = await asyncio.to_thread(sources.extract, path, "pdf", filename=name, title="", pictures=pictures, assets=True)
+        found.original = name
+        return found
 
     @app.get("/users/{user_id}/sources/{name}/pages/{number}")
     async def source_page(user_id: str, name: str, number: int) -> FileResponse:

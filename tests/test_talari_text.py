@@ -799,7 +799,8 @@ def test_a_pdf_without_an_outline_is_read_by_the_size_of_its_type(client: TestCl
     assert body["sections"][0]["text"].startswith("detail1") and "intro1" not in body["sections"][0]["text"]
 
 
-def test_a_pdf_gives_up_its_pictures_tables_and_drawings(client: TestClient, tmp_path: Path) -> None:
+def atlas_pdf() -> bytes:
+    """A page with prose, a picture and its caption, and a ruled table; a page with a diagram."""
     import fitz
 
     pdf = fitz.open()
@@ -821,7 +822,11 @@ def test_a_pdf_gives_up_its_pictures_tables_and_drawings(client: TestClient, tmp
     for n in range(15):
         second.draw_circle((150 + 56 * (n % 5), 300 + 56 * (n // 5)), 26)
         second.draw_line((150 + 56 * (n % 5), 300), (150 + 56 * (n % 5), 412))
-    body = upload(client, "atlas.pdf", pdf.tobytes()).json()
+    return pdf.tobytes()
+
+
+def test_a_pdf_gives_up_its_pictures_tables_and_drawings(client: TestClient, tmp_path: Path) -> None:
+    body = upload(client, "atlas.pdf", atlas_pdf()).json()
     kinds = sorted(a["kind"] for a in body["assets"])
     assert kinds == ["drawing", "picture", "table"]
     picture = next(a for a in body["assets"] if a["kind"] == "picture")
@@ -831,6 +836,78 @@ def test_a_pdf_gives_up_its_pictures_tables_and_drawings(client: TestClient, tmp
     table = next(a for a in body["assets"] if a["kind"] == "table")
     assert table["rows"][0] == ["Name", "Age", "Town"] and table["rows"][2] == ["Ben", "41", "York"] and table["src"]
     assert next(a for a in body["assets"] if a["kind"] == "drawing")["page"] == 2
+
+
+def test_an_upload_can_leave_a_pdfs_pictures_for_later(client: TestClient) -> None:
+    quick = upload(client, "atlas.pdf", atlas_pdf(), assets="false").json()
+    assert quick["assets"] == [] and quick["assetsPending"] is True and quick["chapters"]
+    later = client.post(f"/users/7/sources/{quick['original']}/assets")
+    assert later.status_code == 200
+    body = later.json()
+    assert sorted(a["kind"] for a in body["assets"]) == ["drawing", "picture", "table"] and body["assetsPending"] is False
+    # Read the same both times, so the numbers of one reading hold for the other.
+    assert body["chapters"] == quick["chapters"] and body["sections"] == quick["sections"]
+    assert client.post(f"/users/7/sources/{'0' * 64}.pdf/assets").status_code == 404
+    assert client.post("/users/7/sources/notes.txt/assets").status_code == 404
+
+
+def test_noise_from_a_text_layer_is_not_a_heading() -> None:
+    from phansora.products.talari.material import _reads_as_heading
+
+    assert _reads_as_heading("Preliminary Exercises") and _reads_as_heading("ODE TO JOY")
+    for noise in ["No. 1", "|e eo ds", "8", "(al", "a", "— ——", "<d ~d -@ ~fj"]:
+        assert not _reads_as_heading(noise), noise
+
+
+def test_a_scanned_pdf_with_a_text_layer_is_read_in_parts_without_its_page_pictures(client: TestClient) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    for number in range(6):
+        page = pdf.new_page()
+        page.insert_image(page.rect, stream=png(612, 792, (236, 232, 224)))
+        page.insert_textbox(fitz.Rect(72, 60, 520, 100), f"Lesson Heading {number}", fontsize=22)
+        page.insert_textbox(fitz.Rect(72, 110, 520, 700), words(220, f"scan{number}"), fontsize=11)
+    body = upload(client, "scan.pdf", pdf.tobytes()).json()
+    assert all(c["title"].startswith("Part ") for c in body["chapters"])
+    assert body["sections"] == [] and body["assets"] == []
+
+
+def test_type_that_cuts_a_pdf_into_scraps_is_not_its_structure(client: TestClient) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    for number in range(4):
+        page = pdf.new_page()
+        for k in range(8):
+            y = 50 + k * 90
+            page.insert_textbox(fitz.Rect(72, y, 520, y + 32), f"Big Line {number} {k}", fontsize=20)
+            page.insert_textbox(fitz.Rect(72, y + 34, 520, y + 84), words(12, f"bit{number}{k}"), fontsize=11)
+    body = upload(client, "method.pdf", pdf.tobytes()).json()
+    assert all(c["title"].startswith("Part ") for c in body["chapters"])
+    assert body["sections"] == []
+
+
+def test_chapters_sharing_a_page_do_not_share_its_sections(client: TestClient) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    first = pdf.new_page()
+    first.insert_textbox(fitz.Rect(72, 40, 520, 85), "Getting Started", fontsize=22)
+    first.insert_textbox(fitz.Rect(72, 90, 520, 330), words(160, "intro"), fontsize=11)
+    first.insert_textbox(fitz.Rect(72, 335, 520, 370), "A Closer Look", fontsize=15)
+    first.insert_textbox(fitz.Rect(72, 375, 520, 470), words(60, "closer"), fontsize=11)
+    first.insert_textbox(fitz.Rect(72, 480, 520, 525), "Going Further", fontsize=22)
+    first.insert_textbox(fitz.Rect(72, 530, 520, 760), words(140, "further"), fontsize=11)
+    second = pdf.new_page()
+    second.insert_textbox(fitz.Rect(72, 50, 520, 300), words(160, "more"), fontsize=11)
+    second.insert_textbox(fitz.Rect(72, 315, 520, 350), "The Last Step", fontsize=15)
+    second.insert_textbox(fitz.Rect(72, 355, 520, 500), words(60, "last"), fontsize=11)
+    body = upload(client, "guide.pdf", pdf.tobytes()).json()
+    assert [c["title"] for c in body["chapters"]] == ["Getting Started", "Going Further"]
+    assert [(s["chapterIndex"], s["title"]) for s in body["sections"]] == [(0, "A Closer Look"), (1, "The Last Step")]
+    closer = body["sections"][0]["text"]
+    assert closer.startswith("closer") and "further" not in closer
 
 
 def test_a_docx_keeps_its_heading_levels_its_tables_and_its_pictures(client: TestClient) -> None:

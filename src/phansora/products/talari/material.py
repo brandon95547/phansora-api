@@ -32,11 +32,26 @@ from phansora.products.book_alchemy.parsers import classify_block
 logger = logging.getLogger("talari")
 
 MAX_ASSETS = 400
-# Finding pictures and tables in a long PDF stops after this long: the upload is waiting,
-# and what was found by then is kept.
-ASSET_SECONDS = 75
+# Finding a PDF's pictures and tables stops after this long, keeping what was found. The
+# upload does not wait for it: the app asks for them once the import is answered
+# (POST …/sources/{name}/assets), since a long illustrated book takes minutes.
+ASSET_SECONDS = 600
 # Past this many vector paths a page is a chart or a pattern, measured as one region.
 MAX_PATHS = 2000
+# Past this many, a page is music notation, a chart or a pattern, not a ruled table: finding
+# tables by their ruling would take seconds a page there, for nothing.
+TABLE_MAX_PATHS = 400
+# A picture covering this much of its page, on this share of the pages, makes the PDF a
+# scan: its text layer was read by OCR, so the size of its type says nothing about headings,
+# and each page's picture is the page itself, not a picture in it.
+SCAN_COVER = 0.85
+SCAN_PAGES = 0.6
+# Chapters found by the size of the type are believed only when they look like chapters:
+# no more than one every few pages, and long enough to read. Otherwise the parts are the
+# better guess. Sections the same, more loosely.
+PAGES_PER_CHAPTER = 3
+CHAPTER_MEDIAN_WORDS = 150
+SECTION_MEDIAN_WORDS = 25
 # Smaller than this (either side, in pixels) is an icon, a bullet or a rule, not a picture.
 MIN_PICTURE_PX = 80
 # Larger than this is scaled down: past it a picture only adds bytes, never sharpness on a page.
@@ -223,6 +238,31 @@ def _running_keys(blocks: list[tuple[int, dict]], pages: int) -> set[str]:
     return {key for key, n in counts.items() if n >= max(3, pages // 3)}
 
 
+def _reads_as_heading(text: str) -> bool:
+    """Words, not the noise a text layer makes of music, ornaments or a page number."""
+    chars = [c for c in text if not c.isspace()]
+    letters = sum(c.isalpha() for c in chars)
+    return letters >= 3 and letters >= 0.7 * len(chars) and bool(re.search(r"[^\W\d_]{3,}", text))
+
+
+def _scanned(pdf) -> bool:
+    """Most of its pages a single picture of the page (see SCAN_COVER)."""
+    if not pdf.page_count:
+        return False
+    covered = 0
+    for pno in range(pdf.page_count):
+        page = pdf.load_page(pno)
+        area = page.rect.width * page.rect.height
+        if any(rect.get_area() >= SCAN_COVER * area for info in page.get_images(full=True) for rect in page.get_image_rects(info[0])):
+            covered += 1
+    return covered >= SCAN_PAGES * pdf.page_count
+
+
+def _median(values: list[int]) -> int:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2] if ordered else 0
+
+
 def _pdf_nodes(pdf) -> tuple[list[Heading], list[Para]]:
     """A PDF's headings, by the size and weight of their type, and its paragraphs."""
     blocks = _pdf_blocks(pdf)
@@ -245,7 +285,7 @@ def _pdf_nodes(pdf) -> tuple[list[Heading], list[Para]]:
         bold = bool(spans) and all(_is_bold(span) for span in spans)
         flat = _clean(" ".join(" ".join(s.get("text", "") for s in line.get("spans", [])) for line in top))
         short = len(top) <= 2 and len(flat.split()) <= HEADING_MAX_WORDS and len(flat) <= HEADING_MAX_CHARS
-        if flat and short and not re.search(r"[.,;:]$", flat) and (size >= body * HEADING_SCALE or (bold and size >= body * 0.98)):
+        if flat and short and not re.search(r"[.,;:]$", flat) and _reads_as_heading(flat) and (size >= body * HEADING_SCALE or (bold and size >= body * 0.98)):
             headings.append((round(size * 2) / 2 + (0.25 if bold else 0), Heading(level=0, title=flat, page=pno, y=block["bbox"][1])))
             text = "\n".join(" ".join(s.get("text", "") for s in line.get("spans", [])).strip() for line in rest)
             if text and classify_block(text) != "apparatus":
@@ -284,6 +324,9 @@ def pdf_chapters(path: Path) -> list[StructuredChapter]:
 
     try:
         with fitz.open(path) as pdf:
+            if _scanned(pdf):
+                return []
+            pages = pdf.page_count
             headings, paras = _pdf_nodes(pdf)
     except Exception:  # noqa: BLE001 — no structure is a fallback, never a failure
         logger.exception("Talari: could not read a PDF's headings")
@@ -299,7 +342,13 @@ def pdf_chapters(path: Path) -> list[StructuredChapter]:
                         chapter.pages.append(para.page)
                 if chapter.paragraphs:
                     chapters.append(chapter)
-            return chapters if len(chapters) >= 2 else []
+            plausible = (
+                2 <= len(chapters) <= max(12, pages // PAGES_PER_CHAPTER)
+                and _median([sum(len(p.split()) for p in c.paragraphs) for c in chapters]) >= CHAPTER_MEDIAN_WORDS
+            )
+            if not plausible:
+                logger.info("Talari: %d chapters by type size in %d pages do not look like chapters", len(chapters), pages)
+            return chapters if plausible else []
     return []
 
 
@@ -321,11 +370,11 @@ def _caption_near(page, rect) -> str:
     return below or above or near or ""
 
 
-def _drawing_regions(page) -> list:
+def _drawing_regions(page, drawings: list) -> list:
     """Clusters of vector paths big enough to be a diagram, not a rule or a box."""
     import fitz
 
-    rects = [fitz.Rect(path["rect"]) for path in page.get_drawings() if path.get("rect")]
+    rects = [fitz.Rect(path["rect"]) for path in drawings if path.get("rect")]
     rects = [r for r in rects if r.width > 1 or r.height > 1]
     if len(rects) > MAX_PATHS:
         whole = fitz.Rect(rects[0])
@@ -352,7 +401,7 @@ def _drawing_regions(page) -> list:
     return out
 
 
-def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
+def _pdf_assets(pdf, pictures: Pictures, *, budget: float = ASSET_SECONDS, scanned: bool = False) -> list[Asset]:
     import fitz
 
     uses: dict[int, int] = {}
@@ -360,7 +409,7 @@ def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
         for xref in {info[0] for info in pdf.load_page(pno).get_images(full=True)}:
             uses[xref] = uses.get(xref, 0) + 1
     assets: list[Asset] = []
-    deadline = time.monotonic() + ASSET_SECONDS
+    deadline = time.monotonic() + budget
     for pno in range(pdf.page_count):
         if len(assets) >= MAX_ASSETS:
             break
@@ -368,10 +417,13 @@ def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
             logger.warning("Talari: stopped looking for pictures and tables at page %d of %d", pno + 1, pdf.page_count)
             break
         page = pdf.load_page(pno)
+        area = page.rect.width * page.rect.height
         zoom = fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM)
+        drawings = page.get_drawings()
         tables = []
-        # A table is found by its ruling lines, so a page with no vector strokes has none to find.
-        if page.get_drawings():
+        # A table is found by its ruling lines, so a page with no vector strokes has none to
+        # find, and one with thousands is notation or a pattern (TABLE_MAX_PATHS).
+        if 0 < len(drawings) <= TABLE_MAX_PATHS:
             try:
                 tables = page.find_tables().tables
             except Exception:  # noqa: BLE001 — an older PyMuPDF, or a page it cannot read for tables
@@ -395,7 +447,7 @@ def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
             if not boxes:
                 continue
             rect = boxes[0]
-            if rect.width < 36 or rect.height < 36:
+            if rect.width < 36 or rect.height < 36 or (scanned and rect.get_area() >= SCAN_COVER * area):
                 continue
             try:
                 raw = pdf.extract_image(xref)
@@ -410,7 +462,7 @@ def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
             if saved:
                 assets.append(Asset(kind="picture", src=saved[0], width=saved[1], height=saved[2], page=pno + 1,
                                     caption=_caption_near(page, rect), at=(pno + 1, rect.y0)))
-        for rect in _drawing_regions(page):
+        for rect in _drawing_regions(page, drawings):
             if any(rect.intersects(t) and (rect & t).get_area() > 0.5 * rect.get_area() for t in table_rects):
                 continue
             saved = pictures.save(page.get_pixmap(matrix=zoom, clip=rect + (-4, -4, 4, 4), alpha=False).tobytes("png"))
@@ -420,13 +472,17 @@ def _pdf_assets(pdf, pictures: Pictures) -> list[Asset]:
     return assets[:MAX_ASSETS]
 
 
-def _pdf_material(path: Path, chapters: list, outline: list[tuple[int, str]], pictures: Pictures) -> Material:
+def _pdf_material(path: Path, chapters: list, outline: list[tuple[int, str]], pictures: Pictures, *, assets: bool, budget: float) -> Material:
     import fitz
 
     with fitz.open(path) as pdf:
+        pages = pdf.page_count
+        scanned = _scanned(pdf)
         headings, paras = _pdf_nodes(pdf)
+        if scanned:
+            headings = []
         toc = pdf.get_toc(simple=True)
-        assets = _pdf_assets(pdf, pictures)
+        found = _pdf_assets(pdf, pictures, budget=budget, scanned=scanned) if assets else []
     # Sections: the outline's entries below its chapters when it has them, else the type's
     # headings — those smaller than the chapters' own.
     chapter_titles = {_clean(c.title).lower() for c in chapters}
@@ -436,14 +492,33 @@ def _pdf_material(path: Path, chapters: list, outline: list[tuple[int, str]], pi
         if page and _clean(str(title)).lower() not in chapter_titles
     ] if outline else []
     marks = [h for h in (deeper or headings) if _clean(h.title).lower() not in chapter_titles]
-    material = Material(assets=assets)
+    material = Material(assets=found)
+    # Where each chapter begins: at its own heading when the type gave it one, else at the
+    # top of its first page. Chapters found by type can share a page, so a heading belongs to
+    # the last chapter begun before it, and a section ends where the next chapter begins.
+    starts: list[tuple[float, float] | None] = []
+    for chapter in chapters:
+        if chapter.page_start is None:
+            starts.append(None)
+            continue
+        title = _clean(chapter.title).lower()
+        own = next((h for h in headings if h.page == chapter.page_start and _clean(h.title).lower() == title), None)
+        starts.append(_pos(chapter.page_start, own.y if own else 0.0))
+    owner: dict[int, int] = {}
+    for n, heading in enumerate(marks):
+        at = _pos(heading.page, heading.y)
+        for index, chapter in enumerate(chapters):
+            if heading.page and starts[index] is not None and starts[index] <= at and heading.page <= (chapter.page_end or heading.page):
+                owner[n] = index
     for index, chapter in enumerate(chapters):
         start, end = chapter.page_start, chapter.page_end
         if start is None:
             continue
-        inside = sorted((h for h in marks if h.page and start <= h.page <= end), key=lambda h: _pos(h.page, h.y))
+        following = [st for st in starts[index + 1:] if st is not None]
+        limit = min([(float(end) + 1, 0.0), *following])
+        inside = sorted((h for n, h in enumerate(marks) if owner.get(n) == index), key=lambda h: _pos(h.page, h.y))
         for i, heading in enumerate(inside):
-            stop = _pos(inside[i + 1].page, inside[i + 1].y) if i + 1 < len(inside) else (float(end) + 1, 0.0)
+            stop = min(_pos(inside[i + 1].page, inside[i + 1].y), limit) if i + 1 < len(inside) else limit
             text = [p for p in paras if _pos(heading.page, heading.y) <= _pos(p.page, p.y) < stop]
             if not text:
                 continue
@@ -451,6 +526,13 @@ def _pdf_material(path: Path, chapters: list, outline: list[tuple[int, str]], pi
                 chapter_index=index, level=heading.level, title=heading.title,
                 page_start=text[0].page, page_end=text[-1].page, text="\n\n".join(p.text for p in text),
             ))
+    # Headings by type size that cut the text into scraps, or into more pieces than the book
+    # has pages twice over, are not its sections.
+    if not deeper and material.sections and (
+        len(material.sections) > max(20, 2 * pages) or _median([len(s.text.split()) for s in material.sections]) < SECTION_MEDIAN_WORDS
+    ):
+        logger.info("Talari: %d sections by type size in %d pages do not look like sections", len(material.sections), pages)
+        material.sections = []
     _place_by_page(material, chapters)
     return material
 
@@ -611,11 +693,16 @@ def _epub_material(path: Path, chapters: list, pictures: Pictures) -> Material:
 # --- the entry point -------------------------------------------------------------------
 
 
-def read(path: Path, fmt: str, chapters: list, *, outline: list, pictures: Pictures, docx_sections=None, docx_assets=None) -> Material:
-    """The sections and the assets of a document whose chapters sources.py has read."""
+def read(
+    path: Path, fmt: str, chapters: list, *, outline: list, pictures: Pictures, docx_sections=None, docx_assets=None,
+    assets: bool = True, budget: float = ASSET_SECONDS,
+) -> Material:
+    """The sections and the assets of a document whose chapters sources.py has read. Without
+    ``assets``, a PDF's pictures and tables are left to be looked for later — the slow part;
+    a DOCX's and an EPUB's are only read out of the file, and come with it."""
     try:
         if fmt == "pdf":
-            return _pdf_material(path, chapters, outline, pictures)
+            return _pdf_material(path, chapters, outline, pictures, assets=assets, budget=budget)
         if fmt == "epub":
             return _epub_material(path, chapters, pictures)
         if fmt == "docx":
