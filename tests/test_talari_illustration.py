@@ -366,13 +366,19 @@ def test_the_lab_passes_every_setting_through_untouched(make_client, network: Re
     assert response.status_code == 200
     workflow = network.bodies("/prompt")[0]["prompt"]
     assert response.json()["workflow"] == workflow
-    assert (response.json()["width"], response.json()["height"]) == (1008, 640)  # 16-pixel steps
+    # Drawn at the 16-pixel step above (1024), then cut to exactly the size asked for.
+    assert (response.json()["width"], response.json()["height"]) == (1010, 640)
     assert workflow["1"] == {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux1-dev-Q4_K_S.gguf"}}
     # The prompt exactly as written: no style's words, no cover or page wording.
     assert workflow["4"]["inputs"]["text"] == "A lighthouse at dusk"
     assert workflow["5"] == {"class_type": "FluxGuidance", "inputs": {"conditioning": ["4", 0], "guidance": 5.0}}
     assert workflow["6"]["inputs"]["text"] == "fog"
-    assert workflow["7"] == {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1008, "height": 640, "batch_size": 1}}
+    assert workflow["7"] == {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1024, "height": 640, "batch_size": 1}}
+    assert workflow["13"] == {
+        "class_type": "ImageScale",
+        "inputs": {"image": ["9", 0], "upscale_method": "lanczos", "width": 1010, "height": 640, "crop": "center"},
+    }
+    assert workflow["10"]["inputs"]["images"] == ["13", 0]
     assert workflow["8"]["inputs"] | {"model": None} == {
         "model": None, "positive": ["5", 0], "negative": ["6", 0], "latent_image": ["7", 0], "seed": 2**40,
         "steps": 9, "cfg": 2.5, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 0.9,
@@ -537,3 +543,19 @@ def test_the_gpu_is_handed_back_after_every_picture_drawn_or_failed(client: Test
     network.handler = comfy(queue_status=400)
     assert client.post("/users/7/illustrations", json=REQUEST).status_code == 502
     assert network.bodies("/free") == [{"unload_models": True}, {"unload_models": True}]
+
+
+def test_the_lab_gives_exactly_the_size_asked_for(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    # 900 is between FLUX's 16-pixel steps: drawn at 912, trimmed back to 900. It used to come
+    # back as 896.
+    response = client.post("/users/7/lab/illustrations", json={**LAB, "width": 900, "height": 1200, "image": REFERENCE})
+    assert (response.json()["width"], response.json()["height"]) == (900, 1200)
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert (workflow["21"]["inputs"]["width"], workflow["21"]["inputs"]["height"]) == (912, 1200)
+    assert (workflow["13"]["inputs"]["width"], workflow["13"]["inputs"]["height"]) == (900, 1200)
+    # A size on the steps already is drawn as it is, with nothing to cut.
+    client.post("/users/7/lab/illustrations", json={**LAB, "width": 912, "height": 1216})
+    exact = network.bodies("/prompt")[-1]["prompt"]
+    assert "13" not in exact and exact["10"]["inputs"]["images"] == ["9", 0]

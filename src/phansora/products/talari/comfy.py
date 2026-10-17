@@ -510,12 +510,15 @@ class ComfyUI:
         image = await self._upload_picture(request.image, "picture", "lab-image") if request.image else ""
         mask = await self._upload_picture(request.mask, "mask", "lab-mask") if request.mask else ""
         style = await self._upload_picture(request.style_image, "style picture", "lab-style") if request.style_image else ""
-        width, height = _snap16(request.width), _snap16(request.height)
+        # FLUX draws in 16-pixel steps; a size between them is drawn at the next step up and
+        # cut to the exact size asked for (900 × 1200 is drawn 912 × 1200, then trimmed).
+        width, height = request.width, request.height
         workflow = lab_workflow(
             request,
             seed=seed,
-            width=width,
-            height=height,
+            width=_up16(width),
+            height=_up16(height),
+            size=(width, height),
             loader="checkpoint" if model in checkpoints else "gguf" if model.endswith(".gguf") else "unet",
             model=model,
             settings=settings,
@@ -536,9 +539,9 @@ class ComfyUI:
         return [name for name, available in have.items() if name not in available]
 
 
-def _snap16(value: int) -> int:
-    """FLUX and SD3 latents come in 16-pixel steps."""
-    return max(256, round(value / 16) * 16)
+def _up16(value: int) -> int:
+    """FLUX and SD3 latents come in 16-pixel steps: the step at or above `value`."""
+    return -(-value // 16) * 16
 
 
 def lab_workflow(
@@ -553,9 +556,13 @@ def lab_workflow(
     image: str = "",
     mask: str = "",
     style_image: str = "",
+    size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     """The lab's workflow: one node per input of LabRequest, core ComfyUI nodes only (plus the
     GGUF loader for a .gguf model).
+
+    `width` and `height` are the size drawn at, in 16-pixel steps; `size`, when it differs, is
+    the exact size the picture is cut to after.
 
     `loader` is how the model is loaded: "gguf" or "unet" (a diffusion model, with FLUX's text
     encoders, VAE and FluxGuidance) or "checkpoint" (model, text encoder and VAE in one file,
@@ -662,5 +669,13 @@ def lab_workflow(
         },
     }
     wf["9"] = {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": vae}}
-    wf["10"] = {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": "lab"}}
+    picture = ["9", 0]
+    # Drawn a little larger than asked (16-pixel steps): cut to the exact size, from the center.
+    if size and tuple(size) != (width, height):
+        wf["13"] = {
+            "class_type": "ImageScale",
+            "inputs": {"image": picture, "upscale_method": "lanczos", "width": size[0], "height": size[1], "crop": "center"},
+        }
+        picture = ["13", 0]
+    wf["10"] = {"class_type": "SaveImage", "inputs": {"images": picture, "filename_prefix": "lab"}}
     return wf
