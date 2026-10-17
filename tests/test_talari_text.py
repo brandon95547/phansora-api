@@ -851,6 +851,28 @@ def test_an_upload_can_leave_a_pdfs_pictures_for_later(client: TestClient) -> No
     assert client.post("/users/7/sources/notes.txt/assets").status_code == 404
 
 
+def test_files_no_longer_used_are_forgotten_and_nothing_else(client: TestClient, tmp_path: Path) -> None:
+    body = upload(client, "atlas.pdf", atlas_pdf()).json()
+    images = tmp_path / "talari" / "images" / "7"
+    kept = tmp_path / "talari" / "sources" / "7"
+    names = [a["src"].rsplit("/", 1)[1] for a in body["assets"] if a["src"]]
+    assert names and all((images / n).is_file() for n in names)
+    assert client.get(f"/users/7/sources/{body['original']}/pages/1").status_code == 200
+    # Another user's copy of the same picture is theirs.
+    (tmp_path / "talari" / "images" / "8").mkdir(parents=True)
+    (tmp_path / "talari" / "images" / "8" / names[0]).write_bytes(b"theirs")
+    other = images / ("f" * 32 + ".png")
+    other.write_bytes(b"still used")
+    response = client.post("/users/7/forget", json={
+        "images": [*names, "../8/" + names[0], "not-ours.png"],
+        "sources": [body["original"], "../../secret.pdf"],
+    })
+    assert response.status_code == 200 and response.json() == {"images": len(names), "sources": 1}
+    assert not any((images / n).exists() for n in names) and other.is_file()
+    assert not (kept / body["original"]).exists() and not list((kept / "pages").glob("*.png"))
+    assert (tmp_path / "talari" / "images" / "8" / names[0]).read_bytes() == b"theirs"
+
+
 def test_noise_from_a_text_layer_is_not_a_heading() -> None:
     from phansora.products.talari.material import _reads_as_heading
 

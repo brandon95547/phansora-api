@@ -174,6 +174,19 @@ class ClassifyResponse(Lenient):
     sections: list[SectionClass]
 
 
+class ForgetRequest(Lenient):
+    """Files of a user's that the app no longer uses: pictures (drawn, or found in an import)
+    by their names under ``images/``, and kept imports by theirs under ``sources/``."""
+
+    images: list[str] = Field(default_factory=list, max_length=20_000)
+    sources: list[str] = Field(default_factory=list, max_length=2_000)
+
+
+class ForgetResponse(Lenient):
+    images: int = 0
+    sources: int = 0
+
+
 class SourceChapterText(Lenient):
     index: int
     title: str = ""

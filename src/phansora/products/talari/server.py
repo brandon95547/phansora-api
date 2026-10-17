@@ -20,6 +20,8 @@ Text, written by DeepSeek (writing.py), and imported documents (sources.py):
                                                    drawings and tables (the slow part, left out of the
                                                    upload with assets=false)
     GET  /users/{user_id}/sources/{name}/pages/{n} a page of a PDF imported earlier, as a picture
+    POST /users/{user_id}/forget                   delete pictures and kept imports the app no longer uses
+                                                   (a book or a document deleted)
     POST /users/{user_id}/sources/analyze          what imported material holds: summary, themes, concepts
     POST /users/{user_id}/sources/classify         what kind each picture and section is (library.py)
     POST /users/{user_id}/blueprints               one to three plans for a book
@@ -71,6 +73,8 @@ from .schemas import (
     ChapterResponse,
     ClassifyRequest,
     ClassifyResponse,
+    ForgetRequest,
+    ForgetResponse,
     ExtractResponse,
     IllustrationPromptsRequest,
     IllustrationPromptsResponse,
@@ -249,6 +253,33 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         if not shot.is_file() and not await asyncio.to_thread(draw):
             raise HTTPException(status_code=404, detail="No such page.")
         return FileResponse(shot, media_type="image/png")
+
+    @app.post("/users/{user_id}/forget", response_model=ForgetResponse, response_model_by_alias=True)
+    async def forget(user_id: str, body: ForgetRequest) -> ForgetResponse:
+        """Delete files of this user's that the app says nothing uses any more: pictures, and kept
+        imports with the pictures of their pages. Only names of the shape this API gives files,
+        and only inside this user's folders; a name that is not there is skipped."""
+        images, kept = user_images(user_id), user_sources(user_id)
+
+        def run() -> ForgetResponse:
+            out = ForgetResponse()
+            for name in set(body.images):
+                if IMAGE_NAME.match(name) and (images / name).is_file():
+                    (images / name).unlink(missing_ok=True)
+                    out.images += 1
+            for name in set(body.sources):
+                if not ORIGINAL_NAME.match(name):
+                    continue
+                if (kept / name).is_file():
+                    (kept / name).unlink(missing_ok=True)
+                    out.sources += 1
+                for shot in (kept / "pages").glob(f"{name.rsplit('.', 1)[0]}-*.png"):
+                    shot.unlink(missing_ok=True)
+            return out
+
+        out = await asyncio.to_thread(run)
+        logger.info("Talari: forgot %d pictures and %d imports of user %s", out.images, out.sources, user_id)
+        return out
 
     @app.post("/users/{user_id}/sources/classify", response_model=ClassifyResponse, response_model_by_alias=True)
     async def classify(user_id: str, body: ClassifyRequest) -> ClassifyResponse:
