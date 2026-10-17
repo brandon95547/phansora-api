@@ -46,6 +46,8 @@ TABLE_MAX_PATHS = 400
 # and each page's picture is the page itself, not a picture in it.
 SCAN_COVER = 0.85
 SCAN_PAGES = 0.6
+# How many pages, spread through the book, are looked at to tell a scan.
+SCAN_SAMPLE = 16
 # Chapters found by the size of the type are believed only when they look like chapters:
 # no more than one every few pages, and long enough to read. Otherwise the parts are the
 # better guess. Sections the same, more loosely.
@@ -246,16 +248,46 @@ def _reads_as_heading(text: str) -> bool:
 
 
 def _scanned(pdf) -> bool:
-    """Most of its pages a single picture of the page (see SCAN_COVER)."""
-    if not pdf.page_count:
+    """Most of a sample of its pages a single picture of the page (see SCAN_COVER). By the
+    pictures' boxes alone: naming each picture's xref (get_image_rects) hashes the picture,
+    seconds a page for a scan."""
+    import fitz
+
+    count = pdf.page_count
+    if not count:
         return False
+    sample = sorted({round(i * (count - 1) / max(1, SCAN_SAMPLE - 1)) for i in range(min(SCAN_SAMPLE, count))})
     covered = 0
-    for pno in range(pdf.page_count):
+    for pno in sample:
         page = pdf.load_page(pno)
         area = page.rect.width * page.rect.height
-        if any(rect.get_area() >= SCAN_COVER * area for info in page.get_images(full=True) for rect in page.get_image_rects(info[0])):
+        if any(fitz.Rect(info["bbox"]).get_area() >= SCAN_COVER * area for info in page.get_image_info()):
             covered += 1
-    return covered >= SCAN_PAGES * pdf.page_count
+    return covered >= SCAN_PAGES * len(sample)
+
+
+class PdfReading:
+    """What the chapters (pdf_chapters) and the library (read) both need from one PDF, read
+    once: whether it is a scan, its outline, and, only when asked for, its headings and
+    paragraphs by the size of their type (a fifth of a second a page on a scan's text layer)."""
+
+    def __init__(self, path: Path) -> None:
+        import fitz
+
+        self.path = path
+        with fitz.open(path) as pdf:
+            self.pages = pdf.page_count
+            self.scanned = _scanned(pdf)
+            self.toc = pdf.get_toc(simple=True)
+        self._nodes: tuple[list[Heading], list[Para]] | None = None
+
+    def nodes(self) -> tuple[list[Heading], list[Para]]:
+        if self._nodes is None:
+            import fitz
+
+            with fitz.open(self.path) as pdf:
+                self._nodes = _pdf_nodes(pdf)
+        return self._nodes
 
 
 def _median(values: list[int]) -> int:
@@ -317,17 +349,15 @@ def _structured(headings: list[Heading], paras: list[Para], chapter_level: int) 
     return out
 
 
-def pdf_chapters(path: Path) -> list[StructuredChapter]:
+def pdf_chapters(path: Path, reading: PdfReading | None = None) -> list[StructuredChapter]:
     """For a PDF with no outline and no "Chapter 3" lines: chapters by its largest recurring
-    headings. Empty when there are fewer than two."""
-    import fitz
-
+    headings. Empty when there are fewer than two, or for a scan."""
     try:
-        with fitz.open(path) as pdf:
-            if _scanned(pdf):
-                return []
-            pages = pdf.page_count
-            headings, paras = _pdf_nodes(pdf)
+        reading = reading or PdfReading(path)
+        if reading.scanned:
+            return []
+        pages = reading.pages
+        headings, paras = reading.nodes()
     except Exception:  # noqa: BLE001 — no structure is a fallback, never a failure
         logger.exception("Talari: could not read a PDF's headings")
         return []
@@ -439,15 +469,18 @@ def _pdf_assets(pdf, pictures: Pictures, *, budget: float = ASSET_SECONDS, scann
                 page=pno + 1, caption=_caption_near(page, rect), rows=rows, header=True, at=(pno + 1, rect.y0),
             ))
         table_rects = [fitz.Rect(t.bbox) for t in tables]
-        for info in page.get_images(full=True):
+        # A scan's pictures are its pages. Elsewhere, where each picture sits, asked once a page:
+        # naming the xrefs hashes every picture on it.
+        boxes: dict[int, object] = {}
+        if not scanned:
+            for placed in page.get_image_info(xrefs=True):
+                boxes.setdefault(placed.get("xref"), fitz.Rect(placed["bbox"]))
+        for info in [] if scanned else page.get_images(full=True):
             xref = info[0]
             if uses.get(xref, 0) >= REPEATED_ON_PAGES:
                 continue
-            boxes = page.get_image_rects(xref)
-            if not boxes:
-                continue
-            rect = boxes[0]
-            if rect.width < 36 or rect.height < 36 or (scanned and rect.get_area() >= SCAN_COVER * area):
+            rect = boxes.get(xref)
+            if rect is None or rect.width < 36 or rect.height < 36:
                 continue
             try:
                 raw = pdf.extract_image(xref)
@@ -472,25 +505,30 @@ def _pdf_assets(pdf, pictures: Pictures, *, budget: float = ASSET_SECONDS, scann
     return assets[:MAX_ASSETS]
 
 
-def _pdf_material(path: Path, chapters: list, outline: list[tuple[int, str]], pictures: Pictures, *, assets: bool, budget: float) -> Material:
+def _pdf_material(
+    path: Path, chapters: list, outline: list[tuple[int, str]], pictures: Pictures, *, assets: bool, budget: float,
+    reading: PdfReading | None = None,
+) -> Material:
     import fitz
 
-    with fitz.open(path) as pdf:
-        pages = pdf.page_count
-        scanned = _scanned(pdf)
-        headings, paras = _pdf_nodes(pdf)
-        if scanned:
-            headings = []
-        toc = pdf.get_toc(simple=True)
-        found = _pdf_assets(pdf, pictures, budget=budget, scanned=scanned) if assets else []
+    reading = reading or PdfReading(path)
+    pages, scanned = reading.pages, reading.scanned
     # Sections: the outline's entries below its chapters when it has them, else the type's
-    # headings — those smaller than the chapters' own.
+    # headings — those smaller than the chapters' own. A scan's type says nothing, so it has
+    # sections only from an outline, and its text is not read for headings at all without one.
     chapter_titles = {_clean(c.title).lower() for c in chapters}
     deeper = [
         Heading(level=min(3, int(level)), title=_clean(str(title)), page=int(page), y=0.0)
-        for level, title, page in toc
+        for level, title, page in reading.toc
         if page and _clean(str(title)).lower() not in chapter_titles
     ] if outline else []
+    headings, paras = ([], []) if scanned and not deeper else reading.nodes()
+    if scanned:
+        headings = []
+    found = []
+    if assets:
+        with fitz.open(path) as pdf:
+            found = _pdf_assets(pdf, pictures, budget=budget, scanned=scanned)
     marks = [h for h in (deeper or headings) if _clean(h.title).lower() not in chapter_titles]
     material = Material(assets=found)
     # Where each chapter begins: at its own heading when the type gave it one, else at the
@@ -695,14 +733,14 @@ def _epub_material(path: Path, chapters: list, pictures: Pictures) -> Material:
 
 def read(
     path: Path, fmt: str, chapters: list, *, outline: list, pictures: Pictures, docx_sections=None, docx_assets=None,
-    assets: bool = True, budget: float = ASSET_SECONDS,
+    assets: bool = True, budget: float = ASSET_SECONDS, reading: PdfReading | None = None,
 ) -> Material:
     """The sections and the assets of a document whose chapters sources.py has read. Without
     ``assets``, a PDF's pictures and tables are left to be looked for later — the slow part;
     a DOCX's and an EPUB's are only read out of the file, and come with it."""
     try:
         if fmt == "pdf":
-            return _pdf_material(path, chapters, outline, pictures, assets=assets, budget=budget)
+            return _pdf_material(path, chapters, outline, pictures, assets=assets, budget=budget, reading=reading)
         if fmt == "epub":
             return _epub_material(path, chapters, pictures)
         if fmt == "docx":

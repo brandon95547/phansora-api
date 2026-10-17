@@ -283,6 +283,13 @@ def extract(
         raise ServiceError("No text could be found in this file.", status=422)
 
     titled = [chapter for chapter in grouped if chapter.title]
+    # A PDF is read for its structure once, for both its chapters and its library.
+    reading = None
+    if fmt == "pdf" and (pictures is not None or (not outline and len(titled) < 2)):
+        try:
+            reading = material.PdfReading(path)
+        except Exception:  # noqa: BLE001 — no structure is a fallback, never a failure
+            logger.exception("Talari: could not read a PDF's structure")
     # A DOCX by its top heading level (Heading 1, with 2 and 3 as its sections), and a PDF
     # with no outline and no "Chapter 3" lines by its largest recurring type.
     docx_sections, docx_assets = None, None
@@ -296,7 +303,7 @@ def extract(
     elif fmt == "pdf" and not outline and len(titled) < 2:
         restructured = [
             _Chapter(title=c.title, paragraphs=c.paragraphs, pages=c.pages, spans=[[]] * len(c.paragraphs))
-            for c in material.pdf_chapters(path)
+            for c in (material.pdf_chapters(path, reading) if reading else [])
         ]
     if restructured:
         chapters = restructured
@@ -335,7 +342,7 @@ def extract(
     if pictures is not None:
         found = material.read(
             path, fmt, out, outline=outline, pictures=pictures, docx_sections=docx_sections, docx_assets=docx_assets,
-            assets=assets, budget=budget,
+            assets=assets, budget=budget, reading=reading,
         )
     return ExtractResponse(
         title=" ".join((title or "").split()) or doc.title or _title_from_filename(filename),

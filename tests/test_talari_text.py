@@ -859,9 +859,14 @@ def test_noise_from_a_text_layer_is_not_a_heading() -> None:
         assert not _reads_as_heading(noise), noise
 
 
-def test_a_scanned_pdf_with_a_text_layer_is_read_in_parts_without_its_page_pictures(client: TestClient) -> None:
+def test_a_scanned_pdf_with_a_text_layer_is_read_in_parts_without_its_page_pictures(client: TestClient, monkeypatch) -> None:
     import fitz
 
+    # Naming a picture's xref hashes it: minutes for a 164-page scan, so a scan never does.
+    def hashes(*_args, **_kwargs):
+        raise AssertionError("get_image_rects on a scan")
+
+    monkeypatch.setattr(fitz.Page, "get_image_rects", hashes)
     pdf = fitz.open()
     for number in range(6):
         page = pdf.new_page()
@@ -871,6 +876,8 @@ def test_a_scanned_pdf_with_a_text_layer_is_read_in_parts_without_its_page_pictu
     body = upload(client, "scan.pdf", pdf.tobytes()).json()
     assert all(c["title"].startswith("Part ") for c in body["chapters"])
     assert body["sections"] == [] and body["assets"] == []
+    later = client.post(f"/users/7/sources/{body['original']}/assets").json()
+    assert later["assets"] == []
 
 
 def test_type_that_cuts_a_pdf_into_scraps_is_not_its_structure(client: TestClient) -> None:
