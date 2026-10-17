@@ -390,7 +390,28 @@ class ComfyUI:
         return await self.run(workflow), seed
 
     async def run(self, workflow: dict[str, Any]) -> bytes:
-        """Queue a workflow, wait for it, and return the first picture it saved."""
+        """Queue a workflow, wait for it, and return the first picture it saved. Whatever
+        happens, the GPU is handed back afterwards (_release)."""
+        try:
+            return await self._run(workflow)
+        finally:
+            await self._release()
+
+    async def _release(self) -> None:
+        """Ask ComfyUI to move its models off the GPU, into RAM, now the picture is done.
+
+        The card is shared with the voice models in this API's own process. ComfyUI keeps
+        the models it loaded cached in RAM (its RAM-pressure cache, which drops them when the
+        machine runs short), so the next picture copies them back in seconds rather than
+        reading them from disk; but on the card they would sit idle where a voice is about
+        to be synthesized. Best effort: a ComfyUI that does not answer has nothing to free.
+        """
+        try:
+            await self._client.post(f"{self._settings.comfyui_url}/free", json={"unload_models": True}, timeout=5.0)
+        except httpx.HTTPError:
+            pass
+
+    async def _run(self, workflow: dict[str, Any]) -> bytes:
         settings = self._settings
         try:
             queued = await self._client.post(

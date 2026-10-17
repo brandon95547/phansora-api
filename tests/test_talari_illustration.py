@@ -528,3 +528,12 @@ def test_the_lab_adds_easycache_after_a_style_when_asked(make_client, network: R
     assert workflow["8"]["inputs"]["model"] == ["36", 0]
     assert client.post("/users/7/lab/illustrations", json=LAB).status_code == 200
     assert "36" not in network.bodies("/prompt")[-1]["prompt"]
+
+
+def test_the_gpu_is_handed_back_after_every_picture_drawn_or_failed(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    assert client.post("/users/7/illustrations", json=REQUEST).status_code == 200
+    assert network.bodies("/free") == [{"unload_models": True}]
+    network.handler = comfy(queue_status=400)
+    assert client.post("/users/7/illustrations", json=REQUEST).status_code == 502
+    assert network.bodies("/free") == [{"unload_models": True}, {"unload_models": True}]
