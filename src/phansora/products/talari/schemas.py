@@ -174,6 +174,23 @@ class ClassifyResponse(Lenient):
     sections: list[SectionClass]
 
 
+class KeptSource(Lenient):
+    """An upload kept as it came, to be read later (…/sources/{original}/read)."""
+
+    original: str
+    format: SourceFormat
+    bytes: int
+
+
+class ReadRequest(Lenient):
+    """How to read a kept upload: with its pictures, drawings and tables (``assets``), or
+    only its text and structure; its title, else the file's own or its name's."""
+
+    assets: bool = True
+    title: str = Field(default="", max_length=300)
+    filename: str = Field(default="", max_length=300)
+
+
 class ForgetRequest(Lenient):
     """Files of a user's that the app no longer uses: pictures (drawn, or found in an import)
     by their names under ``images/``, and kept imports by theirs under ``sources/``."""

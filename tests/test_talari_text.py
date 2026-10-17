@@ -851,6 +851,48 @@ def test_an_upload_can_leave_a_pdfs_pictures_for_later(client: TestClient) -> No
     assert client.post("/users/7/sources/notes.txt/assets").status_code == 404
 
 
+def test_an_upload_is_kept_at_once_and_read_later(client: TestClient, tmp_path: Path) -> None:
+    data = atlas_pdf()
+    kept = client.post("/users/7/sources/keep", files={"file": ("Field Atlas.pdf", data)})
+    assert kept.status_code == 200
+    body = kept.json()
+    assert body == {"original": f"{hashlib.sha256(data).hexdigest()}.pdf", "format": "pdf", "bytes": len(data)}
+    assert (tmp_path / "talari" / "sources" / "7" / body["original"]).read_bytes() == data
+    quick = client.post(f"/users/7/sources/{body['original']}/read", json={"assets": False, "title": "Field Atlas"}).json()
+    assert quick["title"] == "Field Atlas" and quick["chapters"] and quick["assets"] == [] and quick["assetsPending"] is True
+    full = client.post(f"/users/7/sources/{body['original']}/read", json={"assets": True}).json()
+    assert sorted(a["kind"] for a in full["assets"]) == ["drawing", "picture", "table"] and full["chapters"] == quick["chapters"]
+    assert client.post("/users/7/sources/keep", files={"file": ("run.exe", b"MZ")}).status_code == 415
+    assert client.post("/users/7/sources/keep", files={"file": ("empty.pdf", b"")}).status_code == 422
+    assert client.post(f"/users/7/sources/{'0' * 64}.pdf/read", json={}).status_code == 404
+
+
+def test_a_kept_document_of_any_kind_can_be_read(client: TestClient) -> None:
+    from docx import Document
+
+    doc = Document()
+    doc.add_heading("Soil", level=1)
+    doc.add_paragraph(words(80, "soil"))
+    doc.add_heading("Water", level=1)
+    doc.add_paragraph(words(80, "water"))
+    out = io.BytesIO()
+    doc.save(out)
+    kept = client.post("/users/7/sources/keep", files={"file": ("garden.docx", out.getvalue())}).json()
+    body = client.post(f"/users/7/sources/{kept['original']}/read", json={"assets": True}).json()
+    assert [c["title"] for c in body["chapters"]] == ["Soil", "Water"] and body["format"] == "docx"
+
+
+def test_a_kept_scan_without_text_says_so_when_it_is_read(client: TestClient) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    for _ in range(3):
+        pdf.new_page().draw_rect(fitz.Rect(50, 50, 200, 200))
+    kept = client.post("/users/7/sources/keep", files={"file": ("scan.pdf", pdf.tobytes())}).json()
+    response = client.post(f"/users/7/sources/{kept['original']}/read", json={"assets": False})
+    assert response.status_code == 422 and response.json()["detail"] == SCANNED_PDF
+
+
 def test_files_no_longer_used_are_forgotten_and_nothing_else(client: TestClient, tmp_path: Path) -> None:
     body = upload(client, "atlas.pdf", atlas_pdf()).json()
     images = tmp_path / "talari" / "images" / "7"

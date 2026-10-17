@@ -16,9 +16,11 @@ Text, written by DeepSeek (writing.py), and imported documents (sources.py):
 
     POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters, with
                                                    its sections, pictures, drawings and tables
-    POST /users/{user_id}/sources/{name}/assets    a PDF imported earlier, read again with its pictures,
-                                                   drawings and tables (the slow part, left out of the
-                                                   upload with assets=false)
+    POST /users/{user_id}/sources/keep             an upload kept as it came, at once, to be read later
+    POST /users/{user_id}/sources/{name}/read      a kept upload read: its chapters and sections, and with
+                                                   assets its pictures, drawings and tables (minutes for a
+                                                   long illustrated PDF; the app does it in a job)
+    POST /users/{user_id}/sources/{name}/assets    the same, with assets (the name the app used first)
     GET  /users/{user_id}/sources/{name}/pages/{n} a page of a PDF imported earlier, as a picture
     POST /users/{user_id}/forget                   delete pictures and kept imports the app no longer uses
                                                    (a book or a document deleted)
@@ -75,6 +77,8 @@ from .schemas import (
     ClassifyResponse,
     ForgetRequest,
     ForgetResponse,
+    KeptSource,
+    ReadRequest,
     ExtractResponse,
     IllustrationPromptsRequest,
     IllustrationPromptsResponse,
@@ -215,19 +219,48 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             found.original = original.name
             return found
 
-    @app.post("/users/{user_id}/sources/{name}/assets", response_model=ExtractResponse, response_model_by_alias=True)
-    async def source_assets(user_id: str, name: str) -> ExtractResponse:
-        """A PDF kept from an import, read again with its pictures, drawings and tables: the
-        same chapters and sections as the upload's reading, and what was found beside them."""
-        if not ORIGINAL_NAME.match(name) or not name.endswith(".pdf"):
+    @app.post("/users/{user_id}/sources/keep", response_model=KeptSource, response_model_by_alias=True)
+    async def keep_source(user_id: str, file: UploadFile = File(...)) -> KeptSource:
+        """An upload kept as it came, by its content, and nothing more: an import is answered
+        in the time it takes to send the file, and read afterwards (…/read)."""
+        check_user(user_id)
+        fmt = sources.source_format(file.filename)
+        if fmt is None:
+            raise ServiceError(sources.UNSUPPORTED, status=415)
+        keep = user_sources(user_id)
+        keep.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="talari-") as folder:
+            path = Path(folder) / f"upload.{fmt}"
+            size = await sources.save_upload(file, path)
+            digest = await asyncio.to_thread(lambda: hashlib.sha256(path.read_bytes()).hexdigest())
+            original = keep / f"{digest}.{fmt}"
+            if not original.exists():
+                shutil.copyfile(path, original)
+        return KeptSource(original=original.name, format=fmt, bytes=size)
+
+    async def read_kept(user_id: str, name: str, body: ReadRequest) -> ExtractResponse:
+        if not ORIGINAL_NAME.match(name):
             raise HTTPException(status_code=404, detail="No such file.")
         path = user_sources(user_id) / name
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No such file.")
+        fmt = name.rsplit(".", 1)[1]
         pictures = material.Pictures(user_images(user_id), user_id)
-        found = await asyncio.to_thread(sources.extract, path, "pdf", filename=name, title="", pictures=pictures, assets=True)
+        found = await asyncio.to_thread(
+            sources.extract, path, fmt, filename=body.filename or name, title=body.title, pictures=pictures, assets=body.assets,
+        )
         found.original = name
         return found
+
+    @app.post("/users/{user_id}/sources/{name}/read", response_model=ExtractResponse, response_model_by_alias=True)
+    async def read_source(user_id: str, name: str, body: ReadRequest | None = None) -> ExtractResponse:
+        """A kept upload read, the same way every time, so the chapter and section numbers of
+        a reading without its assets hold for one with them."""
+        return await read_kept(user_id, name, body or ReadRequest())
+
+    @app.post("/users/{user_id}/sources/{name}/assets", response_model=ExtractResponse, response_model_by_alias=True)
+    async def source_assets(user_id: str, name: str) -> ExtractResponse:
+        return await read_kept(user_id, name, ReadRequest(assets=True))
 
     @app.get("/users/{user_id}/sources/{name}/pages/{number}")
     async def source_page(user_id: str, name: str, number: int) -> FileResponse:
