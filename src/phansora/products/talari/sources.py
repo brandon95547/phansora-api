@@ -10,8 +10,13 @@ the grouping into chapters:
   * Otherwise, in a PDF or a plain text file, a line such as "Chapter 3" or "Prologue"
     at the start of a block opens a chapter.
 
-When none of that finds at least two chapters, the text is cut into parts of about
-PART_WORDS words, at paragraph boundaries, titled "Part 1", "Part 2"…
+When none of that finds at least two chapters, a DOCX is read again by its top heading
+level, and a PDF by its larger type (material.py); only when that finds nothing either is
+the text cut into parts of about PART_WORDS words, at paragraph boundaries, titled
+"Part 1", "Part 2"…
+
+material.py also reads what the chapters leave out: the sections under them, and the
+pictures, drawings and tables, kept as they are.
 """
 
 from __future__ import annotations
@@ -25,8 +30,9 @@ from fastapi import UploadFile
 
 from phansora.products.book_alchemy.parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_source
 
+from . import material
 from .errors import ServiceError
-from .schemas import ExtractedChapter, ExtractResponse
+from .schemas import ExtractedAsset, ExtractedChapter, ExtractedSection, ExtractResponse
 
 logger = logging.getLogger("talari")
 
@@ -104,6 +110,9 @@ class _Chapter:
     title: str | None
     paragraphs: list[str] = field(default_factory=list)
     pages: list[int] = field(default_factory=list)
+    # The pages each paragraph is on, in step with ``paragraphs``, so a part cut from
+    # them knows its own pages rather than its whole chapter's.
+    spans: list[list[int]] = field(default_factory=list)
 
     @property
     def words(self) -> int:
@@ -190,8 +199,10 @@ def _group(doc: ParsedDoc, outline: list[tuple[int, str]]) -> list[_Chapter]:
         elif not chapters:
             chapters.append(_Chapter(title=None))
         if text and block.kind != "apparatus":
+            pages = [p for p in (block.page_start, block.page_end) if p]
             chapters[-1].paragraphs.append(text)
-            chapters[-1].pages.extend(p for p in (block.page_start, block.page_end) if p)
+            chapters[-1].pages.extend(pages)
+            chapters[-1].spans.append(pages)
     return [chapter for chapter in chapters if chapter.paragraphs]
 
 
@@ -219,10 +230,11 @@ def _parts(chapters: list[_Chapter]) -> list[_Chapter]:
     parts: list[_Chapter] = []
     current = _Chapter(title=None)
     for chapter in chapters:
-        for paragraph in chapter.paragraphs:
+        for number, paragraph in enumerate(chapter.paragraphs):
+            pages = chapter.spans[number] if number < len(chapter.spans) else chapter.pages
             for piece in _split_long(paragraph):
                 current.paragraphs.append(piece)
-                current.pages.extend(chapter.pages)
+                current.pages.extend(pages)
                 if current.words >= PART_WORDS:
                     parts.append(current)
                     current = _Chapter(title=None)
@@ -237,8 +249,13 @@ def _parts(chapters: list[_Chapter]) -> list[_Chapter]:
     return parts
 
 
-def extract(path: Path, fmt: str, *, filename: str | None, title: str | None) -> ExtractResponse:
-    """Read a saved upload into chapters. Blocking (PDF parsing is CPU work): run it in a thread."""
+def extract(
+    path: Path, fmt: str, *, filename: str | None, title: str | None, pictures: material.Pictures | None = None,
+) -> ExtractResponse:
+    """Read a saved upload into chapters. Blocking (PDF parsing is CPU work): run it in a thread.
+
+    With ``pictures`` (where to keep them), the response also carries the sections under
+    the chapters and the pictures, drawings and tables found in the file."""
     try:
         if fmt in ("txt", "md"):
             doc = parse_source(source_format=fmt, text=_decode(path.read_bytes()), title_hint=_title_from_filename(filename))
@@ -262,7 +279,28 @@ def extract(path: Path, fmt: str, *, filename: str | None, title: str | None) ->
         raise ServiceError("No text could be found in this file.", status=422)
 
     titled = [chapter for chapter in grouped if chapter.title]
-    if len(titled) >= 2:
+    # A DOCX by its top heading level (Heading 1, with 2 and 3 as its sections), and a PDF
+    # with no outline and no "Chapter 3" lines by its largest recurring type.
+    docx_sections, docx_assets = None, None
+    restructured: list[_Chapter] = []
+    if fmt == "docx" and pictures is not None:
+        found = material.docx_structure(path, pictures)
+        if found:
+            structured, docx_sections, docx_assets = found
+            if len([c for c in structured if c.title]) >= 2:
+                restructured = [_Chapter(title=c.title or None, paragraphs=c.paragraphs) for c in structured]
+    elif fmt == "pdf" and not outline and len(titled) < 2:
+        restructured = [
+            _Chapter(title=c.title, paragraphs=c.paragraphs, pages=c.pages, spans=[[]] * len(c.paragraphs))
+            for c in material.pdf_chapters(path)
+        ]
+    if restructured:
+        chapters = restructured
+        if chapters[0].title is None and chapters[0].words < FRONT_MATTER_WORDS:
+            chapters = chapters[1:]
+        elif chapters[0].title is None:
+            chapters[0].title = UNTITLED_OPENING
+    elif len(titled) >= 2:
         chapters = grouped
         if chapters[0].title is None:
             if chapters[0].words < FRONT_MATTER_WORDS:
@@ -289,10 +327,27 @@ def extract(path: Path, fmt: str, *, filename: str | None, title: str | None) ->
                 text="\n\n".join(chapter.paragraphs),
             )
         )
+    found = material.Material()
+    if pictures is not None:
+        found = material.read(path, fmt, out, outline=outline, pictures=pictures, docx_sections=docx_sections, docx_assets=docx_assets)
     return ExtractResponse(
         title=" ".join((title or "").split()) or doc.title or _title_from_filename(filename),
         format=fmt,
         pages=pages,
         words=sum(chapter.words for chapter in out),
         chapters=out,
+        sections=[
+            ExtractedSection(
+                index=index, chapter_index=s.chapter_index, level=s.level, title=s.title,
+                page_start=s.page_start, page_end=s.page_end, text=s.text, words=len(s.text.split()),
+            )
+            for index, s in enumerate(found.sections)
+        ],
+        assets=[
+            ExtractedAsset(
+                index=index, kind=a.kind, src=a.src, width=a.width, height=a.height, page=a.page, caption=a.caption,
+                rows=a.rows, header=a.header, chapter_index=a.chapter_index, section_index=a.section_index,
+            )
+            for index, a in enumerate(found.assets)
+        ],
     )

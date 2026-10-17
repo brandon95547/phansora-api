@@ -14,15 +14,20 @@ given, open only to the accounts in TALARI_LAB_USERS (and the app's internal key
 
 Text, written by DeepSeek (writing.py), and imported documents (sources.py):
 
-    POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters
+    POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters, with
+                                                   its sections, pictures, drawings and tables
+    GET  /users/{user_id}/sources/{name}/pages/{n} a page of a PDF imported earlier, as a picture
     POST /users/{user_id}/sources/analyze          what imported material holds: summary, themes, concepts
+    POST /users/{user_id}/sources/classify         what kind each picture and section is (library.py)
     POST /users/{user_id}/blueprints               one to three plans for a book
     POST /users/{user_id}/blueprints/refine        a plan changed by a conversation
     POST /users/{user_id}/chapters/write           one chapter, as blocks of inline HTML
     POST /users/{user_id}/text/revise              a passage rewritten, expanded, checked…
     POST /users/{user_id}/illustration-prompts     what to draw for a chapter or a cover
 
-The text routes keep nothing: the app holds the book and sends what each call needs.
+The text routes keep nothing: the app holds the book and sends what each call needs. An
+import keeps two things: the file as uploaded (``talari/sources/<user_id>/<sha256>.<ext>``),
+so its pages can be looked at again, and the pictures found in it, beside the user's others.
 
 Pictures are kept per user under the runtime root (``talari/images/<user_id>/``). The
 user id travels in the path, so ``enforce_user_scope`` holds a browser token to its own
@@ -33,8 +38,10 @@ which is why the id is also checked for shape before it becomes part of a path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
+import shutil
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -47,7 +54,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from phansora.shared.auth import enforce_user_scope
 
-from . import sources, writing
+from . import library, material, sources, writing
 from .comfy import ComfyUI
 from .config import Settings, load_settings
 from .downloads import download_message
@@ -59,6 +66,8 @@ from .schemas import (
     BlueprintResponse,
     ChapterRequest,
     ChapterResponse,
+    ClassifyRequest,
+    ClassifyResponse,
     ExtractResponse,
     IllustrationPromptsRequest,
     IllustrationPromptsResponse,
@@ -78,7 +87,11 @@ from .schemas import (
 logger = logging.getLogger("talari")
 
 USER_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-IMAGE_NAME = re.compile(r"^[0-9a-f]{32}\.png$")
+IMAGE_NAME = re.compile(r"^[0-9a-f]{32}\.(png|jpg)$")
+# An upload kept as it came: named by the SHA-256 of its bytes, with its format.
+ORIGINAL_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|docx|txt|md)$")
+# A page of a kept PDF, as a picture: 2× — 144 dpi, enough to read it on screen.
+PAGE_ZOOM = 2
 
 
 def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
@@ -158,7 +171,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         path = user_images(user_id) / name
         if not path.is_file():
             raise HTTPException(status_code=404, detail="No such picture.")
-        return FileResponse(path, media_type="image/png")
+        return FileResponse(path, media_type="image/jpeg" if name.endswith(".jpg") else "image/png")
 
     # --- text -------------------------------------------------------------------
     # Nothing here is stored, so the user id is only checked for shape (and, by the
@@ -167,6 +180,11 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     def check_user(user_id: str) -> None:
         if not USER_ID.match(user_id):
             raise HTTPException(status_code=400, detail="That user id is not valid.")
+
+    def user_sources(user_id: str) -> Path:
+        if not USER_ID.match(user_id):
+            raise HTTPException(status_code=400, detail="That user id is not valid.")
+        return settings.data_dir / "sources" / user_id
 
     @app.post("/users/{user_id}/sources/extract", response_model=ExtractResponse, response_model_by_alias=True)
     async def extract(user_id: str, file: UploadFile = File(...), title: str = Form("")) -> ExtractResponse:
@@ -177,8 +195,47 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         with tempfile.TemporaryDirectory(prefix="talari-") as folder:
             path = Path(folder) / f"upload.{fmt}"
             await sources.save_upload(file, path)
+            pictures = material.Pictures(user_images(user_id), user_id)
             # Parsing a long PDF is seconds of CPU; off the event loop, so other requests carry on.
-            return await asyncio.to_thread(sources.extract, path, fmt, filename=file.filename, title=title)
+            found = await asyncio.to_thread(sources.extract, path, fmt, filename=file.filename, title=title, pictures=pictures)
+            # Kept as it came, by its content: the same file imported twice is one copy.
+            digest = await asyncio.to_thread(lambda: hashlib.sha256(path.read_bytes()).hexdigest())
+            keep = user_sources(user_id)
+            keep.mkdir(parents=True, exist_ok=True)
+            original = keep / f"{digest}.{fmt}"
+            if not original.exists():
+                shutil.copyfile(path, original)
+            found.original = original.name
+            return found
+
+    @app.get("/users/{user_id}/sources/{name}/pages/{number}")
+    async def source_page(user_id: str, name: str, number: int) -> FileResponse:
+        """A page of a PDF kept from an import, as a PNG — drawn once, then kept beside it."""
+        if not ORIGINAL_NAME.match(name) or not name.endswith(".pdf") or number < 1:
+            raise HTTPException(status_code=404, detail="No such page.")
+        folder = user_sources(user_id)
+        path = folder / name
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="No such page.")
+        shot = folder / "pages" / f"{name[:-4]}-{number}.png"
+
+        def draw() -> bool:
+            import fitz
+
+            with fitz.open(path) as pdf:
+                if number > pdf.page_count:
+                    return False
+                shot.parent.mkdir(parents=True, exist_ok=True)
+                pdf.load_page(number - 1).get_pixmap(matrix=fitz.Matrix(PAGE_ZOOM, PAGE_ZOOM), alpha=False).save(str(shot))
+                return True
+
+        if not shot.is_file() and not await asyncio.to_thread(draw):
+            raise HTTPException(status_code=404, detail="No such page.")
+        return FileResponse(shot, media_type="image/png")
+
+    @app.post("/users/{user_id}/sources/classify", response_model=ClassifyResponse, response_model_by_alias=True)
+    async def classify(user_id: str, body: ClassifyRequest) -> ClassifyResponse:
+        return await library.classify(body, user_images(user_id))
 
     @app.post("/users/{user_id}/sources/analyze", response_model=AnalyzeResponse, response_model_by_alias=True)
     async def analyze(user_id: str, body: AnalyzeRequest) -> AnalyzeResponse:

@@ -8,6 +8,7 @@ for the import tests are made here, with python-docx and PyMuPDF.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -767,3 +768,189 @@ def test_custom_styles_palette_and_detail_reach_the_picture(tmp_path: Path) -> N
     assert text.startswith("A fox, paper cut-out collage, black and white") and "simple composition" in text
     with pytest.raises(ValueError):
         IllustrationRequest.model_validate({"prompt": "A fox", "styleId": "custom", "aspect": 1, "customStyle": "x" * 401})
+
+
+# --- what an import holds besides its text (material.py, library.py) ---------------------
+
+
+def png(width: int = 320, height: int = 220, color: tuple[int, int, int] = (200, 40, 40)) -> bytes:
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(out, "PNG")
+    return out.getvalue()
+
+
+def test_a_pdf_without_an_outline_is_read_by_the_size_of_its_type(client: TestClient) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    for number, title in enumerate(["Getting Started", "Going Further"], start=1):
+        page = pdf.new_page()
+        page.insert_textbox(fitz.Rect(72, 60, 520, 100), title, fontsize=22)
+        page.insert_textbox(fitz.Rect(72, 110, 520, 330), words(120, f"intro{number}"), fontsize=11)
+        page.insert_textbox(fitz.Rect(72, 350, 520, 380), f"A Closer Look {number}", fontsize=15)
+        page.insert_textbox(fitz.Rect(72, 390, 520, 700), words(140, f"detail{number}"), fontsize=11)
+    body = upload(client, "handbook.pdf", pdf.tobytes()).json()
+    assert [c["title"] for c in body["chapters"]] == ["Getting Started", "Going Further"]
+    assert "Part 1" not in [c["title"] for c in body["chapters"]]
+    sections = [(s["chapterIndex"], s["title"], s["pageStart"]) for s in body["sections"]]
+    assert sections == [(0, "A Closer Look 1", 1), (1, "A Closer Look 2", 2)]
+    assert body["sections"][0]["text"].startswith("detail1") and "intro1" not in body["sections"][0]["text"]
+
+
+def test_a_pdf_gives_up_its_pictures_tables_and_drawings(client: TestClient, tmp_path: Path) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_textbox(fitz.Rect(72, 40, 520, 200), words(150, "prose"), fontsize=11)
+    page.insert_image(fitz.Rect(72, 210, 312, 375), stream=png())
+    page.insert_text((72, 392), "Figure 1: A red field", fontsize=9)
+    # A table: a ruled grid with a word in each cell.
+    for row in range(4):
+        page.draw_line((72, 420 + row * 20), (372, 420 + row * 20))
+    for col in range(4):
+        page.draw_line((72 + col * 100, 420), (72 + col * 100, 480))
+    for row, cells in enumerate([["Name", "Age", "Town"], ["Ada", "36", "Bath"], ["Ben", "41", "York"]]):
+        for col, cell in enumerate(cells):
+            page.insert_text((78 + col * 100, 434 + row * 20), cell, fontsize=9)
+    second = pdf.new_page()
+    second.insert_textbox(fitz.Rect(72, 40, 520, 200), words(150, "more"), fontsize=11)
+    # A diagram: three rows of touching circles, joined top to bottom.
+    for n in range(15):
+        second.draw_circle((150 + 56 * (n % 5), 300 + 56 * (n // 5)), 26)
+        second.draw_line((150 + 56 * (n % 5), 300), (150 + 56 * (n % 5), 412))
+    body = upload(client, "atlas.pdf", pdf.tobytes()).json()
+    kinds = sorted(a["kind"] for a in body["assets"])
+    assert kinds == ["drawing", "picture", "table"]
+    picture = next(a for a in body["assets"] if a["kind"] == "picture")
+    assert picture["page"] == 1 and picture["caption"] == "Figure 1: A red field"
+    assert picture["src"].startswith("/talari/users/7/images/") and (picture["width"], picture["height"]) == (320, 220)
+    assert (tmp_path / "talari" / "images" / "7" / picture["src"].rsplit("/", 1)[1]).is_file()
+    table = next(a for a in body["assets"] if a["kind"] == "table")
+    assert table["rows"][0] == ["Name", "Age", "Town"] and table["rows"][2] == ["Ben", "41", "York"] and table["src"]
+    assert next(a for a in body["assets"] if a["kind"] == "drawing")["page"] == 2
+
+
+def test_a_docx_keeps_its_heading_levels_its_tables_and_its_pictures(client: TestClient) -> None:
+    import docx
+
+    document = docx.Document()
+    document.add_heading("Soil", level=1)
+    document.add_paragraph(words(40, "earth"))
+    document.add_heading("Testing the Soil", level=2)
+    document.add_paragraph(words(30, "acid"))
+    table = document.add_table(rows=2, cols=2)
+    for r, cells in enumerate([["pH", "Crop"], ["6.5", "Beans"]]):
+        for c, text in enumerate(cells):
+            table.cell(r, c).text = text
+    document.add_picture(io.BytesIO(png()))
+    document.add_heading("Water", level=1)
+    document.add_paragraph(words(50, "rain"))
+    data = io.BytesIO()
+    document.save(data)
+    body = upload(client, "garden.docx", data.getvalue()).json()
+    assert [(c["title"], c["words"]) for c in body["chapters"]] == [("Soil", 70), ("Water", 50)]
+    assert [(s["chapterIndex"], s["title"], s["words"]) for s in body["sections"]] == [(0, "Testing the Soil", 30)]
+    assert sorted((a["kind"], a["chapterIndex"]) for a in body["assets"]) == [("picture", 0), ("table", 0)]
+    assert next(a for a in body["assets"] if a["kind"] == "table")["rows"] == [["pH", "Crop"], ["6.5", "Beans"]]
+
+
+def test_an_epub_gives_up_its_sections_pictures_and_tables(client: TestClient, tmp_path: Path) -> None:
+    from ebooklib import epub
+
+    book = epub.EpubBook()
+    book.set_title("Field Notes")
+    book.add_item(epub.EpubItem(uid="fig", file_name="images/fig.png", media_type="image/png", content=png()))
+    chapters = []
+    for n, name in enumerate(["Birds", "Bees"], start=1):
+        chapter = epub.EpubHtml(title=name, file_name=f"ch{n}.xhtml")
+        chapter.content = (
+            f"<html><body><h1>{name}</h1><p>{words(60, name.lower())}</p><h2>Watching {name}</h2><p>{words(30, 'watch')}</p>"
+            + ('<figure><img src="images/fig.png" alt="red"/><figcaption>Plate 1</figcaption></figure>'
+               "<table><tr><th>Kind</th><th>Seen</th></tr><tr><td>Wren</td><td>3</td></tr></table>" if n == 1 else "")
+            + "</body></html>"
+        )
+        book.add_item(chapter)
+        chapters.append(chapter)
+    book.spine = chapters
+    book.add_item(epub.EpubNcx())
+    path = tmp_path / "notes.epub"
+    epub.write_epub(str(path), book)
+    body = upload(client, "notes.epub", path.read_bytes()).json()
+    assert [c["title"] for c in body["chapters"]] == ["Birds", "Bees"]
+    assert [(s["chapterIndex"], s["title"]) for s in body["sections"]] == [(0, "Watching Birds"), (1, "Watching Bees")]
+    picture = next(a for a in body["assets"] if a["kind"] == "picture")
+    assert picture["caption"] == "Plate 1" and picture["chapterIndex"] == 0
+    assert next(a for a in body["assets"] if a["kind"] == "table")["rows"] == [["Kind", "Seen"], ["Wren", "3"]]
+
+
+def test_an_upload_is_kept_and_its_pages_can_be_looked_at_again(client: TestClient, tmp_path: Path) -> None:
+    import fitz
+
+    pdf = fitz.open()
+    for number in range(2):
+        pdf.new_page().insert_textbox(fitz.Rect(72, 72, 520, 770), words(80, f"page{number}"), fontsize=11)
+    data = pdf.tobytes()
+    body = upload(client, "pages.pdf", data).json()
+    assert body["original"] == f"{hashlib.sha256(data).hexdigest()}.pdf"
+    assert (tmp_path / "talari" / "sources" / "7" / body["original"]).read_bytes() == data
+    page = client.get(f"/users/7/sources/{body['original']}/pages/2")
+    assert page.status_code == 200 and page.headers["content-type"] == "image/png" and page.content[:4] == b"\x89PNG"
+    assert client.get(f"/users/7/sources/{body['original']}/pages/3").status_code == 404
+    assert client.get("/users/7/sources/../../secret.pdf/pages/1").status_code == 404
+
+
+def test_pictures_are_sorted_by_their_layout_without_a_vision_key(client: TestClient, deepseek: FakeDeepSeek, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    deepseek.replies = [{"sections": [
+        {"id": "s1", "kind": "exercise", "topics": ["Soil testing", "pH"]},
+        {"id": "s2", "kind": "text", "topics": ["Watering"]},
+    ]}]
+    response = client.post("/users/7/sources/classify", json={
+        "pictures": [
+            {"id": "a", "src": "", "kind": "drawing", "caption": ""},
+            {"id": "b", "src": "", "kind": "picture", "caption": "Table 2: Yields"},
+            {"id": "c", "src": "", "kind": "picture", "caption": "The score of the opening hymn"},
+            {"id": "d", "src": "", "kind": "picture", "caption": "A meadow"},
+        ],
+        "sections": [{"id": "s1", "title": "Try it yourself", "text": "1. Measure..."}, {"id": "s2", "title": "Rain", "text": "Rain falls"}],
+    })
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [(p["id"], p["kind"]) for p in body["pictures"]] == [("a", "diagram"), ("b", "table"), ("c", "music"), ("d", "image")]
+    assert body["sections"] == [
+        {"id": "s1", "kind": "exercise", "topics": ["Soil testing", "pH"]},
+        {"id": "s2", "kind": "text", "topics": ["Watering"]},
+    ]
+
+
+def test_pictures_are_looked_at_by_the_vision_model_when_there_is_a_key(client: TestClient, monkeypatch, tmp_path: Path) -> None:
+    from phansora.products.talari import library
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5-nano")
+    folder = tmp_path / "talari" / "images" / "7"
+    folder.mkdir(parents=True)
+    (folder / ("a" * 32 + ".png")).write_bytes(png())
+    sent: list[dict] = []
+
+    class Completions:
+        async def create(self, **kwargs):
+            sent.append(kwargs)
+            message = type("M", (), {"content": json.dumps({"kind": "music", "description": "Four bars of a waltz."})})
+            return type("R", (), {"choices": [type("C", (), {"message": message})]})
+
+    monkeypatch.setattr(library, "_vision_client", lambda: type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})})())
+    response = client.post("/users/7/sources/classify", json={"pictures": [
+        {"id": "x", "src": f"/talari/users/7/images/{'a' * 32}.png", "kind": "picture", "caption": ""},
+        {"id": "y", "src": "/talari/users/7/images/missing.png", "kind": "drawing", "caption": ""},
+    ]})
+    body = response.json()
+    assert body["pictures"] == [
+        {"id": "x", "kind": "music", "description": "Four bars of a waltz."},
+        {"id": "y", "kind": "diagram", "description": ""},
+    ]
+    assert len(sent) == 1 and sent[0]["model"] == "gpt-5-nano"
+    assert sent[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")

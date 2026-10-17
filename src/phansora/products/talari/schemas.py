@@ -94,12 +94,81 @@ class ExtractedChapter(Lenient):
     text: str
 
 
+class ExtractedSection(Lenient):
+    """A part of a chapter under one of the document's own headings, as written."""
+
+    index: int
+    chapter_index: int
+    level: int = 1
+    title: str
+    page_start: int | None = None
+    page_end: int | None = None
+    words: int = 0
+    text: str
+
+
+class ExtractedAsset(Lenient):
+    """A picture, a drawing or a table found in the document, kept as it is: the picture
+    (or, for a table, a picture of it as printed) under ``src``, a table's cells in ``rows``."""
+
+    index: int
+    kind: Literal["picture", "drawing", "table"]
+    src: str | None = None
+    width: int | None = None
+    height: int | None = None
+    page: int | None = None
+    caption: str = ""
+    rows: list[list[str]] | None = None
+    header: bool = False
+    chapter_index: int = 0
+    section_index: int | None = None
+
+
 class ExtractResponse(Lenient):
     title: str
     format: SourceFormat
     pages: int | None = None
     words: int
     chapters: list[ExtractedChapter]
+    sections: list[ExtractedSection] = Field(default_factory=list)
+    assets: list[ExtractedAsset] = Field(default_factory=list)
+    # The upload as it came, kept for its pages to be looked at again (GET …/pages/{n}).
+    original: str | None = None
+
+
+class ClassifyPicture(Lenient):
+    id: str = Field(max_length=40)
+    src: str = Field(default="", max_length=200)
+    kind: Literal["picture", "drawing", "table"] = "picture"
+    caption: str = Field(default="", max_length=600)
+
+
+class ClassifySection(Lenient):
+    id: str = Field(max_length=40)
+    title: str = Field(default="", max_length=300)
+    text: str = Field(default="", max_length=4_000)
+
+
+class ClassifyRequest(Lenient):
+    pictures: list[ClassifyPicture] = Field(default_factory=list, max_length=600)
+    sections: list[ClassifySection] = Field(default_factory=list, max_length=3000)
+
+
+class PictureClass(Lenient):
+    id: str
+    kind: Literal["image", "diagram", "table", "music"]
+    description: str = ""
+
+
+class SectionClass(Lenient):
+    id: str
+    kind: Literal["text", "exercise"]
+    topics: list[str] = Field(default_factory=list)
+
+
+class ClassifyResponse(Lenient):
+    pictures: list[PictureClass]
+    sections: list[SectionClass]
 
 
 class SourceChapterText(Lenient):
