@@ -390,6 +390,9 @@ class LabRequest(Lenient):
     mask: str | None = Field(default=None, max_length=PICTURE_MAX)
     style_image: str | None = Field(default=None, max_length=PICTURE_MAX)
     style_image_weight: float = Field(default=1.0, ge=0, le=2)
+    # EasyCache's reuse threshold: skips sampling steps that would barely change the picture —
+    # faster, slightly grainier. 0 is off; 0.2 is ComfyUI's default.
+    easycache: float = Field(default=0.0, ge=0, le=1)
 
     @model_validator(mode="after")
     def _something_to_draw(self) -> "LabRequest":

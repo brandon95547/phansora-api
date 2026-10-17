@@ -119,6 +119,21 @@ def with_reference(
     return out
 
 
+def with_easycache(workflow: dict[str, Any], *, sampler: str, threshold: float) -> dict[str, Any]:
+    """The sampler's model through EasyCache, which skips steps that would barely change the
+    picture (built into ComfyUI). `threshold` is its reuse threshold; 0 leaves it out."""
+    if threshold <= 0:
+        return workflow
+    out = {key: {**node, "inputs": dict(node["inputs"])} for key, node in workflow.items()}
+    out["12"] = {
+        "class_type": "EasyCache",
+        "inputs": {"model": out[sampler]["inputs"]["model"], "reuse_threshold": threshold,
+                   "start_percent": 0.15, "end_percent": 0.95, "verbose": False},
+    }
+    out[sampler]["inputs"]["model"] = ["12", 0]
+    return out
+
+
 def fill_workflow(node: Any, values: dict[str, Any]) -> Any:
     """Substitute tokens throughout a workflow loaded from a file."""
     if isinstance(node, dict):
@@ -352,7 +367,7 @@ class ComfyUI:
                     "%guidance%": settings.flux_guidance,
                 }
             )
-            flow = flux_workflow(values)
+            flow = with_easycache(flux_workflow(values), sampler="8", threshold=settings.flux_easycache)
             return with_reference(flow, latent="7", sampler="8", vae=["3", 0], **redraw) if redraw else flow
         if custom is None:
             values["%checkpoint%"] = await self._checkpoint()
@@ -454,6 +469,7 @@ class ComfyUI:
                 "height": 1024,
                 "denoise": 1.0,
                 "style_image_weight": 1.0,
+                "easycache": settings.flux_easycache,
             },
         )
 
@@ -574,6 +590,13 @@ def lab_workflow(
             "inputs": {"model": ["33", 0], "model_patch": ["34", 0], "clip_vision_output": ["32", 0]},
         }
         model_out = ["35", 0]
+    # EasyCache, last on the model, so it caches the steps of whatever the model has become.
+    if request.easycache > 0:
+        wf["36"] = {
+            "class_type": "EasyCache",
+            "inputs": {"model": model_out, "reuse_threshold": request.easycache, "start_percent": 0.15, "end_percent": 0.95, "verbose": False},
+        }
+        model_out = ["36", 0]
     # negative_prompt → the negative conditioning. It only acts when cfg is above 1.
     wf["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": request.negative_prompt, "clip": clip}}
 

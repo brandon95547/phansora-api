@@ -500,3 +500,31 @@ def test_a_picture_is_drawn_in_its_art_style_and_medium(client: TestClient, netw
     text = network.bodies("/prompt")[0]["prompt"]["2"]["inputs"]["text"]
     assert text.startswith("A lighthouse at dusk, art nouveau illustration") and "woodcut print" in text
     assert "pen and ink" not in text  # the older styleId ("ink") gives way
+
+
+def test_flux_skips_unchanging_steps_with_easycache_unless_it_is_off(make_client, network: Recorder) -> None:
+    network.handler = comfy()
+    client = make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf", flux_easycache=0.2)
+    assert client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE}).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["12"] == {
+        "class_type": "EasyCache",
+        "inputs": {"model": ["1", 0], "reuse_threshold": 0.2, "start_percent": 0.15, "end_percent": 0.95, "verbose": False},
+    }
+    assert workflow["8"]["inputs"]["model"] == ["12", 0]
+    assert workflow["7"]["class_type"] == "VAEEncode"  # a redraw keeps it too
+    off = make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf", flux_easycache=0.0)
+    assert off.post("/users/7/illustrations", json=REQUEST).status_code == 200
+    plain = network.bodies("/prompt")[-1]["prompt"]
+    assert "12" not in plain and plain["8"]["inputs"]["model"] == ["1", 0]
+
+
+def test_the_lab_adds_easycache_after_a_style_when_asked(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=LAB_INFO)
+    client = lab_client(make_client)
+    assert client.post("/users/7/lab/illustrations", json={**LAB, "style_image": REFERENCE, "easycache": 0.3}).status_code == 200
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["36"]["inputs"]["model"] == ["35", 0] and workflow["36"]["inputs"]["reuse_threshold"] == 0.3
+    assert workflow["8"]["inputs"]["model"] == ["36", 0]
+    assert client.post("/users/7/lab/illustrations", json=LAB).status_code == 200
+    assert "36" not in network.bodies("/prompt")[-1]["prompt"]
