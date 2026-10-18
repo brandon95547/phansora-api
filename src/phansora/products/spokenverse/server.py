@@ -3,7 +3,7 @@
 # FastAPI backend for:
 #  - PDF -> TXT (PDF rendered to images -> Tesseract OCR -> DeepSeek cleanup/merge)
 #  - Audio -> TXT (speech transcription)
-#  - TXT -> Audio (CosyVoice2)
+#  - TXT -> Audio (CosyVoice)
 #
 # Run:
 #   uvicorn server:app --host 0.0.0.0 --port 8000 --reload
@@ -112,19 +112,19 @@ async def _sweep_stale_pending_voices() -> None:
 @app.on_event("startup")
 async def _preload_tts_model() -> None:
     # Warm the TTS engine in the background so the first generation doesn't pay the
-    # one-time load. For CosyVoice2 this is the big one — weights + vLLM CUDA-graph
+    # one-time load. For CosyVoice this is the big one — weights + vLLM CUDA-graph
     # capture (~80s) + first-run TensorRT engine build. Off-thread so startup and
     # /health stay responsive; the load is lock-guarded, so a request that races the
     # warmup just waits on the same load instead of starting a second one.
     #
-    # Dev escape hatch: set TTS_PRELOAD=0 to skip this. The CosyVoice2 model (and its
+    # Dev escape hatch: set TTS_PRELOAD=0 to skip this. The CosyVoice model (and its
     # heavy torch/vLLM imports) then never loads at startup — it lazy-loads on the first
     # generation instead. Useful on machines that never run TTS locally (e.g. macOS / no
     # GPU), so `make dev` starts without loading the model.
     if os.getenv("TTS_PRELOAD", "1").strip().lower() in {"0", "false", "no", "off"}:
         import logging
         logging.getLogger("spokenverse").info(
-            "TTS_PRELOAD is off — skipping CosyVoice2 startup warmup (lazy-loads on first use)."
+            "TTS_PRELOAD is off — skipping CosyVoice startup warmup (lazy-loads on first use)."
         )
         return
 
@@ -133,7 +133,7 @@ async def _preload_tts_model() -> None:
     from phansora.products.spokenverse.txt_to_voice.adapters import backend as tts_backend
 
     threading.Thread(
-        target=tts_backend.preload, name="cosyvoice2-preload", daemon=True
+        target=tts_backend.preload, name="cosyvoice-preload", daemon=True
     ).start()
 
 
@@ -371,7 +371,7 @@ async def txt_to_audio(
     chunk_chars: int = Form(2500),
     max_concurrency: int = Form(4),
     file_concurrency: int = Form(1),
-    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice speed
     instruct_text: Optional[str] = Form(None),  # delivery direction, e.g. "in a calm tone"
 ) -> FileResponse | dict:
     """
@@ -394,7 +394,7 @@ async def txt_to_audio(
     user_audio_dir = _user_audio_dir(safe_user)
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve its id to
-    # the on-disk reference clip CosyVoice2 clones from, plus its stored transcript
+    # the on-disk reference clip CosyVoice clones from, plus its stored transcript
     # (``ref_text``) — CosyVoice conditions on that transcript (prompt_text). Fall back to
     # the voice's saved language when the request doesn't override it.
     resolved_voice = voice
@@ -581,13 +581,13 @@ async def audio_to_txt(
 @app.get("/tts-options")
 async def tts_options() -> dict:
     """
-    Options currently available from the CosyVoice2 backend.
+    Options currently available from the CosyVoice backend.
     """
     from phansora.products.spokenverse.txt_to_voice.adapters import cosyvoice3_client as cv
 
     voices = discover_voices()
     return {
-        "backend": "cosyvoice2",
+        "backend": "cosyvoice3",
         "voices": voices,
         "languages": cv.LANGUAGES,
         "audio_formats": ["mp3", "wav"],
@@ -627,13 +627,13 @@ async def voice_preview(
     file: UploadFile = File(...),
     user_id: str = Form(...),
     language: Optional[str] = Form(None),  # en/zh/ja/ko/yue/auto
-    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice2 speed
+    speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice speed
     instruct_text: Optional[str] = Form(None),  # delivery direction saved with the voice
 ) -> dict:
     """Upload a reference clip, then synthesize a sample the user can preview.
 
     The upload is trimmed and normalized to a 24kHz mono WAV reference clip.
-    CosyVoice2 clones from the clip PLUS its transcript, so we auto-transcribe it
+    CosyVoice clones from the clip PLUS its transcript, so we auto-transcribe it
     (whisper) and store the text as ``ref_text`` — that transcript is required at
     synthesis (passed as prompt_text). We then run the engine to speak
     ``VOICE_SAMPLE_TEXT``; that synthesized sample is what the user hears. Returns a
@@ -667,7 +667,7 @@ async def voice_preview(
         language=language, speed=speed, instruct_text=instruct_text
     )
 
-    # Auto-transcribe the reference clip and store it as ref_text. CosyVoice2 REQUIRES this
+    # Auto-transcribe the reference clip and store it as ref_text. CosyVoice REQUIRES this
     # transcript at synthesis (prompt_text). Best-effort: if it fails, ref_text stays empty
     # and the preview below will surface the "needs transcript" error.
     ref_text = ""

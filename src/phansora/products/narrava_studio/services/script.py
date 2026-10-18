@@ -159,7 +159,7 @@ _RESEARCH_MAX_CHARS = 18000
 
 
 def _render_research_block(research: dict | None) -> str:
-    """Dossier Nova's research dataset -> a readable knowledge-base block.
+    """Research Atlas's research dataset -> a readable knowledge-base block.
 
     Tolerant of missing keys and unexpected shapes: the dataset is produced by a
     different service and may evolve; anything unrecognized is simply skipped.
@@ -325,7 +325,7 @@ def generate_script(
                      built from the same value, which is what keeps the words and the
                      pictures reading as one film. Unknown or missing writes unstyled.
 
-    ``research`` is Dossier Nova's structured research dataset. When present, the
+    ``research`` is Research Atlas's structured research dataset. When present, the
     brief becomes creative direction only and every fact comes from the research;
     when absent, generation works from the brief alone exactly as it always has.
     """

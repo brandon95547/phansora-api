@@ -18,8 +18,9 @@ EnvironmentFile=/var/www/phansora-api/.env
 # /spokenverse/txt-to-audio, so one warmed TTS model (in the API process) does all the
 # synthesis.
 #
-# uvicorn is the main process (exec). 1 worker: Chatterbox loads the TTS model into VRAM
-# per process (>1 worker = 2x VRAM).
+# uvicorn is the main process (exec). 1 worker: CosyVoice loads the TTS model (weights and a
+# resident vLLM engine) into VRAM per process, so a second worker would mean 2x VRAM and a
+# second ~2 min warmup.
 #
 # The book worker runs in a loop beside it: if it crashes, it is started again 5 s later
 # (what its own unit's Restart=always did); a crash mid-book is fine, it reclaims the book

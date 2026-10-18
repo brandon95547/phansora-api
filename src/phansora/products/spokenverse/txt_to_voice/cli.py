@@ -26,7 +26,7 @@ def setup_logging(verbose: bool) -> None:
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert .txt files to audio (CosyVoice2) OR convert PDFs to .txt."
+        description="Convert .txt files to audio (CosyVoice) OR convert PDFs to .txt."
     )
 
     # --- PDF -> TXT mode ---
@@ -49,13 +49,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--engine",
         default=None,
-        choices=["cosyvoice2"],
-        help="TTS engine to use (CosyVoice is the only engine)",
+        # cosyvoice2 is a retired alias, still accepted: it resolves to cosyvoice3 with a warning.
+        choices=["cosyvoice3", "cosyvoice2"],
+        help="TTS engine to use (Fun-CosyVoice 3 is the only engine)",
     )
     parser.add_argument(
         "--voice",
         default="default",
-        help="CosyVoice2: 'default' for the built-in voice, or a path to a reference clip to clone from",
+        help="CosyVoice: 'default' for the built-in voice, or a path to a reference clip to clone from",
     )
     parser.add_argument(
         "--ref-audio",
@@ -64,8 +65,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path to a reference clip to clone the voice from (takes priority over --voice)",
     )
     parser.add_argument("--gpu", action="store_true", help="Use CUDA/GPU for inference (NVIDIA + CUDA PyTorch required)")
-    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by CosyVoice2")
-    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by CosyVoice2")
+    parser.add_argument("--rate", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
+    parser.add_argument("--volume", default="+0%", help="Accepted for compatibility; ignored by CosyVoice")
     parser.add_argument("--speaker", default=None, help="Optional alias for --voice (reference-clip path)")
     parser.add_argument("--language", default=None, help="Text language: en/zh/ja/ko/yue/auto (default en)")
     parser.add_argument("--ref-text", dest="ref_text", default=None,

@@ -7,7 +7,7 @@ serves all products, each under a path prefix:
 |---|---|---|
 | **SpokenVerse** | `/spokenverse` | text→audio (CosyVoice voice cloning), PDF→text, audio→text |
 | **Chrono-Origin** | `/chrono` | traces a story/myth's earliest origin (web-search research) |
-| **Dossier Nova** | `/dossier` | AI research → source-attributed dossier (local embeddings + DeepSeek) |
+| **Research Atlas** | `/research-atlas` (and `/dossier`, the old prefix the Node worker still calls) | supplied research → a source-attributed report (DeepSeek) |
 | **Book Alchemy** | `/book-alchemy` | book → structured audio course |
 | **Narrava Studio** | `/studio` | documentary editor: script, storyboard, AI media generation |
 | **Talari Book Creator** | `/talari` | illustrated books: document import, planning and chapter writing (DeepSeek), illustrations (FLUX.1 Dev drawn by ComfyUI) |
@@ -27,17 +27,17 @@ retired fails loudly at the call instead of 404-ing mid-request.
 |---|---|---|---|
 | Narrava Studio | script + storyboard generation | `NARRAVA_LLM_PROVIDER` (`openai`) | `NARRAVA_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
 | Narrava Studio | **AI media generation** (writes the canvas animation) | `NARRAVA_ANIMATION_PROVIDER` (`deepseek`) | `NARRAVA_ANIMATION_MODEL` → `DEEPSEEK_MODEL` |
-
-`NARRAVA_ANIMATION_MAX_TOKENS` (default 16384) caps that one call. It is the largest
-generation in the codebase — a whole working HTML document in one shot — and a cap set
-too low fails as **422 "cut off before completion"**, not as an error mentioning tokens.
-Raise it if that appears; lower it if DeepSeek starts rejecting the request outright,
-which is what exceeding the model's real output ceiling looks like.
 | Chrono-Origin | origin research + reasoning | `CHRONO_LLM_PROVIDER` (`openai`) | `CHRONO_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
 | Research Atlas | source cleanup, profiling, extraction into the report | — (DeepSeek only) | `RESEARCH_ATLAS_MODEL` → `DEEPSEEK_MODEL` |
 | Book Alchemy | book → course structure + lesson text | — (DeepSeek only) | `BOOK_ALCHEMY_MODEL` → `DEEPSEEK_MODEL` |
 | SpokenVerse | OCR cleanup / page merge on scanned PDFs | — (DeepSeek only) | `SPOKENVERSE_OCR_MODEL` → `DEEPSEEK_MODEL` |
 | Talari Book Creator | source analysis, book plans, chapters, revisions, illustration ideas | — (DeepSeek only) | `TALARI_MODEL` → `DEEPSEEK_MODEL` |
+
+`NARRAVA_ANIMATION_MAX_TOKENS` (default 16384) caps the animation call. It is the largest
+generation in the codebase — a whole working HTML document in one shot — and a cap set
+too low fails as **422 "cut off before completion"**, not as an error mentioning tokens.
+Raise it if that appears; lower it if DeepSeek starts rejecting the request outright,
+which is what exceeding the model's real output ceiling looks like.
 
 Reasoning-model overrides (`<PRODUCT>_REASONING_MODEL` → `{OPENAI,DEEPSEEK}_REASONING_MODEL`)
 apply on the research paths; unset means "reason with the chat model", not an error.
@@ -53,7 +53,6 @@ because that provider has no `ANTHROPIC_MODEL` var to resolve through.
 | SpokenVerse | text→speech + voice cloning | Fun-CosyVoice3-0.5B-RL | `TTS_ENGINE`, `COSYVOICE3_MODEL_DIR` |
 | SpokenVerse | audio→text | faster-whisper | `WHISPER_MODEL` (`base`) |
 | Narrava Studio | word-level narration timing | faster-whisper | `NARRAVA_ALIGN_MODEL` → `WHISPER_MODEL` |
-| Dossier Nova | semantic chunking + dedupe | `sentence-transformers/all-MiniLM-L6-v2` (384-dim) | `EMBEDDING_DIMENSIONS` |
 
 Transcription and alignment resolve separately on purpose: transcription wants accuracy,
 alignment wants speed over a file whose text is already known.
@@ -80,7 +79,7 @@ Then:
 
 ```bash
 cp .env.example .env      # fill in DB creds / API keys
-make install              # uv → Python 3.10 venv (seeded w/ pip) + deps (CUDA torch 2.8.x) + editable install
+make install              # uv → Python 3.10 venv (seeded w/ pip) + deps (CUDA torch 2.7.0) + editable install
 ```
 
 `make install` wipes any existing `.venv` and rebuilds it with uv (`uv venv --python
@@ -163,7 +162,7 @@ available on a Mac. If you must synthesize locally, clone CosyVoice to `~/CosyVo
 install the Mac torch build, and set in `.env`:
 
 ```bash
-TTS_ENGINE=cosyvoice2
+TTS_ENGINE=cosyvoice3
 COSYVOICE3_REPO=/Users/<you>/CosyVoice
 COSYVOICE3_FP16=0
 COSYVOICE3_USE_VLLM=0            # CUDA-only — falls back to the (slow) in-process LLM loop
@@ -209,7 +208,7 @@ mv /var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL/llm.rl.pt \
 Then set in `.env` and restart the service:
 
 ```bash
-TTS_ENGINE=cosyvoice2
+TTS_ENGINE=cosyvoice3
 COSYVOICE3_REPO=/var/www/CosyVoice
 # COSYVOICE3_MODEL_DIR=/var/www/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B-RL  # default
 COSYVOICE3_FP16=1                  # half VRAM + bandwidth (CUDA-only)
@@ -230,10 +229,10 @@ COSYVOICE3_DEFAULT_REF_TEXT=the exact words spoken in ref.wav
 > synthesis time** (sub-real-time). Run the service with a **single worker** (`make run`)
 > — extra workers would each load their own copy, doubling VRAM and warmup.
 
-> **No CUDA toolkit / nvcc needed.** Unlike the old DeepSpeed path, vLLM's CUDA ops
-> ship precompiled in its wheels — the box needs only the NVIDIA **driver**,
-> not the CUDA toolkit. `scripts/install-cuda-toolkit.sh` and the `cuda-env.conf` drop-in
-> are legacy (DeepSpeed) and no longer required for the TTS engine.
+> **No CUDA toolkit / nvcc needed by the engine.** Unlike the old DeepSpeed path, vLLM's
+> CUDA ops ship precompiled in its wheels — the TTS engine needs only the NVIDIA
+> **driver**. `scripts/install-cuda-toolkit.sh` and the `cuda-env.conf` drop-in were written
+> for the DeepSpeed path; the drop-in is still installed on prod (see *Run* below).
 
 The API boots without the engine; only TTS calls need it. Speed (0.5–2.0×, native) is a
 per-request option — see `GET /spokenverse/tts-options`. There is no emotion control
@@ -262,7 +261,7 @@ both.
 
 Notes:
 - **Torch build differs at install time, not via `.env`:** `make install` pins the
-  CUDA torch 2.8.x wheels (`+cu126`, prod GPU); `make install-mac` uses the arm64
+  CUDA torch 2.7.0 wheels (`+cu126`, prod GPU); `make install-mac` uses the arm64
   CPU/MPS wheel (dev). See above.
 - **DB is shared:** this API and the Node site talk to the **same** Postgres —
   `DB_PORT` must match that server (they are not two databases).
@@ -292,13 +291,23 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now phansora-api
 ```
 
+The two drop-ins only set environment for the unit:
+- `cuda-env.conf` puts the CUDA 12.6 toolkit (`nvcc`) and gcc-toolset-12 on the unit's
+  PATH, with `CUDA_HOME`, `CC`/`CXX` and the venv's `bin`, for anything that compiles CUDA
+  ops when it loads. It was written for the retired DeepSpeed engine; CosyVoice's vLLM
+  ships precompiled ops, but the drop-in is still installed on prod (see its header). The
+  toolkit it points at is installed by `scripts/install-cuda-toolkit.sh`.
+- `zz-arch.conf` sets `TORCH_CUDA_ARCH_LIST=8.6` (the RTX A4000), so a CUDA kernel build
+  targets this card instead of every architecture. Change it on another GPU.
+
 Both processes log to `journalctl -u phansora-api` (the worker's lines say
 `book_alchemy.worker`). Two nginx settings this API needs:
 - `proxy_read_timeout 300s` — the first TTS request after a restart loads the model
   (~10–30 s on GPU) and otherwise times out; generations themselves are quick.
-- `client_max_body_size 25m` — create-voice uploads a reference clip; nginx's 1 MB
-  default returns **413** for anything larger (the app trims the clip to 9s, but only
-  after it arrives).
+- `client_max_body_size 352m` — books, scanned PDFs and long audio run to hundreds of MB,
+  and nginx's 1 MB default returns **413** for anything larger. The app enforces the same
+  352 MB itself (`shared/utils/uploads.py`), for the callers that reach it without nginx.
+  The vhost is in `deploy/nginx/api.phansora.com.conf`.
 
 One uvicorn worker (the GPU model is loaded once per process). After editing `.env`,
 `systemctl restart phansora-api`.
@@ -309,9 +318,22 @@ make run      # the prod-ish command systemd wraps: uvicorn --workers 1
 
 ## Endpoints
 
-- `GET /health` — health + mounted products
+- `GET /health` — 200 when every product is mounted, 503 naming any that failed to load
 - `GET /spokenverse/tts-options` — TTS backend + available settings
-- `…/spokenverse/*`, `…/chrono/*`, `…/dossier/*` — each product's routes
+- `…/spokenverse/*`, `…/book-alchemy/*`, `…/chrono/*`, `…/research-atlas/*` (also
+  `…/dossier/*`), `…/studio/*`, `…/talari/*` — each product's routes
+- `/contact`, `/convert`, `/admin/*` — on the core app (`/admin` needs `X-Admin-Key`)
+
+## Tests and lint
+
+```bash
+pip install -r requirements-ci.txt   # the suite's deps, without the GPU stack
+make test                            # pytest -q
+make lint                            # ruff check
+```
+
+CI (`.github/workflows/ci.yml`) runs both on every push to `main` and every pull request,
+on Python 3.12 with ffmpeg installed.
 
 ## SpokenVerse txt → audio: chunking & concatenation
 
@@ -394,9 +416,10 @@ or its torch/vLLM pins** — several of these cost real time.
 6. **No emotion control.** CosyVoice has no emotion vector/intensity knob (that was IndexTTS2).
    Only `speed` (0.5–2.0×, native) remains. Don't wire emotion sliders back into the UI.
 
-7. **No CUDA toolkit / nvcc required.** vLLM ships precompiled CUDA ops in its
-   wheels; the box needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh` and the
-   `cuda-env.conf` systemd drop-in are legacy (DeepSpeed) and no longer needed for TTS.
+7. **No CUDA toolkit / nvcc required by the engine.** vLLM ships precompiled CUDA ops in
+   its wheels; the TTS engine needs only the NVIDIA driver. `scripts/install-cuda-toolkit.sh`
+   and the `cuda-env.conf` systemd drop-in were written for DeepSpeed; the drop-in is still
+   installed on prod.
 
 8. **CosyVoice silently drops/skips words on long inference chunks — cap chunks at ~200 chars.**
    Given a long text in a single `inference_zero_shot` call, CosyVoice intermittently stops

@@ -3,15 +3,17 @@
 Each product ships a self-contained FastAPI app (``phansora.products.<name>``).
 This module composes them into one process, mounting each under a path prefix:
 
-    /spokenverse/*   -> SpokenVerse (PDF/OCR, text->audio, Book Alchemy)
-    /chrono/*        -> Chrono-Origin (story/myth origin tracing)
+    /spokenverse/*    -> SpokenVerse (PDF/OCR, text->audio, audio->text, voices)
+    /book-alchemy/*   -> Book Alchemy (a book turned into a narrated audio course)
+    /chrono/*         -> Chrono-Origin (story/myth origin tracing)
     /research-atlas/* -> Research Atlas (organizes research material into a report)
-    /talari/*        -> Talari Book Creator (illustrated books: DeepSeek writing, ComfyUI illustrations)
-    /dossier/*       -> alias of /research-atlas, kept so the Node worker keeps
-                        resolving during the rename; remove once it points at the new prefix
+    /studio/*         -> Narrava Studio (documentary editor: script, storyboard, AI media)
+    /talari/*         -> Talari Book Creator (illustrated books: DeepSeek writing, ComfyUI illustrations)
+    /dossier/*        -> alias of /research-atlas, kept so the Node worker keeps
+                         resolving during the rename; remove once it points at the new prefix
 
 A product is mounted only if it imports cleanly, so a host that is missing one
-product's optional heavy dependencies (torch, cosyvoice2, vllm, asyncpg, ...)
+product's optional heavy dependencies (torch, CosyVoice, vllm, asyncpg, ...)
 still serves the others instead of failing to boot. Each mounted sub-app keeps
 its own startup/shutdown lifespan — we propagate those from the parent lifespan
 below. Auth and CORS are applied once, here, around all of them.

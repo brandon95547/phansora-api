@@ -1,8 +1,16 @@
 # What happens when you start a Chrono Origin trace
 
-Every number here is read from the code as it runs today, not from an older design
-note. Where a figure is configurable the setting is named, so it can be checked
-rather than trusted.
+> **Out of date — this describes the synthesis pipeline, which no longer runs.** A trace
+> today is one grounded research call whose answer is a `Title — Date` list, read by a
+> parser (`pipeline/dated_list.py`), not a model: no page reading, no extraction call, no
+> evidence dossiers, conclusions or connections. See `TraceOrchestrator.run` in
+> `pipeline/orchestrator.py`. The synthesis code this page walks through, and the
+> settings it names (`chrono_read_sources`, `chrono_max_connections`, ...), were removed
+> from the tree; they are kept at the git tag `parked/chrono-synthesis`. The chain rule
+> below still describes what a trace is for.
+
+Every number here was read from the code when the synthesis pipeline ran. Where a
+figure was configurable the setting is named.
 
 The short version: **2 model calls, 12 page fetches, one JSON generation.** One
 grounded research call in which the model runs its own web searches, then one call

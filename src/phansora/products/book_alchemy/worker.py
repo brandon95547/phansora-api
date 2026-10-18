@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Book Alchemy background worker.
 
-A standalone, durable processor for long-running Book Alchemy jobs. It is
-deliberately a SEPARATE process from the FastAPI app so that:
+A durable processor for long-running Book Alchemy jobs. It is its own PROCESS,
+apart from the FastAPI app, so that:
 
-  * job processing survives independently of the `--workers N` API,
+  * job processing survives independently of the API process,
   * there is no in-memory job state (Postgres is the source of truth),
-  * a crash mid-book is recovered automatically — another worker reclaims the
-    project once its lease expires and resumes from the last committed phase.
+  * a crash mid-book is recovered automatically — the worker is started again, and
+    it (or another one) reclaims the project once its lease expires and resumes from
+    the last committed phase.
 
 Run:
-    python -m phansora.products.book_alchemy.worker
-Deploy as the systemd unit `book-alchemy-worker.service` (single instance to
-start; the SKIP LOCKED claim design already allows scaling to N workers later).
+    python -m phansora.products.book_alchemy.worker     (make worker, in development)
+In production it runs inside phansora-api.service, beside uvicorn: the unit's
+ExecStart starts it in a restart loop (see deploy/phansora-api.service). One instance
+today; the SKIP LOCKED claim design already allows scaling to N workers later.
 
 Several users' books share this process. It runs CONCURRENCY lanes, and a lane
 holds a book for one TURN (about TURN_SECONDS of work, always at least one step)

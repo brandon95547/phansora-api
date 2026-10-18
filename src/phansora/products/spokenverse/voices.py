@@ -1,6 +1,6 @@
-"""Per-user custom voices for CosyVoice2 voice cloning.
+"""Per-user custom voices for CosyVoice voice cloning.
 
-A "voice" is a short reference audio clip the user uploads; CosyVoice2 clones it
+A "voice" is a short reference audio clip the user uploads; CosyVoice clones it
 at synthesis time (the clip path + its transcript ``ref_text`` are passed as the
 reference — CosyVoice conditions on the transcript). Uploads are trimmed
 to at most ``MAX_SECONDS`` and normalized to 24 kHz mono WAV. Clips and a small
@@ -47,12 +47,12 @@ from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client impor
 )
 from phansora.shared.paths import assets_dir, runtime_dir
 
-# CosyVoice2 works best with a 3-10 second reference clip (longer errors out). We keep
+# CosyVoice works best with a 3-10 second reference clip (longer errors out). We keep
 # the first 9s (safely inside the range) — this clip is what it clones from, and
 # it's also what gets auto-transcribed, so the two stay in sync.
 MAX_SECONDS = 9
 # We never end the reference on a hard mid-word cut: that leaves the prompt audio with no
-# "the speaker stopped" boundary (CosyVoice2 then leaks ~1s of prompt-like audio at the
+# "the speaker stopped" boundary (CosyVoice then leaks ~1s of prompt-like audio at the
 # start of every clone) and yields a half-sentence transcript with no closing punctuation.
 # Instead we cut at the last natural pause within the window and pad a little trailing
 # silence, so the clip ends cleanly after a whole word. Only accept a pause once we've kept
@@ -63,13 +63,13 @@ TRAILING_SILENCE_SECONDS = 0.5
 # silencedetect thresholds: treat < -35 dB for >= 0.3s as a pause (inter-word/sentence gap).
 _SILENCE_NOISE_DB = "-35dB"
 _SILENCE_MIN_DUR = 0.3
-# CosyVoice2 reference clips: 24 kHz mono.
+# CosyVoice reference clips: 24 kHz mono.
 _SAMPLE_RATE = 24000
 # Pending clips (uploaded but never approved or discarded) are pruned after this
 # long, so abandoned previews don't accumulate on disk forever.
 PENDING_TTL_SECONDS = 6 * 3600
 
-# Per-voice generation knobs, mirroring the options CosyVoice2 supports. These are
+# Per-voice generation knobs, mirroring the options CosyVoice supports. These are
 # captured at approval and reapplied when the voice is later used for TTS. CosyVoice
 # clones from the clip PLUS its transcript, so the reference transcript (``ref_text``)
 # stored on the voice record is required at synthesis time (passed as prompt_text).
@@ -87,7 +87,7 @@ DEFAULTS_ID = "_defaults"
 
 
 def clamp_settings(language=None, speed=None, instruct_text=None) -> dict:
-    """Coerce/clamp CosyVoice2 generation knobs to supported ranges, filling defaults."""
+    """Coerce/clamp CosyVoice generation knobs to supported ranges, filling defaults."""
     lang = (str(language).strip().lower() if language else "")
     out = {"language": lang if lang in LANGUAGES else LANGUAGE_DEFAULT}
     try:
@@ -257,7 +257,7 @@ def create_pending(user_id: str, upload_path: Path) -> dict:
 
 
 def pending_path(user_id: str, token: str) -> Optional[Path]:
-    """The pending reference clip (what CosyVoice2 clones from)."""
+    """The pending reference clip (what CosyVoice clones from)."""
     p = _pending_dir(user_id) / f"{_safe_token(token)}.wav"
     return p if p.exists() else None
 

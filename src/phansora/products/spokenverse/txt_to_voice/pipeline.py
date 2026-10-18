@@ -1,6 +1,6 @@
 # src/txt_to_voice/pipeline.py
 #
-# Batch TXT -> Audio pipeline (CosyVoice2 backend).
+# Batch TXT -> Audio pipeline (CosyVoice backend).
 # Supports chunk-level and file-level concurrency to speed up larger batches.
 
 from __future__ import annotations
@@ -27,24 +27,24 @@ LOG = logging.getLogger("txt_to_voice")
 
 
 def _default_engine() -> str:
-    # Resolves to "cosyvoice2" (the only engine); honors TTS_ENGINE for validation.
+    # Resolves to "cosyvoice3" (the only engine); honors TTS_ENGINE for validation.
     return resolve_engine(None)
 
 
 @dataclass(frozen=True)
 class TTSConfig:
-    voice: str  # CosyVoice2 reference-clip path, or "default" for the built-in voice
+    voice: str  # CosyVoice reference-clip path, or "default" for the built-in voice
     use_gpu: bool  # whether to request CUDA in the TTS backend
-    rate: str  # accepted for compatibility; ignored by CosyVoice2
-    volume: str  # accepted for compatibility; ignored by CosyVoice2
+    rate: str  # accepted for compatibility; ignored by CosyVoice
+    volume: str  # accepted for compatibility; ignored by CosyVoice
     output_format: str  # "mp3" or "wav"
     chunk_chars: int = 2500
     speaker: Optional[str] = None  # optional alias; treated as a reference-clip path
     language: Optional[str] = None  # en/zh/ja/ko/yue/auto
 
-    # TTS engine ("cosyvoice2"); kept for forward-compatibility.
+    # TTS engine ("cosyvoice3"); kept for forward-compatibility.
     engine: str = field(default_factory=_default_engine)
-    # CosyVoice2 reference clip for voice cloning.
+    # CosyVoice reference clip for voice cloning.
     ref_audio: Optional[str] = None
     # Transcript of the reference clip. CosyVoice conditions on it (REQUIRED for cloning);
     # cloned voices store it as ``ref_text``. None => engine's COSYVOICE3_DEFAULT_REF_TEXT.
@@ -55,7 +55,7 @@ class TTSConfig:
     # How many TXT files to process concurrently.
     file_concurrency: int = 1
 
-    # CosyVoice2 knobs; None => engine/env defaults.
+    # CosyVoice knobs; None => engine/env defaults.
     speed: Optional[float] = None  # 0.5-2.0 (native mel time-scaling)
     # Delivery direction routed through inference_instruct2 ("speak in a calm tone").
     # None/empty => plain zero-shot cloning.

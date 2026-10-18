@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 LOG = logging.getLogger("txt_to_voice")
 
 # Engines that used to exist here; a leftover TTS_ENGINE / --engine pointing at one
-# degrades to CosyVoice2 with a warning rather than crashing every request.
+# degrades to Fun-CosyVoice 3 with a warning rather than crashing every request.
 _RETIRED_ALIASES = {
     "indextts2", "indextts", "index-tts2", "index_tts2", "index-tts", "indextts-2",
     "gptsovits", "gpt-sovits", "gpt_sovits", "sovits", "gsv",

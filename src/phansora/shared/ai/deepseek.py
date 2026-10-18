@@ -1,14 +1,14 @@
-# src/services/deepseek_cleaner.py
+# src/phansora/shared/ai/deepseek.py
 #
-# Raw OCR text -> cleaned, readable book text using DeepSeek Chat (text-only endpoint)
+# The shared DeepSeek chat helper: its config (DeepSeekChatConfig), the one HTTP call with
+# its retries (_chat_completion), and raw OCR text -> cleaned, readable book text
+# (clean_ocr_text). SpokenVerse, Book Alchemy and Talari call through it.
 #
 # Env vars (via .env):
-#   DEEPSEEK_CHAT_BASE_URL=https://api.deepseek.com
-#   DEEPSEEK_CHAT_API_KEY=...
-#   DEEPSEEK_CHAT_MODEL=deepseek-v4-flash   (or whatever your provider uses)
-#
-# Python deps:
-#   python -m pip install aiohttp python-dotenv
+#   DEEPSEEK_BASE_URL=https://api.deepseek.com
+#   DEEPSEEK_API_KEY=...
+#   DEEPSEEK_MODEL=deepseek-v4-flash   (or a <PRODUCT>_MODEL; see shared/ai/models.py)
+# The older DEEPSEEK_CHAT_* names are still read as a fallback.
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class DeepSeekChatConfig:
         """``product_var`` names this product's model override (e.g. "BOOK_ALCHEMY_MODEL");
         when set it beats DEEPSEEK_MODEL. See shared.ai.models for the full order."""
         # Canonical vars are DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL
-        # (shared with Dossier Nova). The legacy DEEPSEEK_CHAT_* names are still
+        # (shared with Research Atlas). The legacy DEEPSEEK_CHAT_* names are still
         # honored as a fallback so existing deployments keep working.
         base_url = (
             os.getenv("DEEPSEEK_BASE_URL")
