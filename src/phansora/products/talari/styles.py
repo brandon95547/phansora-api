@@ -94,6 +94,61 @@ ART_STYLES: dict[str, str] = {
     "comic-book": "comic book art, bold inked outlines, dynamic poses, halftone shading, vivid primary colors",
 }
 
+# Each art style's substyles (model.js SUBSTYLES): the art style it belongs to, and its own
+# words, used instead of the art style's — a substyle is a more particular way of it. Ids are
+# unique across art styles. A substyle sent with another art style is not used.
+SUBSTYLES: dict[str, tuple[str, str]] = {
+    "photorealism": ("realism", "photorealistic painting, crisp sharp detail, precise light and reflections, as exact as a photograph"),
+    "fantastic-realism": ("realism", "fantastic realism, mythic and otherworldly subjects painted with meticulous lifelike detail"),
+    "biomechanical": ("realism", "biomechanical art, organic forms fused with machinery, ribbed metallic textures, intricate surreal anatomy"),
+    "magical-realism": ("realism", "magical realism, an everyday scene painted realistically with one quiet impossible element, calm luminous mood"),
+    "french-impressionism": ("impressionism", "French impressionist painting, broken brushstrokes, shimmering outdoor light, soft blues and greens, painted en plein air"),
+    "american-impressionism": ("impressionism", "American impressionist painting, bright sunlit color, softly broken brushwork, gracious figures and landscapes"),
+    "tonalism": ("impressionism", "tonalist painting, a soft muted palette of grays and browns, misty dusk atmosphere, quiet mood"),
+    "neo-impressionism": ("impressionism", "neo-impressionist pointillism, small dots of pure color, divisionist technique, luminous optical mixing"),
+    "german-expressionism": ("expressionism", "German expressionist art, jagged angular forms, harsh contrasting color, raw emotional intensity"),
+    "abstract-expressionism": ("expressionism", "abstract expressionist painting, large gestural brushstrokes, drips and splatters, raw energetic color"),
+    "neo-expressionism": ("expressionism", "neo-expressionist painting, crude raw figures, thick violent brushwork, vivid clashing color"),
+    "fauvism": ("expressionism", "fauvist painting, wild unnatural pure color, flat bold areas, loose expressive brushwork"),
+    "dreamlike-surrealism": ("surrealism", "dreamlike surrealist painting, impossible scenes rendered precisely, melting and floating forms, deep vistas"),
+    "automatism": ("surrealism", "surrealist automatism, spontaneous flowing lines, biomorphic shapes emerging from free abstract marks"),
+    "metaphysical-art": ("surrealism", "metaphysical painting, empty arcaded squares, long dramatic shadows, mannequins, enigmatic stillness"),
+    "pop-surrealism": ("surrealism", "pop surrealism, glossy cartoonish figures in uncanny dreamlike scenes, saturated candy colors"),
+    "geometric-abstraction": ("abstract", "geometric abstraction, precise circles, squares and lines, flat planes of color, balanced composition"),
+    "organic-abstraction": ("abstract", "organic abstraction, flowing biomorphic shapes, natural curves, soft layered color"),
+    "lyrical-abstraction": ("abstract", "lyrical abstraction, loose poetic brushwork, luminous washes, free flowing color"),
+    "color-field": ("abstract", "color field painting, broad expanses of flat soaked color, soft edges, meditative calm"),
+    "geometric-minimalism": ("minimalism", "geometric minimalism, a few precise geometric forms, strict alignment, vast empty space"),
+    "monochromatic-minimalism": ("minimalism", "monochromatic minimalism, one color in subtle tonal variations, a quiet near-empty composition"),
+    "hard-edge-painting": ("minimalism", "hard-edge painting, crisp sharp-edged shapes of flat color, high contrast, clean abrupt transitions"),
+    "french-art-nouveau": ("art-nouveau", "French art nouveau, sinuous whiplash curves, graceful figures with flowing hair, floral halos, soft poster colors"),
+    "vienna-secession": ("art-nouveau", "Vienna Secession style, geometric ornament, gold leaf mosaics, flat stylized figures, decorative patterning"),
+    "jugendstil": ("art-nouveau", "Jugendstil illustration, stylized botanical forms, bold flowing outlines, graphic decorative design"),
+    "glasgow-style": ("art-nouveau", "Glasgow style, elongated vertical lines, stylized roses, a restrained palette of mauve and green, delicate geometric ornament"),
+    "streamline-moderne": ("art-deco", "streamline moderne, sleek aerodynamic curves, horizontal speed lines, polished chrome, nautical motifs"),
+    "zigzag-moderne": ("art-deco", "zigzag moderne art deco, chevrons and zigzags, stepped forms, sunbursts, bold geometric ornament"),
+    "egyptian-revival": ("art-deco", "Egyptian revival art deco, lotus and scarab motifs, pyramids, gold, lapis and black, symmetrical stylized figures"),
+    "hollywood-regency": ("art-deco", "Hollywood Regency glamour, lacquered surfaces, gold and mirrored accents, opulent velvet, dramatic luxury"),
+    "renaissance": ("classical", "Renaissance painting, harmonious balanced composition, linear perspective, idealized figures, soft sfumato"),
+    "baroque": ("classical", "Baroque painting, dramatic chiaroscuro, rich deep color, dynamic movement, theatrical light"),
+    "rococo": ("classical", "Rococo painting, playful pastel colors, light airy brushwork, ornate scrolls, romantic garden scenes"),
+    "neoclassicism": ("classical", "Neoclassical painting, clean precise lines, calm restrained composition, classical antiquity, cool even light"),
+    "classic-cartoon": ("cartoon", "classic cartoon style, golden-age animation, bouncy characters, bold outlines, warm vintage colors"),
+    "rubber-hose": ("cartoon", "rubber hose cartoon, 1930s animation, noodle limbs, pie-cut eyes, white gloves, muted vintage color"),
+    "storybook-cartoon": ("cartoon", "storybook cartoon illustration, gentle rounded characters, soft textured color, cozy picture-book charm"),
+    "modern-cartoon": ("cartoon", "modern cartoon style, flat vector shapes, thick clean lines, bold saturated colors, simple geometric characters"),
+    "shonen": ("anime", "shōnen anime and manga style, dynamic action, sharp angular lines, intense expressions, speed lines"),
+    "shojo": ("anime", "shōjo manga style, delicate fine lines, large sparkling eyes, flowers and soft tones, romantic mood"),
+    "seinen": ("anime", "seinen manga style, realistic proportions, mature gritty atmosphere, detailed heavy shading"),
+    "josei": ("anime", "josei manga style, elegant realistic adults, refined fine linework, understated muted colors"),
+    "chibi": ("anime", "chibi anime style, tiny super-deformed characters, oversized heads, cute simple features"),
+    "golden-age": ("comic-book", "golden age comic book art, 1940s, simple bold inks, flat primary colors, halftone dots, heroic poses"),
+    "silver-age": ("comic-book", "silver age comic book art, 1960s, clean confident inking, bright flat color, dramatic dynamic panels"),
+    "bronze-age": ("comic-book", "bronze age comic book art, 1970s, moodier realistic rendering, heavier shadows, richer color"),
+    "modern-comics": ("comic-book", "modern comic book art, detailed linework, digital coloring, cinematic lighting, dynamic composition"),
+    "european-comics": ("comic-book", "European bande dessinée, ligne claire, clean even outlines, flat clear colors, detailed backgrounds"),
+}
+
 MEDIUMS: dict[str, str] = {
     "auto": "",
     "watercolor": "watercolor, soft translucent washes, visible paper grain, loose wet edges",
@@ -110,11 +165,15 @@ MEDIUMS: dict[str, str] = {
 }
 
 
-def look_text(art_style: str | None, medium: str | None = None) -> str:
-    """An art style's words, then its medium's; empty for an art style this API does not know."""
+def look_text(art_style: str | None, medium: str | None = None, substyle: str | None = None) -> str:
+    """An art style's words (its substyle's, when it has one of its own), then its medium's;
+    empty for an art style this API does not know."""
     art = ART_STYLES.get(art_style or "")
     if not art:
         return ""
+    parent, words = SUBSTYLES.get(substyle or "", ("", ""))
+    if words and parent == art_style:
+        art = words
     return ", ".join(part for part in (art, MEDIUMS.get(medium or "auto", "")) if part)
 
 
@@ -155,10 +214,12 @@ def custom_style_text(custom_style: str | None) -> str:
     return re.sub(r"\s+([,;.])", r"\1", _clean(text))[:CUSTOM_STYLE_MAX]
 
 
-def style_text(style_id: str, custom_style: str | None = None, art_style: str | None = None, medium: str | None = None) -> str:
+def style_text(
+    style_id: str, custom_style: str | None = None, art_style: str | None = None, medium: str | None = None, substyle: str | None = None
+) -> str:
     """The style's prompt language: what a picture in this style looks like. A known art style
-    (with its medium) wins over the older single style id."""
-    look = look_text(art_style, medium)
+    (with its substyle and medium) wins over the older single style id."""
+    look = look_text(art_style, medium, substyle)
     if look:
         return look
     if style_id == NO_STYLE:
@@ -181,6 +242,7 @@ def build_prompts(
     detail: str = "balanced",
     art_style: str | None = None,
     medium: str | None = None,
+    substyle: str | None = None,
 ) -> tuple[str, str]:
     """The positive and negative prompt for one picture.
 
@@ -189,7 +251,7 @@ def build_prompts(
     unknown id does; "none" adds no style's words at all.
     """
     custom = custom_style_text(custom_style) if style_id == CUSTOM_STYLE else ""
-    look = look_text(art_style, medium)
+    look = look_text(art_style, medium, substyle)
     if look:
         style = Style(look)
     elif style_id == NO_STYLE:

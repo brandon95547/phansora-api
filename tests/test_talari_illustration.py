@@ -596,3 +596,21 @@ def test_a_page_filling_picture_is_enlarged(client: TestClient, network: Recorde
 def test_an_enlargement_is_capped_at_twice(client: TestClient, network: Recorder) -> None:
     network.handler = comfy()
     assert client.post("/users/7/illustrations", json={**REQUEST, "upscale": 3}).status_code == 422
+
+
+def test_a_substyle_is_drawn_in_its_own_words_and_only_with_its_art_style() -> None:
+    from phansora.products.talari.styles import look_text
+
+    assert look_text("art-nouveau", "watercolor", "vienna-secession").startswith("Vienna Secession style, geometric ornament")
+    assert "watercolor" in look_text("art-nouveau", "watercolor", "vienna-secession")
+    # Another art style's substyle, or none: the art style as it is.
+    assert look_text("art-deco", "auto", "vienna-secession") == look_text("art-deco", "auto")
+    assert look_text("art-nouveau", "auto", None).startswith("art nouveau illustration")
+
+
+def test_a_picture_is_drawn_in_its_substyle(client: TestClient, network: Recorder) -> None:
+    network.handler = comfy()
+    response = client.post("/users/7/illustrations", json={**REQUEST, "artStyle": "comic-book", "substyle": "golden-age", "medium": "auto"})
+    assert response.status_code == 200, response.text
+    text = network.bodies("/prompt")[0]["prompt"]["2"]["inputs"]["text"]
+    assert "golden age comic book art" in text and "bold inked outlines" not in text

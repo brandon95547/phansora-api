@@ -507,7 +507,7 @@ async def illustration_prompts(request: IllustrationPromptsRequest) -> Illustrat
         raise ServiceError("The chapter has no text to illustrate.", status=422)
     # Without a style (a chapter asking for pictures has none to give), none is named.
     style = (
-        style_text(request.style_id, request.custom_style, request.art_style, request.medium)
+        style_text(request.style_id, request.custom_style, request.art_style, request.medium, request.substyle)
         if request.style_id or request.art_style
         else ""
     )

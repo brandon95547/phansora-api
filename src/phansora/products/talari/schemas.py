@@ -31,6 +31,8 @@ class IllustrationRequest(Model):
     # style decide). A known art style wins over style_id, which older books still send.
     art_style: str | None = Field(default=None, max_length=40)
     medium: str | None = Field(default=None, max_length=40)
+    # A substyle of the art style (styles.py SUBSTYLES); another art style's is not used.
+    substyle: str | None = Field(default=None, max_length=40)
     # Image-to-image: a picture to redraw instead of drawing from nothing — base64 of a PNG,
     # JPEG or WebP — and how far to move from it. `strength` is the sampler's denoise: near 0
     # keeps the reference as it is, 1 ignores it entirely.
@@ -439,6 +441,8 @@ class IllustrationPromptsRequest(Lenient):
     custom_style: str | None = Field(default=None, max_length=400)
     art_style: str | None = Field(default=None, max_length=40)
     medium: str | None = Field(default=None, max_length=40)
+    # A substyle of the art style (styles.py SUBSTYLES); another art style's is not used.
+    substyle: str | None = Field(default=None, max_length=40)
     count: int = Field(default=1, ge=1, le=6)
     purpose: Literal["interior", "cover"] = "interior"
 
