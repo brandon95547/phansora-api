@@ -1,26 +1,18 @@
 [project]
 name = "phansora-api"
 version = "0.1.0"
-description = "Phansora platform API — unified backend for SpokenVerse, Chrono-Origin and Dossier Nova."
+description = "Phansora platform API — one FastAPI backend for SpokenVerse, Book Alchemy, Chrono-Origin, Research Atlas, Narrava Studio and Talari."
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 readme = "README.md"
 
-# The full, install-order-sensitive dependency set (incl. the torch CUDA index)
-# lives in requirements.txt. Install with:  pip install -r requirements.txt
-dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "python-multipart",
-    "python-dotenv",
-    "httpx",
-    "aiohttp",
-    "tenacity",
-    "orjson",
-    "openai>=2.0.0",
-    "pydantic>=2.6",
-    "pydantic-settings>=2.2",
-]
+# Deliberately empty: the dependencies live in the requirements files, pinned, and
+# nowhere else, so there is one list to keep right rather than two that drift.
+#   requirements.txt      prod: the whole set, install-order-sensitive, CUDA torch wheels
+#   requirements-ci.txt   the tests: the same versions without the GPU stack
+# Install one of those first (`make install` does), then `pip install -e .`, which adds
+# only this package and its `phansora` command.
+dependencies = []
 
 [project.scripts]
 phansora = "phansora.cli:main"

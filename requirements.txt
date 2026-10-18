@@ -1,5 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Phansora API — consolidated dependencies (spokenverse + chrono_origin + dossier_nova)
+# Phansora API — consolidated dependencies for every product (SpokenVerse, Book Alchemy,
+# Chrono-Origin, Research Atlas, Narrava Studio, Talari). requirements-ci.txt is the
+# GPU-free subset the tests run against, at these same versions.
 #
 # Torch baseline: aligned to the CosyVoice TTS engine's vLLM backend (torch 2.7.0,
 # CUDA 12.6). vLLM 0.9.0 HARD-PINS torch==2.7.0 (and pulls xformers/torchvision that
@@ -62,10 +64,11 @@ filelock>=3.16.1
 networkx>=3.1,<4
 
 # ── Web framework (all products) ──
-# PINNED, like torch and vllm below, and for the same reason: a redeploy that quietly
+# PINNED, like torch and vllm above, and for the same reason: a redeploy that quietly
 # moves a major version is a production change nobody reviewed. These floated while the
 # heavy ML stack was pinned, which put the drift risk exactly where the request path is.
-# The versions are the ones prod runs today (`pip freeze` on the server).
+# The versions here and in every section below are the ones prod runs (`pip freeze` on
+# the server).
 fastapi==0.115.6
 uvicorn[standard]==0.30.0
 python-multipart==0.0.12
@@ -74,40 +77,38 @@ python-multipart==0.0.12
 python-dotenv==1.2.2
 httpx==0.28.1
 aiohttp==3.14.1
-tenacity
-orjson
+tenacity==9.1.4
 
 # ── AI clients ──
 # anthropic in particular: animation.py calls the version-sensitive
 # client.messages.stream(output_config=…, thinking=…), which a floating major can break
 # on a deploy that changed nothing else.
-openai==2.45.0           # chrono_origin (GPT-5 Nano — Responses API + web_search); dossier_nova (DeepSeek via OpenAI-compatible API)
+openai==2.45.0           # chrono_origin (GPT-5 Nano — Responses API + web_search); research_atlas (DeepSeek via OpenAI-compatible API)
 anthropic==0.116.0       # narrava_studio (Claude Sonnet 4.6 — AI media animation generation)
 pydantic==2.13.4         # chrono_origin models — >=2.9 also required by vLLM 0.9.0
 pydantic-settings==2.14.2  # chrono_origin settings
 
 # ── SpokenVerse: TTS + media ──
-# (CosyVoice 2 TTS engine is a separate git+requirements prod install — see header note.)
+# (The CosyVoice TTS engine is a separate git+requirements prod install — see header note.)
+#
+# NOT listed, on purpose: modelscope (1.20.0 on prod). `make install-tts` uses it to
+# download the CosyVoice model, and it arrives with CosyVoice's own requirements in that
+# same step; nothing in src imports it.
 numba<0.61; sys_platform == "darwin" and platform_machine == "x86_64"
-pymupdf
-pillow
-pytesseract
-faster-whisper
-aiosmtplib
-
-# ── SpokenVerse Book Alchemy: source parsing + Postgres ──
-asyncpg
-python-docx
-ebooklib
-beautifulsoup4
-trafilatura
-markdown
-mobi
-
-# ── Dossier Nova: local embeddings ──
-# transformers pinned to 4.51.3 — required by CosyVoice's vLLM 0.9.0 backend and
-# compatible with sentence-transformers 5.x (needs >=4.41).
-faiss-cpu>=1.7.4
+pymupdf==1.28.2
+pillow==11.3.0
+pytesseract==0.3.13
+faster-whisper==1.2.1
+aiosmtplib==5.1.2
+# Pinned to 4.51.3 for CosyVoice's vLLM 0.9.0 backend, so CosyVoice's own requirements
+# install cannot move it.
 transformers==4.51.3
-sentence-transformers>=5.0
+
+# ── Book Alchemy and Talari: source parsing; Book Alchemy: Postgres ──
+asyncpg==0.31.0
+python-docx==1.2.0
+EbookLib==0.20
+beautifulsoup4==4.15.0
+trafilatura==2.2.0
+mobi==0.4.1
 
