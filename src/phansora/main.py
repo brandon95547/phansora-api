@@ -13,8 +13,8 @@ This module composes them into one process, mounting each under a path prefix:
 A product is mounted only if it imports cleanly, so a host that is missing one
 product's optional heavy dependencies (torch, cosyvoice2, vllm, asyncpg, ...)
 still serves the others instead of failing to boot. Each mounted sub-app keeps
-its own middleware and startup/shutdown lifespan — we propagate those from the
-parent lifespan below.
+its own startup/shutdown lifespan — we propagate those from the parent lifespan
+below. Auth and CORS are applied once, here, around all of them.
 
 Run with:  uvicorn phansora.main:app --host 0.0.0.0 --port 8000
 """
@@ -36,6 +36,12 @@ from phansora.shared.auth import AuthGate
 from phansora.shared.contact import router as contact_router
 from phansora.shared.conversions.router import router as conversions_router
 
+# The process's logging is set up here, once, before any product is imported. uvicorn
+# configures only its own loggers, so without this the products' INFO lines (a job
+# starting, a model loading) are dropped. It used to happen as a side effect of importing
+# Chrono-Origin, which configured the root logger for every product in the process and
+# missed whatever was logged before Chrono loaded. A no-op when logging is already set up.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("phansora")
 
 # prefix -> "module:attr" of the product's FastAPI app
@@ -103,14 +109,14 @@ app.add_middleware(
     allow_origins=settings.cors_allow_origins,
     # No cookies cross this API — auth is a bearer token or an internal header —
     # and wildcard origins with credentials is the one combination the CORS spec
-    # forbids outright. The sub-apps already say False for the same reason.
+    # forbids outright.
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     # Readable cross-origin only if named here. Retry-After is how a busy voice service
     # tells the browser when to come back — unexposed, the browser saw null and guessed.
-    # Content-Disposition is what SpokenVerse and Book Alchemy already expose for
-    # downloads; this outer layer's value replaces theirs, so it must carry it too.
+    # Content-Disposition names SpokenVerse and Book Alchemy downloads. This is the only
+    # CORS layer: the products add none of their own.
     expose_headers=["Retry-After", "Content-Disposition"],
 )
 

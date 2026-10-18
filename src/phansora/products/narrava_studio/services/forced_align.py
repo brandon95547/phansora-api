@@ -131,7 +131,9 @@ def _decode(path: str, start: float, end: float):
     if end > start:
         argv += ["-t", f"{end - start:.3f}"]
     argv += ["-f", "f32le", "-ac", "1", "-ar", str(SAMPLE_RATE), "-"]
-    raw = subprocess.run(argv, capture_output=True, check=True).stdout
+    # Decoding even a whole album to 16 kHz mono takes seconds; ten minutes only stops a
+    # hung ffmpeg from holding the GPU lane this runs under.
+    raw = subprocess.run(argv, capture_output=True, check=True, timeout=600).stdout
     if not raw:
         raise ForcedAlignUnavailable("The audio could not be decoded for alignment.")
     return torch.from_numpy(np.frombuffer(raw, dtype="float32").copy()).unsqueeze(0)

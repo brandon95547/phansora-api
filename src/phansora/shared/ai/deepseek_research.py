@@ -25,11 +25,17 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
 from .research import GroundedAnswer
+from .retries import ProviderError, worth_retrying
 from .search import SearchConfig, SearchResult, web_search
+
+
+def _worth_retrying(exc: BaseException) -> bool:
+    """A timeout, a dropped connection or a 408/429/5xx; never a 4xx refusal."""
+    return worth_retrying(exc, (httpx.TransportError,))
 
 
 # The ceiling the truncation retry may escalate to. Past this a prompt is not merely
@@ -128,7 +134,14 @@ class DeepSeekResearchClient:
         self._search_cfg = SearchConfig.from_env()
 
     # ------------------------------------------------------------- chat plumbing
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    # reraise: when the attempts run out, the caller gets DeepSeek's own error rather
+    # than tenacity's RetryError wrapped around it.
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(min=1, max=8),
+        retry=retry_if_exception(_worth_retrying),
+        reraise=True,
+    )
     def _chat(
         self,
         *,
@@ -160,7 +173,9 @@ class DeepSeekResearchClient:
             timeout=self._cfg.timeout_s,
         )
         if resp.status_code >= 400:
-            raise RuntimeError(f"DeepSeek HTTP {resp.status_code}: {resp.text[:500]}")
+            raise ProviderError(
+                f"DeepSeek HTTP {resp.status_code}: {resp.text[:500]}", status=resp.status_code
+            )
         body = resp.json()
         usage.record_response(body)
         choices = body.get("choices") or []

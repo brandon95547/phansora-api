@@ -18,6 +18,7 @@ from typing import Any, Optional
 import aiohttp
 
 from phansora.shared.ai.deepseek import DeepSeekChatConfig  # reuse existing config/env
+from phansora.shared.ai.retries import ProviderError, worth_retrying
 # Shared with the reasoning-model client (shared/ai/deepseek_reasoner.py) — aliased to
 # their historical private names so call sites below read unchanged.
 from phansora.shared.ai.json_repair import (
@@ -212,7 +213,9 @@ class DeepSeekClient:
                             if resp.status == 400 and "thinking" in body and "thinking" in payload:
                                 payload.pop("thinking", None)
                                 continue
-                            raise RuntimeError(f"DeepSeek HTTP {resp.status}: {body[:800]}")
+                            raise ProviderError(
+                                f"DeepSeek HTTP {resp.status}: {body[:800]}", status=resp.status
+                            )
                         data = await resp.json()
                 choices = data.get("choices") or []
                 if not choices:
@@ -222,7 +225,11 @@ class DeepSeekClient:
                 return content, finish_reason
             except Exception as e:  # noqa: BLE001
                 last_err = e
-                if attempt >= cfg.max_retries:
+                # Only what a second attempt might change: a timeout, a dropped
+                # connection, a 429 or a 5xx. A 401 or 402 fails the same way every time.
+                if attempt >= cfg.max_retries or not worth_retrying(
+                    e, (aiohttp.ClientError, asyncio.TimeoutError)
+                ):
                     break
                 sleep_s = min(
                     cfg.max_retry_sleep_s,
@@ -230,4 +237,7 @@ class DeepSeekClient:
                 )
                 await asyncio.sleep(sleep_s)
 
-        raise RuntimeError(f"DeepSeek call failed after retries: {last_err}") from last_err
+        raise ProviderError(
+            f"DeepSeek call failed after {attempt + 1} attempt(s): {last_err}",
+            status=getattr(last_err, "status", None),
+        ) from last_err

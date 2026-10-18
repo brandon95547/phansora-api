@@ -13,7 +13,6 @@ load_dotenv()
 import asyncio  # noqa: E402
 
 from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 
@@ -23,7 +22,6 @@ from .pipeline.orchestrator import TraceOrchestrator  # noqa: E402
 from .services.cache import delete_cached  # noqa: E402
 from .services.job_manager import JobManager  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("chrono-origin")
 
 
@@ -54,14 +52,8 @@ app = FastAPI(
     dependencies=[Depends(enforce_user_scope)],
 )
 
-settings = get_settings()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS layer of its own: phansora.main wraps every mounted product in one, from the
+# same CORS_ALLOW_ORIGINS, and that outer layer's headers are the ones a browser sees.
 
 
 @app.get("/")

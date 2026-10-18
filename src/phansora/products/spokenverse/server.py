@@ -28,7 +28,6 @@ from typing import Literal, Optional
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 
 from . import admission
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
@@ -81,20 +80,8 @@ app = FastAPI(
     dependencies=[Depends(enforce_user_scope)],
 )
 
-_cors_origins_raw = os.getenv(
-    "CORS_ALLOW_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
-)
-_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
+# No CORS layer of its own: phansora.main wraps every mounted product in one, from the
+# same CORS_ALLOW_ORIGINS, and that outer layer's headers are the ones a browser sees.
 
 
 @app.get("/health")
@@ -814,56 +801,40 @@ async def voice_rename(voice_id: str, user_id: str = Form(...), name: str = Form
     return {"ok": True, "voice": rec}
 
 
+def _file_listing(root: Path, patterns: tuple[str, ...]) -> list[dict]:
+    """Files under ``root`` matching ``patterns``, newest first.
+
+    ``path`` is relative to ``root``. It used to be the absolute path on this server,
+    which told every caller how the disk is laid out and was of no use to any of them:
+    the download routes take the name.
+    """
+    found = []
+    for pattern in patterns:
+        for p in root.rglob(pattern):
+            if not p.is_file():
+                continue
+            st = p.stat()
+            found.append(
+                {
+                    "name": p.name,
+                    "path": p.relative_to(root).as_posix(),
+                    "size_bytes": st.st_size,
+                    "modified_utc": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                }
+            )
+    return sorted(found, key=lambda x: x["modified_utc"], reverse=True)
+
+
 @app.get("/users/{user_id}/history")
 async def get_user_history(user_id: str) -> dict:
     safe_user = _safe_user_id(user_id)
     user_txt_dir = _user_txt_dir(safe_user)
     user_audio_dir = _user_audio_dir(safe_user)
 
-    txt_files = sorted(
-        [
-            {
-                "name": p.name,
-                "path": str(p),
-                "size_bytes": p.stat().st_size,
-                "modified_utc": datetime.fromtimestamp(
-                    p.stat().st_mtime, tz=timezone.utc
-                ).isoformat(),
-            }
-            for p in user_txt_dir.rglob("*.txt")
-            if p.is_file()
-        ],
-        key=lambda x: x["modified_utc"],
-        reverse=True,
-    )
-    audio_files = sorted(
-        [
-            {
-                "name": p.name,
-                "path": str(p),
-                "size_bytes": p.stat().st_size,
-                "modified_utc": datetime.fromtimestamp(
-                    p.stat().st_mtime, tz=timezone.utc
-                ).isoformat(),
-            }
-            for p in user_audio_dir.rglob("*.mp3")
-            if p.is_file()
-        ]
-        + [
-            {
-                "name": p.name,
-                "path": str(p),
-                "size_bytes": p.stat().st_size,
-                "modified_utc": datetime.fromtimestamp(
-                    p.stat().st_mtime, tz=timezone.utc
-                ).isoformat(),
-            }
-            for p in user_audio_dir.rglob("*.wav")
-            if p.is_file()
-        ],
-        key=lambda x: x["modified_utc"],
-        reverse=True,
-    )
+    # Walking a user's folders is blocking disk work; off the event loop, so a long
+    # history does not stall every other request on this single-worker process.
+    txt_files = await asyncio.to_thread(_file_listing, user_txt_dir, ("*.txt",))
+    audio_files = await asyncio.to_thread(_file_listing, user_audio_dir, ("*.mp3", "*.wav"))
 
     return {
         "user_id": safe_user,

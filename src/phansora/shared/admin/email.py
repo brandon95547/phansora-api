@@ -3,8 +3,8 @@
     POST /admin/email   {to, subject, message, reply_to?}
 
 Guarded by ``X-Admin-Key`` like the rest of ``/admin`` (``require_admin`` in
-``router.py``); the AuthGate lets ``/admin/`` through precisely because each route
-here checks that key itself. Only phansora.com's Node server holds it, and it calls
+``router.py``, a dependency of this router); the AuthGate lets ``/admin/`` through
+precisely because these routers check that key themselves. Only phansora.com's Node server holds it, and it calls
 this from ``POST /api/admin/users/:id/message``, behind the ADMIN_EMAIL session check.
 
 This is the one route that lets a caller choose the recipient. ``/contact`` is public
@@ -15,16 +15,16 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from phansora.shared.admin.router import require_admin
+from phansora.shared.errors import fail
 from phansora.shared.utils.email import send_message
 
 logger = logging.getLogger("phansora.admin")
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 MAX_SUBJECT = 200
 MAX_MESSAGE = 8000
@@ -40,11 +40,7 @@ def _address(value: object) -> str:
 
 
 @router.post("/email")
-async def email_user(
-    request: Request,
-    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
-) -> dict:
-    require_admin(x_admin_key)
+async def email_user(request: Request) -> dict:
     try:
         data = await request.json()
     except Exception:
@@ -66,8 +62,8 @@ async def email_user(
     try:
         await send_message(to, subject, message, _address(data.get("reply_to")))
     except Exception as e:
-        logger.exception("Admin email to %s failed", to)
-        raise HTTPException(status_code=502, detail=f"Failed to send email: {e}")
+        raise fail(502, "The email could not be sent.", e, logger=logger,
+                   context=f"Admin email to {to} failed") from e
 
     logger.info("Admin emailed %s: %s", to, subject)
     return {"ok": True}

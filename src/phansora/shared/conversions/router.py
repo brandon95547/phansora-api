@@ -7,6 +7,7 @@ supported download format. Product-agnostic; included on the core app in
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +15,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from phansora.shared.conversions.converters import convert, list_formats
+from phansora.shared.errors import fail
+
+logger = logging.getLogger("phansora.conversions")
 
 router = APIRouter(tags=["conversions"])
 
@@ -40,9 +44,10 @@ def do_convert(req: ConvertRequest) -> Response:
     try:
         content, media, ext = convert(req.format, req.document)
     except KeyError:
-        raise HTTPException(status_code=400, detail=f"Unsupported format: {req.format}")
-    except Exception as e:  # noqa: BLE001 — surface conversion errors cleanly
-        raise HTTPException(status_code=422, detail=f"Conversion failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {req.format}") from None
+    except Exception as e:  # noqa: BLE001 — a document the converter cannot handle
+        raise fail(422, "The timeline could not be converted.", e, logger=logger,
+                   context=f"Conversion to {req.format} failed") from e
     title = req.document.get("title") if isinstance(req.document, dict) else None
     name = _safe_name(req.filename or title or "timeline", ext)
     return Response(

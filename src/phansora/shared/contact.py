@@ -25,6 +25,7 @@ from typing import Deque, Dict
 from fastapi import APIRouter, HTTPException, Request
 
 from phansora.shared.auth import INTERNAL_KEY_HEADER, verify_internal_key
+from phansora.shared.errors import fail
 from phansora.shared.utils.email import send_email
 
 logger = logging.getLogger(__name__)
@@ -54,10 +55,16 @@ def _client_ip(request: Request) -> str:
     the socket peer is always loopback and the real caller is in the forwarded
     header. Only trust that header for a loopback peer — from anywhere else it
     is caller-controlled text and would make the limit trivially bypassable.
+
+    Even from nginx, only the LAST entry is ours. The vhosts set the header with
+    ``$proxy_add_x_forwarded_for``, which appends the address nginx saw to whatever
+    the caller already sent, so everything before that last entry is the caller's
+    own text. Keying on the first entry let a bot send a fresh one with every
+    request and never be limited.
     """
     peer = (request.client.host if request.client else "") or "unknown"
     if peer in ("127.0.0.1", "::1", "localhost"):
-        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[-1].strip()
         if forwarded:
             return forwarded
     return peer
@@ -128,8 +135,9 @@ async def submit_contact(request: Request) -> dict:
         # Validation problem with the request payload.
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # SMTP / delivery failure — must not report success.
-        logger.exception("Contact email delivery failed")
-        raise HTTPException(status_code=502, detail=f"Failed to send email: {str(e)}")
+        # SMTP / delivery failure — must not report success. The SMTP error names the
+        # mail host and its reply, which is for the log, not for a public form.
+        raise fail(502, "The message could not be sent.", e, logger=logger,
+                   context="Contact email delivery failed") from e
 
     return {"status": result}

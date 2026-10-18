@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,10 +34,11 @@ class Settings(BaseSettings):
     # the pool is exhausted: later requests queue and never start, which looks exactly
     # like the product being dead — requests arriving, no LLM calls being made.
     #
-    # The DeepSeek client is 120s per attempt with 3 attempts plus backoff: ~370s worst
-    # case. This sits above it so the thread always completes before the handler gives
-    # up. The caller sees a failure sooner regardless — the Node proxy times out at
-    # 180s — but the worker is always returned.
+    # Every provider client makes 3 attempts with backoff between them (1s, then 2s):
+    # DeepSeek and OpenAI are 120s per attempt (OPENAI_TIMEOUT_S for the latter), Gemini
+    # 90s (GEMINI_TIMEOUT_S), so the worst case is ~363s. This sits above it so the thread
+    # always completes before the handler gives up. The caller sees a failure sooner
+    # regardless — the Node proxy times out at 180s — but the worker is always returned.
     chrono_request_timeout_s: int = 420
 
     # Reading real source pages. This is the expensive half of the budget and the
@@ -60,9 +60,6 @@ class Settings(BaseSettings):
     # exists to stop a model emitting an edge for every pair of events.
     chrono_max_connections: int = 8
 
-    # CORS
-    cors_allow_origins: str = "*"
-
     # Cache
     chrono_cache_dir: str = "./data/chrono_origin/cache"
     # How long a cached trace stays servable. The product's own description is "real
@@ -70,12 +67,6 @@ class Settings(BaseSettings):
     # forever, so a user paying for a fresh look could be handed a months-old one with
     # nothing on screen to say so. 0 disables expiry.
     chrono_cache_ttl_days: int = 30
-
-    @property
-    def cors_origins_list(self) -> List[str]:
-        if not self.cors_allow_origins or self.cors_allow_origins.strip() == "*":
-            return ["*"]
-        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
 
 @lru_cache

@@ -44,8 +44,8 @@ class MissingModelConfig(RuntimeError):
 PRODUCT_MODEL_VARS = {
     "book_alchemy": "BOOK_ALCHEMY_MODEL",
     "chrono_origin": "CHRONO_MODEL",
-    "dossier_nova": "DOSSIER_MODEL",
     "narrava_studio": "NARRAVA_MODEL",
+    "research_atlas": "RESEARCH_ATLAS_MODEL",
     "spokenverse": "SPOKENVERSE_OCR_MODEL",
     "talari": "TALARI_MODEL",
 }
@@ -58,7 +58,6 @@ PRODUCT_MODEL_VARS = {
 PRODUCT_REASONING_MODEL_VARS = {
     "book_alchemy": "BOOK_ALCHEMY_REASONING_MODEL",
     "chrono_origin": "CHRONO_REASONING_MODEL",
-    "dossier_nova": "DOSSIER_REASONING_MODEL",
     "narrava_studio": "NARRAVA_REASONING_MODEL",
     "spokenverse": "SPOKENVERSE_REASONING_MODEL",
 }

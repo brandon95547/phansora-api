@@ -223,9 +223,21 @@ async def enforce_user_scope(request: Request) -> None:
     Reading the form here is safe and free: Starlette caches the parsed form on
     the request, so handlers that declare ``Form(...)``/``UploadFile`` params
     get the same parse, not a second one.
+
+    No verdict on the request means no gate ran: the product was served without
+    ``AuthGate`` in front of it (run on its own, or mounted somewhere the gate is
+    not). That is refused, the same way the gate refuses a missing key, unless
+    ``PHANSORA_AUTH_DISABLED=1`` says this is local development. Behind the gate
+    every request but OPTIONS carries a verdict — public paths get one too — and no
+    product route answers OPTIONS, so nothing that works in production depends on
+    this branch letting a request through.
     """
     auth = getattr(request.state, "auth", None)
-    if auth is None or auth.get("internal"):
+    if auth is None:
+        if _disabled():
+            return
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    if auth.get("internal"):
         return
     uid = auth.get("user_id")
     if uid is None:

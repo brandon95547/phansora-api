@@ -726,23 +726,38 @@ def test_nothing_at_all_is_not_a_crash():
 # budget is shorter than the work, the handler returns 504 and the thread keeps
 # running, holding a worker until it finishes. Four of those exhausted the pool and
 # the product went silent: requests arriving, no LLM calls made.
-@pytest.mark.parametrize("provider", ["deepseek", "gemini"])
+@pytest.mark.parametrize("provider", ["deepseek", "gemini", "openai"])
 def test_the_request_budget_exceeds_the_client_worst_case(provider):
     """Every provider, not just the one that caused this the first time."""
     from phansora.products.chrono_origin.config import get_settings
 
     if provider == "deepseek":
         from phansora.shared.ai.deepseek_research import DeepSeekConfig as C
-    else:
+    elif provider == "gemini":
         from phansora.shared.ai.gemini_research import GeminiConfig as C
+    else:
+        from phansora.shared.ai.openai_research import OpenAIResearchConfig as C
 
     budget = get_settings().chrono_request_timeout_s
-    # 3 attempts is what tenacity is configured for on both clients.
-    worst_case = C.timeout_s * 3
+    # 3 attempts is what tenacity is configured for on every client, with 1s and then
+    # 2s of backoff between them.
+    worst_case = C.timeout_s * 3 + 3
     assert budget > worst_case, (
         f"budget {budget}s is below the {provider} client's {worst_case}s worst case — a "
         "slow call abandons its thread and leaks an executor worker"
     )
+
+
+def test_the_openai_attempt_timeout_is_not_the_handler_budget(monkeypatch):
+    """Sharing one variable meant every raise of the budget lengthened each attempt too."""
+    from phansora.shared.ai.openai_research import OpenAIResearchConfig
+
+    monkeypatch.setenv("CHRONO_MODEL", "some-model")
+    monkeypatch.setenv("CHRONO_REQUEST_TIMEOUT_S", "900")
+    monkeypatch.delenv("OPENAI_TIMEOUT_S", raising=False)
+    assert OpenAIResearchConfig.from_env().timeout_s == 120
+    monkeypatch.setenv("OPENAI_TIMEOUT_S", "45")
+    assert OpenAIResearchConfig.from_env().timeout_s == 45
 
 
 def test_the_pool_is_wide_enough_that_one_product_cannot_starve_the_process():

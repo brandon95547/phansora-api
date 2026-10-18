@@ -2,7 +2,6 @@
 
     phansora serve [--host H] [--port P]   Run the unified API (uvicorn).
     phansora tts   [...]                    SpokenVerse batch TTS / PDF->TXT CLI.
-    phansora dossier [...]                  Dossier Nova pipeline CLI.
 
 Everything after the subcommand is forwarded verbatim to that product's own
 argument parser, so their existing flags keep working unchanged.
@@ -50,11 +49,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         _forward(rest, "phansora-tts")
         tts_main()
         return 0
-
-    if command == "dossier":
-        from phansora.products.dossier_nova.main import main as dossier_main
-
-        return dossier_main(rest) or 0
 
     print(f"Unknown command: {command}\n")
     print(__doc__)

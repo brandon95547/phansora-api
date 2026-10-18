@@ -221,7 +221,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             keep.mkdir(parents=True, exist_ok=True)
             original = keep / f"{digest}.{fmt}"
             if not original.exists():
-                shutil.copyfile(path, original)
+                await asyncio.to_thread(shutil.copyfile, path, original)
             found.original = original.name
             return found
 
@@ -241,7 +241,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
             digest = await asyncio.to_thread(lambda: hashlib.sha256(path.read_bytes()).hexdigest())
             original = keep / f"{digest}.{fmt}"
             if not original.exists():
-                shutil.copyfile(path, original)
+                await asyncio.to_thread(shutil.copyfile, path, original)
         return KeptSource(original=original.name, format=fmt, bytes=size)
 
     async def read_kept(user_id: str, name: str, body: ReadRequest) -> ExtractResponse:

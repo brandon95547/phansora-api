@@ -69,15 +69,20 @@ def _failure(error: Exception) -> ServiceError:
     """The caller's message for a failed call. The full error, which can carry the
     provider's response body, goes to the log only."""
     logger.warning("Talari: DeepSeek call failed: %s", error)
-    status = re.search(r"HTTP (\d{3})", str(error))
-    if status and int(status.group(1)) in REFUSALS:
-        return ServiceError(REFUSALS[int(status.group(1))])
+    # The shared helper's error carries the status; the message is the fallback for
+    # anything that raised a plain RuntimeError.
+    status = getattr(error, "status", None)
+    if status is None:
+        found = re.search(r"HTTP (\d{3})", str(error))
+        status = int(found.group(1)) if found else None
+    if status in REFUSALS:
+        return ServiceError(REFUSALS[status])
     cause = error.__cause__
     # asyncio's TimeoutError is its own class before Python 3.11, which prod runs.
     if isinstance(cause, (TimeoutError, asyncio.TimeoutError)) or "Timeout" in type(cause).__name__:
         return ServiceError("DeepSeek did not answer in time. Try again, or ask for less at once.")
     if status:
-        return ServiceError(f"DeepSeek could not answer (HTTP {status.group(1)}). Try again shortly.")
+        return ServiceError(f"DeepSeek could not answer (HTTP {status}). Try again shortly.")
     return ServiceError("DeepSeek could not be reached. Try again shortly.")
 
 

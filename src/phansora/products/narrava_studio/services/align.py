@@ -369,8 +369,12 @@ def _load_model():
         try:
             _MODEL = WhisperModel(name, **kwargs)
         except Exception as exc:  # noqa: BLE001 — a bad model name or no download
+            # The message reaches the editor as written, so the cause (cache paths, a
+            # library's own error) goes to the log rather than into it.
+            logger.error("Speech model %r failed to load", name, exc_info=True)
             raise AlignmentUnavailable(
-                f"The speech model '{name}' could not be loaded on the API host: {exc}"
+                f"The speech model '{name}' could not be loaded on the API host. "
+                "The API log has the cause."
             ) from exc
         _MODEL_NAME = name
         return _MODEL
@@ -476,9 +480,8 @@ def aligned_words(
     except AlignmentUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable clip
-        raise AlignmentFailed(
-            f"The narration audio could not be read for timing: {exc}"
-        ) from exc
+        logger.warning("Narration audio could not be decoded", exc_info=True)
+        raise AlignmentFailed("The narration audio could not be read for timing.") from exc
     if not heard:
         raise AlignmentFailed(
             "No speech was found in the narration audio, so the storyboard has nothing to "
@@ -784,9 +787,8 @@ def lyric_words(
     except gpu.GpuBusy as busy:
         raise AlignmentUnavailable(str(busy)) from busy
     except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable file
-        raise AlignmentFailed(
-            f"The music track could not be read for transcription: {exc}"
-        ) from exc
+        logger.warning("Music track could not be decoded", exc_info=True)
+        raise AlignmentFailed("The music track could not be read for transcription.") from exc
     result = _transcript(pieces, total_duration_sec)
     logger.info(
         "Lyrics transcribed: %d words, %d unsure", len(result["words"]), sum(result["guessed"])

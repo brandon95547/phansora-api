@@ -23,11 +23,9 @@ import zipfile
 
 import pytest
 
-from phansora.products.book_alchemy import server as ba_server
-
-pytestmark = pytest.mark.skipif(
-    not getattr(ba_server, "_BOOK_ALCHEMY_OK", False),
-    reason="book alchemy is not enabled in this environment",
+ba_server = pytest.importorskip(
+    "phansora.products.book_alchemy.server",
+    reason="book alchemy's dependencies are not installed in this environment",
 )
 
 

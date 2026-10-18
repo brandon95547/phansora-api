@@ -134,6 +134,41 @@ def test_missing_key_fails_closed(client, monkeypatch):
     assert client.get("/health").status_code == 200
 
 
+# ── no gate in front ────────────────────────────────────────────────────────
+# A product served without AuthGate (run on its own, or mounted where the gate is not)
+# has no verdict on its requests. That has to be a refusal: the products' only check
+# would otherwise be skipped for everyone.
+
+@pytest.fixture()
+def ungated():
+    product = FastAPI(dependencies=[Depends(enforce_user_scope)])
+
+    @product.get("/things")
+    def list_things(user_id: str = ""):
+        return {"user_id": user_id}
+
+    return TestClient(product, raise_server_exceptions=False)
+
+
+def test_a_product_with_no_gate_in_front_refuses(ungated):
+    assert ungated.get("/things?user_id=7").status_code == 401
+    # A token proves nothing here: nothing read it.
+    assert ungated.get("/things?user_id=42", headers=bearer()).status_code == 401
+
+
+def test_a_product_with_no_gate_in_front_serves_local_development(ungated, monkeypatch):
+    monkeypatch.setenv("PHANSORA_AUTH_DISABLED", "1")
+    assert ungated.get("/things?user_id=7").status_code == 200
+
+
+def test_the_public_paths_still_answer_behind_the_gate(client):
+    """The gate's public paths get a verdict of their own, so nothing public at the gate
+    ever reaches the no-verdict refusal."""
+    assert client.get("/health").status_code == 200
+    # A product route is not public just because a public path's name is in it.
+    assert client.get("/spokenverse/things").status_code == 401
+
+
 def test_dev_escape_hatch(client, monkeypatch):
     monkeypatch.setenv("PHANSORA_INTERNAL_KEY", "")
     monkeypatch.setenv("PHANSORA_AUTH_DISABLED", "1")

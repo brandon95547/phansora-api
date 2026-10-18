@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -35,18 +34,9 @@ class Settings(BaseSettings):
     narrava_media_per_segment: int = 1
     narrava_media_timeout_s: int = 15
 
-    # ── CORS ─────────────────────────────────────────────────────────────────
-    cors_allow_origins: str = "*"
-
     @property
     def provider(self) -> str:
         return (os.getenv("NARRAVA_LLM_PROVIDER") or self.narrava_llm_provider).strip().lower()
-
-    @property
-    def cors_origins_list(self) -> List[str]:
-        if not self.cors_allow_origins or self.cors_allow_origins.strip() == "*":
-            return ["*"]
-        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
 
 @lru_cache

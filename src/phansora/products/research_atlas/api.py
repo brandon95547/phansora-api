@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from phansora.shared.auth import enforce_user_scope
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
+from phansora.shared.errors import fail
 from phansora.shared.paths import runtime_root
 from .pipeline import run_pipeline
+
+logger = logging.getLogger("research_atlas")
 
 
 BASE_DIR = runtime_root()
@@ -28,11 +33,34 @@ _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = asyncio.Lock()
 _MAX_COMPLETED_JOBS = 400
 
+# The running pipelines. The event loop keeps only a weak reference to a task, so one
+# nothing else holds can be collected mid-run; this set is that other reference, and each
+# task takes itself out when it ends.
+_TASKS: set[asyncio.Task] = set()
+
+# How many pipelines run at once. Each one keeps up to LLM_MAX_WORKERS calls in flight and
+# holds its sources in memory, and the Node worker sends one job at a time by default; jobs
+# past this wait as "queued", which the worker already polls through.
+_MAX_RUNNING = max(1, int(os.getenv("RESEARCH_ATLAS_MAX_CONCURRENT_RUNS", "2")))
+_RUN_SLOTS = asyncio.Semaphore(_MAX_RUNNING)
+# Jobs queued or running before /run starts saying "busy". Far past what the worker sends;
+# it bounds what a caller who keeps posting can make this process hold.
+_MAX_OUTSTANDING = 20
+
+# Request size caps. Generous: a source is the extracted text of a file the Node app
+# accepts at up to 250 MB, and a long book or a transcribed recording runs to millions of
+# characters. They exist so one request cannot hold an unbounded amount of memory, not to
+# trim real research. The worker sends at most 15 sources (5 files and 10 articles).
+MAX_SOURCES = 50
+MAX_TEXT_CHARS = 20_000_000
+MAX_TOTAL_CHARS = 40_000_000
+MAX_LABEL_CHARS = 1_000
+
 
 class SourceItem(BaseModel):
     """A single source document with label and text."""
-    label: str
-    text: str
+    label: str = Field(max_length=MAX_LABEL_CHARS)
+    text: str = Field(max_length=MAX_TEXT_CHARS)
 
 
 class RunPipelineRequest(BaseModel):
@@ -45,12 +73,19 @@ class RunPipelineRequest(BaseModel):
     files are now always temp paths this module chooses (see _run_pipeline_job).
     """
 
-    text: str | None = None
+    text: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
     max_chunk_chars: int | None = None
-    sources: list[SourceItem] | None = None
+    sources: list[SourceItem] | None = Field(default=None, max_length=MAX_SOURCES)
     # The report prints this as its H1, so the caller's own name for the job ends up on
     # the cover. Optional: run_pipeline falls back to a generic title.
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=MAX_LABEL_CHARS)
+
+    @model_validator(mode="after")
+    def _within_total(self) -> "RunPipelineRequest":
+        total = len(self.text or "") + sum(len(s.text) for s in self.sources or [])
+        if total > MAX_TOTAL_CHARS:
+            raise ValueError(f"The sources add up to more than {MAX_TOTAL_CHARS:,} characters.")
+        return self
 
 
 def _utc_now_iso() -> str:
@@ -83,6 +118,11 @@ async def _set_job_state(job_id: str, **kwargs) -> None:
 
 
 async def _run_pipeline_job(job_id: str, payload: RunPipelineRequest) -> None:
+    async with _RUN_SLOTS:
+        await _run_pipeline_job_now(job_id, payload)
+
+
+async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> None:
     temp_input_path: Path | None = None
     temp_toc_path: Path | None = None
     # Both start unset: the caller no longer supplies paths, so every file this job
@@ -146,11 +186,15 @@ async def _run_pipeline_job(job_id: str, payload: RunPipelineRequest) -> None:
             },
         )
     except Exception as e:
+        # The exception can carry a provider's response body or a path on this server;
+        # the job's error is read back by the caller, so it gets a sentence and a
+        # reference, and the log gets the traceback under the same reference.
         await _set_job_state(
             job_id,
             status="failed",
             finished_at=_utc_now_iso(),
-            error=f"Pipeline failed: {e}",
+            error=fail(500, "The research pipeline failed.", e, logger=logger,
+                       context=f"Research Atlas job {job_id} failed").detail,
         )
     finally:
         if temp_input_path is not None:
@@ -188,6 +232,13 @@ async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
     now = _utc_now_iso()
 
     async with _JOBS_LOCK:
+        outstanding = sum(1 for data in _JOBS.values() if data.get("status") in {"queued", "processing"})
+        if outstanding >= _MAX_OUTSTANDING:
+            raise HTTPException(
+                status_code=503,
+                detail="Too many research jobs are already waiting. Try again shortly.",
+                headers={"Retry-After": "60"},
+            )
         _JOBS[job_id] = {
             "job_id": job_id,
             "status": "queued",
@@ -199,7 +250,9 @@ async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
             "result": None,
         }
 
-    asyncio.create_task(_run_pipeline_job(job_id, payload))
+    task = asyncio.create_task(_run_pipeline_job(job_id, payload))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
     return {
         "ok": True,
         "job_id": job_id,

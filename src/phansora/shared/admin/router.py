@@ -1,7 +1,8 @@
 """Admin storage endpoints — disk/cache usage and safe cache deletion.
 
-Guarded by an ``X-Admin-Key`` header matched against ``PHANSORA_ADMIN_KEY``.
-Unset key => locked (403). Mounted on the core app in ``phansora.main``:
+Guarded by an ``X-Admin-Key`` header matched against ``PHANSORA_ADMIN_KEY``, checked
+once for the whole router. Unset key => locked (403). Mounted on the core app in
+``phansora.main``:
 
     GET  /admin/storage/info           -> disk + per-directory sizes
     POST /admin/storage/clear-model-caches   -> delete re-downloadable model caches
@@ -23,21 +24,23 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 import phansora
 from phansora.shared.paths import runtime_root
 
 logger = logging.getLogger("phansora.admin")
 
-router = APIRouter(prefix="/admin", tags=["admin"])
-
-
 # ---- auth -------------------------------------------------------------------
 def require_admin(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> None:
     key = os.getenv("PHANSORA_ADMIN_KEY", "").strip()
     if not key or not x_admin_key or not hmac.compare_digest(x_admin_key, key):
         raise HTTPException(status_code=403, detail="Admin key required")
+
+
+# The key check belongs to the router, not to each route: the AuthGate lets every /admin
+# path through on the strength of it, so a route that forgot to call it would be public.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
 # ---- path resolution --------------------------------------------------------
@@ -126,8 +129,7 @@ def _clear_contents(p: Path) -> int:
 
 # ---- endpoints --------------------------------------------------------------
 @router.get("/storage/info")
-def storage_info(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> dict:
-    require_admin(x_admin_key)
+def storage_info() -> dict:
     du = shutil.disk_usage("/")
     # (key, label, path, deletable, kind)
     specs = [
@@ -164,8 +166,7 @@ def storage_info(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"))
 
 
 @router.post("/storage/clear-model-caches")
-def clear_model_caches(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> dict:
-    require_admin(x_admin_key)
+def clear_model_caches() -> dict:
     # Only caches that re-download automatically. NOT CosyVoice2 weights, NOT the
     # Dossier embeddings DB, NOT the Chrono cache.
     targets = [_hf_cache_dir(), _torch_cache_dir()]
@@ -180,8 +181,7 @@ def clear_model_caches(x_admin_key: Optional[str] = Header(None, alias="X-Admin-
 
 
 @router.post("/storage/clear-chrono-cache")
-def clear_chrono_cache(x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key")) -> dict:
-    require_admin(x_admin_key)
+def clear_chrono_cache() -> dict:
     d = _chrono_cache_dir()
     freed = _clear_contents(d)
     logger.info("cleared chrono cache at %s, freed %d bytes", d, freed)

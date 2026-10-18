@@ -47,14 +47,33 @@ def _fresh_limiter():
     contact_mod._hits.clear()
 
 
-@pytest.fixture()
-def client():
+def _from_peer(app, host):
+    """``app`` as a socket peer at ``host`` would reach it.
+
+    TestClient's own ``client=`` argument arrived after the Starlette this repo pins,
+    so the peer is set on the ASGI scope instead.
+    """
+
+    async def asgi(scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            scope = {**scope, "client": (host, 54321)}
+        await app(scope, receive, send)
+
+    return asgi
+
+
+def _app():
     app = FastAPI()
     app.add_middleware(AuthGate)
     app.include_router(contact_mod.router)
+    return app
+
+
+@pytest.fixture()
+def client():
     # Pose as nginx on the same host: that is the only shape these requests ever
     # arrive in, and it is what makes the forwarded-header handling live code.
-    return TestClient(app, raise_server_exceptions=False, client=("127.0.0.1", 54321))
+    return TestClient(_from_peer(_app(), "127.0.0.1"), raise_server_exceptions=False)
 
 
 def _body(**over):
@@ -125,6 +144,36 @@ def test_forwarded_ips_are_limited_separately(client, sent):
     other = client.post("/contact", json=_body(), headers={"X-Forwarded-For": "198.51.100.9"})
     assert blocked.status_code == 429
     assert other.status_code == 200
+
+
+def test_a_forged_forwarded_entry_does_not_dodge_the_limit(client, sent):
+    """nginx APPENDS the address it saw to whatever X-Forwarded-For the caller sent, so
+    only the last entry is nginx's. A bot that sends a fresh first entry every time is
+    still one address."""
+    for n in range(contact_mod.RATE_LIMIT_MAX):
+        forged = {"X-Forwarded-For": f"10.0.0.{n}, 203.0.113.7"}
+        assert client.post("/contact", json=_body(), headers=forged).status_code == 200
+    forged = {"X-Forwarded-For": "10.0.0.99, 203.0.113.7"}
+    assert client.post("/contact", json=_body(), headers=forged).status_code == 429
+
+
+def test_the_forwarded_header_is_ignored_from_anywhere_but_loopback(sent):
+    """Off loopback the header is the caller's own text; the socket peer is the identity."""
+    remote = TestClient(_from_peer(_app(), "198.51.100.20"), raise_server_exceptions=False)
+    for n in range(contact_mod.RATE_LIMIT_MAX):
+        remote.post("/contact", json=_body(), headers={"X-Forwarded-For": f"10.0.0.{n}"})
+    res = remote.post("/contact", json=_body(), headers={"X-Forwarded-For": "10.0.0.99"})
+    assert res.status_code == 429
+
+
+def test_a_delivery_failure_does_not_echo_the_smtp_error(client, monkeypatch):
+    async def boom(data):
+        raise RuntimeError("530 relay.internal.example refused: auth secret wrong")
+
+    monkeypatch.setattr(contact_mod, "send_email", boom)
+    res = client.post("/contact", json=_body())
+    assert res.status_code == 502
+    assert "relay.internal" not in res.text and "secret" not in res.text
 
 
 def test_keyed_relay_is_exempt_from_the_limit(client, sent):

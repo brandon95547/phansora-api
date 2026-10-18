@@ -208,8 +208,8 @@ run: ## Run the unified API (no reload)
 	# replicas, not in-process workers, if ever needed.
 	$(PY) -m uvicorn phansora.main:app --host $(HOST) --port $(PORT) --workers 1
 
-worker: ## Run the SpokenVerse / Book Alchemy durable worker
-	$(PY) -m phansora.products.spokenverse.worker
+worker: ## Run the Book Alchemy durable worker
+	$(PY) -m phansora.products.book_alchemy.worker
 
 test: ## Run the test suite
 	$(PY) -m pytest -q

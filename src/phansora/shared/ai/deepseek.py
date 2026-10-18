@@ -21,6 +21,11 @@ from typing import Optional
 import aiohttp
 
 from .models import resolve_model
+from .retries import ProviderError, worth_retrying
+
+# What a DeepSeek call can fail with that a second attempt might not: aiohttp's
+# connection and protocol errors, and the session's own timeout.
+_TRANSPORT_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError)
 
 
 DEFAULT_CLEAN_PROMPT = """
@@ -176,7 +181,9 @@ async def _chat_completion(
                         if resp.status == 400 and "thinking" in body and "thinking" in payload:
                             payload.pop("thinking", None)
                             continue
-                        raise RuntimeError(f"DeepSeek chat HTTP {resp.status}: {body[:800]}")
+                        raise ProviderError(
+                            f"DeepSeek chat HTTP {resp.status}: {body[:800]}", status=resp.status
+                        )
                     data = await resp.json()
 
             choices = data.get("choices") or []
@@ -187,7 +194,10 @@ async def _chat_completion(
 
         except Exception as e:
             last_err = e
-            if attempt >= cfg.max_retries:
+            # A bad key (401), an empty account (402) or a refused model (403) answers
+            # the same way every time; only a timeout, a dropped connection, a 429 or a
+            # 5xx is worth the wait.
+            if attempt >= cfg.max_retries or not worth_retrying(e, _TRANSPORT_ERRORS):
                 break
             sleep_s = min(
                 cfg.max_retry_sleep_s,
@@ -195,4 +205,7 @@ async def _chat_completion(
             )
             await asyncio.sleep(sleep_s)
 
-    raise RuntimeError(f"DeepSeek clean failed after retries: {last_err}") from last_err
+    raise ProviderError(
+        f"DeepSeek clean failed after {attempt + 1} attempt(s): {last_err}",
+        status=getattr(last_err, "status", None),
+    ) from last_err

@@ -7,6 +7,7 @@ for both. A lazily-created asyncpg pool is shared across the process.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -17,6 +18,9 @@ import asyncpg
 log = logging.getLogger("book_alchemy.db")
 
 _pool: Optional[asyncpg.Pool] = None
+# Creating the pool awaits, so two first callers would both see None and open a pool each,
+# leaking one. They take turns instead; everyone after the first finds the pool made.
+_pool_lock = asyncio.Lock()
 
 # Columns added after the tables were first created by hand. This repo has no
 # migration tool and the schema is not checked in, so each one is applied here,
@@ -36,17 +40,21 @@ _SCHEMA_ADDITIONS = (
 
 async def get_pool() -> asyncpg.Pool:
     global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            host=os.getenv("DB_HOST", "127.0.0.1"),
-            port=int(os.getenv("DB_PORT", "5432")),
-            min_size=1,
-            max_size=int(os.getenv("BOOK_ALCHEMY_DB_POOL", "5")),
-        )
-        await _ensure_schema(_pool)
+    if _pool is not None:
+        return _pool
+    async with _pool_lock:
+        if _pool is None:
+            pool = await asyncpg.create_pool(
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                database=os.getenv("DB_NAME"),
+                host=os.getenv("DB_HOST", "127.0.0.1"),
+                port=int(os.getenv("DB_PORT", "5432")),
+                min_size=1,
+                max_size=int(os.getenv("BOOK_ALCHEMY_DB_POOL", "5")),
+            )
+            await _ensure_schema(pool)
+            _pool = pool
     return _pool
 
 

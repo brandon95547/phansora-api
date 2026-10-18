@@ -1,4 +1,4 @@
-# src/txt_to_voice/utils/ffmpeg_concat.py
+# src/phansora/shared/utils/ffmpeg.py
 
 from __future__ import annotations
 
@@ -6,6 +6,13 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Sequence
+
+# A ceiling on any one ffmpeg run, so a hung ffmpeg (a stalled disk, an input it loops on)
+# ends with an error instead of holding its thread and its job forever. Generous on
+# purpose: a full audiobook is many hours of audio, and encoding it with loudnorm runs at
+# a few hundred times real time, minutes rather than seconds. An hour is far past any
+# real render and still finite.
+FFMPEG_TIMEOUT_S = 3600
 
 
 def require_ffmpeg_if_needed(required: bool) -> None:
@@ -47,8 +54,10 @@ def concat_audio_files_ffmpeg(files: Sequence[Path], final_path: Path) -> None:
         str(final_path),
     ]
 
-    subprocess.run(cmd, check=True)
-    list_file.unlink(missing_ok=True)
+    try:
+        subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT_S)
+    finally:
+        list_file.unlink(missing_ok=True)
 
 
 def transcode_audio_ffmpeg(src_path: Path, dst_path: Path) -> None:
@@ -73,7 +82,7 @@ def transcode_audio_ffmpeg(src_path: Path, dst_path: Path) -> None:
         *codec_args,
         str(dst_path),
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT_S)
 
 
 # EBU R128 loudness target applied to ALL synthesized TTS/voice output, so every clip
@@ -120,4 +129,4 @@ def loudnorm_audio(
         *codec_args,
         str(dst_path),
     ]
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, timeout=FFMPEG_TIMEOUT_S)

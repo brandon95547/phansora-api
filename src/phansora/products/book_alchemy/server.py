@@ -7,14 +7,16 @@ everything that is *not* voice generation: projects, curriculum, sessions and
 downloads. Durable job state lives in Postgres; the standalone worker
 (``book_alchemy/worker.py``) does the heavy processing.
 
-Mounted at ``/book-alchemy`` by ``phansora.main``. Book Alchemy deps (asyncpg,
-ebooklib, ...) are imported under a guard so the API still boots if they are
-absent.
+Mounted at ``/book-alchemy`` by ``phansora.main``. If Book Alchemy's deps
+(asyncpg, ebooklib, ...) are absent this module fails to import, and main's loader
+skips it like any other product: the API still boots, and its /health says what is
+missing.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -24,7 +26,6 @@ from urllib.parse import quote as urlquote
 import zipfile
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from phansora.shared.auth import enforce_user_scope
 
@@ -35,20 +36,17 @@ from phansora.shared.utils.uploads import (
 )
 
 
-try:
-    from phansora.products.book_alchemy import cover as ba_cover
-    from phansora.products.book_alchemy import db as ba_db
-    from phansora.products.book_alchemy import pipeline as ba_pipeline
-    from phansora.products.book_alchemy import storage as ba_storage
-    _BOOK_ALCHEMY_OK = True
-except Exception as _ba_exc:  # noqa: BLE001
-    _BOOK_ALCHEMY_OK = False
-    import logging as _logging
+# Imported without a guard. When one of these fails (asyncpg or ebooklib missing, say),
+# this module fails to import and phansora.main leaves /book-alchemy unmounted, which its
+# /health reports as degraded and names. Swallowing the failure here used to mount a
+# product with no routes whose /health still answered ok.
+from phansora.products.book_alchemy import cover as ba_cover
+from phansora.products.book_alchemy import db as ba_db
+from phansora.products.book_alchemy import pipeline as ba_pipeline
+from phansora.products.book_alchemy import storage as ba_storage
 
-    _logging.getLogger("book_alchemy").warning(
-        "Book Alchemy routes disabled (import failed): %s", _ba_exc
-    )
 
+_log = logging.getLogger("book_alchemy")
 
 app = FastAPI(
     title="Book Alchemy",
@@ -56,726 +54,713 @@ app = FastAPI(
     dependencies=[Depends(enforce_user_scope)],
 )
 
-# Mirror the SpokenVerse sub-app's CORS config (the two share the api.phansora.com
-# origin and the same CORS_ALLOW_ORIGINS env). The browser calls this API
-# cross-origin without cookies — the user is identified by the ?user_id= query
-# param — so credentials stay off. allow_credentials=True with a wildcard origin
-# is invalid CORS (no usable Access-Control-Allow-Origin is sent), which is what
-# blocked generation from https://www.phansora.com.
-_cors_origins_raw = os.getenv(
-    "CORS_ALLOW_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
-)
-_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
-if _cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_cors_origins,
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
+# No CORS layer of its own: phansora.main wraps every mounted product in one, from the
+# same CORS_ALLOW_ORIGINS, and that outer layer's headers are the ones a browser sees.
 
 
 @app.get("/")
 def root() -> dict:
-    return {"name": "book-alchemy", "status": "ok", "enabled": _BOOK_ALCHEMY_OK}
+    return {"name": "book-alchemy", "status": "ok", "enabled": True}
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "enabled": _BOOK_ALCHEMY_OK}
+    return {"status": "ok", "enabled": True}
 
 
-if _BOOK_ALCHEMY_OK:
-    # The URL tab's cap, enforced here as well as in the browser: the list rides on a
-    # form field anyone can repeat, and each entry costs a fetch and a parse.
-    _BA_MAX_URLS = 10
+# The URL tab's cap, enforced here as well as in the browser: the list rides on a
+# form field anyone can repeat, and each entry costs a fetch and a parse.
+_BA_MAX_URLS = 10
 
-    _BA_FILE_FORMATS = {
-        ".pdf": "pdf", ".epub": "epub", ".mobi": "mobi", ".azw": "mobi", ".azw3": "mobi",
-        ".docx": "docx", ".txt": "txt", ".md": "markdown", ".markdown": "markdown",
-        ".html": "html", ".htm": "html",
+_BA_FILE_FORMATS = {
+    ".pdf": "pdf", ".epub": "epub", ".mobi": "mobi", ".azw": "mobi", ".azw3": "mobi",
+    ".docx": "docx", ".txt": "txt", ".md": "markdown", ".markdown": "markdown",
+    ".html": "html", ".htm": "html",
+}
+
+def _ba_max_projects() -> int:
+    """How many audio courses a user may keep at once.
+
+    Each finished course is hundreds of MB of narration on disk, so storage —
+    not compute — is the binding constraint. One at a time: users free the
+    slot by downloading their course and deleting it (DELETE /projects/{id}
+    removes its audio too).
+    """
+    try:
+        return max(1, int(os.getenv("BOOK_ALCHEMY_MAX_PROJECTS", "1")))
+    except Exception:  # noqa: BLE001
+        return 1
+
+def _ba_limit_message(limit: int) -> str:
+    if limit == 1:
+        return (
+            "You can only have one audio course at a time. Download your current "
+            "course, then delete it to free up space and start a new one."
+        )
+    return (
+        f"You can keep up to {limit} audio courses at a time. "
+        "Download and delete one of your existing courses to free up space, "
+        "then start a new one."
+    )
+
+def _ba_user_id(user_id: str) -> int:
+    try:
+        return int(str(user_id).strip())
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Valid numeric user_id is required.")
+
+def _ba_depth(value: str) -> str:
+    """Validate the requested course depth, defaulting rather than rejecting.
+
+    Depth controls how much the course compresses its source (see
+    pipeline.DEPTHS). An unknown value is an out-of-date client, which should
+    get the default course rather than a 400 on an upload it already paid a
+    credit for.
+    """
+    name = str(value or "").strip().lower()
+    return name if name in ba_pipeline.DEPTHS else ba_pipeline.DEFAULT_DEPTH
+
+def _ba_course_name(value: str) -> str:
+    """A title as its listener typed it: one line, printable, bounded.
+
+    Deliberately not pipeline._sanitize_title. That one tidies a FILENAME into
+    a title and strips a leading "Course:" as debris; here the same words are
+    what someone chose to call their course.
+    """
+    import unicodedata
+
+    # Whitespace first: a tab or a line break is a control character too, and
+    # dropping it with the rest would run the words either side together.
+    text = re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(value or "")))
+    text = "".join(ch for ch in text if ch == " " or unicodedata.category(ch)[0] != "C")
+    return text.strip()[:200]
+
+def _ba_json(value):
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:  # noqa: BLE001
+        return value
+
+def _ba_iso(value) -> Optional[str]:
+    return value.isoformat() if value else None
+
+def _ba_phase_wire(row) -> dict:
+    """One delivery phase as the dashboard sees it.
+
+    `est_seconds` is the planned runtime, known before a single word is
+    written; `audio_seconds` is the real one, known once the phase lands. The
+    UI shows the first with a tilde and the second without.
+    """
+    d = dict(row)
+    return {
+        "ordinal": d["ordinal"],
+        "label": d["label"],
+        "status": d["status"],
+        "session_start": d["session_start"],
+        "session_end": d["session_end"],
+        "session_count": int(d.get("session_count") or 0),
+        "sessions_complete": int(d.get("sessions_complete") or 0),
+        "est_seconds": int(d.get("est_seconds") or 0),
+        "audio_seconds": int(d.get("audio_seconds") or 0),
+        "error": d.get("error_message"),
+        "requested_at": _ba_iso(d.get("requested_at")),
+        "completed_at": _ba_iso(d.get("completed_at")),
     }
 
-    def _ba_max_projects() -> int:
-        """How many audio courses a user may keep at once.
+def _ba_queue_wire(d: dict, active_total: Optional[int]) -> Optional[dict]:
+    """Where a book stands among everyone's, for a book that still has work.
 
-        Each finished course is hundreds of MB of narration on disk, so storage —
-        not compute — is the binding constraint. One at a time: users free the
-        slot by downloading their course and deleting it (DELETE /projects/{id}
-        removes its audio too).
-        """
-        try:
-            return max(1, int(os.getenv("BOOK_ALCHEMY_MAX_PROJECTS", "1")))
-        except Exception:  # noqa: BLE001
-            return 1
+    Books take turns on the worker (worker.py), so "queued" is not a position in a
+    line: a waiting book is served within a turn or two. What the listener can use
+    is whether theirs is being worked on this minute, and how many other books it
+    is sharing the narrator with — which is why it is going slower than it did
+    when they had the box to themselves. A count only; nothing about whose.
+    """
+    if active_total is None or d["status"] not in ("uploaded", "processing"):
+        return None
+    if d["phase"] == "complete":
+        return None
+    expires = d.get("lease_expires_at")
+    running = bool(d.get("lease_owner")) and expires is not None and (
+        expires > datetime.now(timezone.utc)
+    )
+    return {"running": running, "others": max(0, active_total - 1)}
 
-    def _ba_limit_message(limit: int) -> str:
-        if limit == 1:
-            return (
-                "You can only have one audio course at a time. Download your current "
-                "course, then delete it to free up space and start a new one."
-            )
-        return (
-            f"You can keep up to {limit} audio courses at a time. "
-            "Download and delete one of your existing courses to free up space, "
-            "then start a new one."
-        )
+def _ba_project_wire(
+    row, phases: Optional[list] = None, active_total: Optional[int] = None,
+) -> dict:
+    d = dict(row)
+    wired = [_ba_phase_wire(p) for p in (phases or [])]
+    options = _ba_json(d.get("options"))
+    options = options if isinstance(options, dict) else {}
+    return {
+        "project_id": d["id"],
+        "name": d["name"],
+        # Lifted from the upload at parse time (cover.py). Both are absent for
+        # a pasted text, a URL, and any course made before they were read —
+        # the dashboard draws its own cover then, and prints no byline.
+        "author": options.get("author") or None,
+        "has_cover": bool(options.get("cover")),
+        # What the course was made with, for the dashboard's "About" panel.
+        # Read-only: all three are fixed once the first lesson is written.
+        "voice": options.get("voice") or "default",
+        "depth": options.get("depth") or ba_pipeline.DEFAULT_DEPTH,
+        "instruct_text": options.get("instruct_text") or "",
+        "source_format": d["source_format"],
+        "status": d["status"],
+        # The internal pipeline cursor. Long omitted here, which is why the
+        # dashboard could never say which step a book was actually on.
+        "phase": d["phase"],
+        "stage": d["stage"],
+        "progress": d["progress"],
+        "validation_status": d["validation_status"],
+        "total_audio_seconds": d["total_audio_seconds"],
+        "sessions_complete": int(d.get("sessions_complete") or 0),
+        "sessions_total": int(d.get("sessions_total") or 0),
+        # Delivery phases: [] for a project that predates them, which the UI
+        # reads as "no rail, just the old single bar".
+        "phases": wired,
+        "phase_count": len(wired),
+        "active_phase": next(
+            (p["ordinal"] for p in wired if p["status"] in ("queued", "processing")), None
+        ),
+        "ready_phase": next(
+            (p["ordinal"] for p in wired if p["status"] == "ready"), None
+        ),
+        "auto_continue": bool(d.get("auto_continue")),
+        "queue": _ba_queue_wire(d, active_total),
+        "curriculum": _ba_json(d.get("curriculum")),
+        "error": d.get("error_message"),
+        "created_at": _ba_iso(d.get("created_at")),
+        "updated_at": _ba_iso(d.get("updated_at")),
+    }
 
-    def _ba_user_id(user_id: str) -> int:
-        try:
-            return int(str(user_id).strip())
-        except Exception:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail="Valid numeric user_id is required.")
-
-    def _ba_depth(value: str) -> str:
-        """Validate the requested course depth, defaulting rather than rejecting.
-
-        Depth controls how much the course compresses its source (see
-        pipeline.DEPTHS). An unknown value is an out-of-date client, which should
-        get the default course rather than a 400 on an upload it already paid a
-        credit for.
-        """
-        name = str(value or "").strip().lower()
-        return name if name in ba_pipeline.DEPTHS else ba_pipeline.DEFAULT_DEPTH
-
-    def _ba_course_name(value: str) -> str:
-        """A title as its listener typed it: one line, printable, bounded.
-
-        Deliberately not pipeline._sanitize_title. That one tidies a FILENAME into
-        a title and strips a leading "Course:" as debris; here the same words are
-        what someone chose to call their course.
-        """
-        import unicodedata
-
-        # Whitespace first: a tab or a line break is a control character too, and
-        # dropping it with the rest would run the words either side together.
-        text = re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(value or "")))
-        text = "".join(ch for ch in text if ch == " " or unicodedata.category(ch)[0] != "C")
-        return text.strip()[:200]
-
-    def _ba_json(value):
-        if value is None or isinstance(value, (dict, list)):
-            return value
-        try:
-            return json.loads(value)
-        except Exception:  # noqa: BLE001
-            return value
-
-    def _ba_iso(value) -> Optional[str]:
-        return value.isoformat() if value else None
-
-    def _ba_phase_wire(row) -> dict:
-        """One delivery phase as the dashboard sees it.
-
-        `est_seconds` is the planned runtime, known before a single word is
-        written; `audio_seconds` is the real one, known once the phase lands. The
-        UI shows the first with a tilde and the second without.
-        """
-        d = dict(row)
-        return {
-            "ordinal": d["ordinal"],
-            "label": d["label"],
-            "status": d["status"],
-            "session_start": d["session_start"],
-            "session_end": d["session_end"],
-            "session_count": int(d.get("session_count") or 0),
-            "sessions_complete": int(d.get("sessions_complete") or 0),
-            "est_seconds": int(d.get("est_seconds") or 0),
-            "audio_seconds": int(d.get("audio_seconds") or 0),
-            "error": d.get("error_message"),
-            "requested_at": _ba_iso(d.get("requested_at")),
-            "completed_at": _ba_iso(d.get("completed_at")),
-        }
-
-    def _ba_queue_wire(d: dict, active_total: Optional[int]) -> Optional[dict]:
-        """Where a book stands among everyone's, for a book that still has work.
-
-        Books take turns on the worker (worker.py), so "queued" is not a position in a
-        line: a waiting book is served within a turn or two. What the listener can use
-        is whether theirs is being worked on this minute, and how many other books it
-        is sharing the narrator with — which is why it is going slower than it did
-        when they had the box to themselves. A count only; nothing about whose.
-        """
-        if active_total is None or d["status"] not in ("uploaded", "processing"):
-            return None
-        if d["phase"] == "complete":
-            return None
-        expires = d.get("lease_expires_at")
-        running = bool(d.get("lease_owner")) and expires is not None and (
-            expires > datetime.now(timezone.utc)
-        )
-        return {"running": running, "others": max(0, active_total - 1)}
-
-    def _ba_project_wire(
-        row, phases: Optional[list] = None, active_total: Optional[int] = None,
-    ) -> dict:
-        d = dict(row)
-        wired = [_ba_phase_wire(p) for p in (phases or [])]
-        options = _ba_json(d.get("options"))
-        options = options if isinstance(options, dict) else {}
-        return {
-            "project_id": d["id"],
-            "name": d["name"],
-            # Lifted from the upload at parse time (cover.py). Both are absent for
-            # a pasted text, a URL, and any course made before they were read —
-            # the dashboard draws its own cover then, and prints no byline.
-            "author": options.get("author") or None,
-            "has_cover": bool(options.get("cover")),
-            # What the course was made with, for the dashboard's "About" panel.
-            # Read-only: all three are fixed once the first lesson is written.
-            "voice": options.get("voice") or "default",
-            "depth": options.get("depth") or ba_pipeline.DEFAULT_DEPTH,
-            "instruct_text": options.get("instruct_text") or "",
-            "source_format": d["source_format"],
-            "status": d["status"],
-            # The internal pipeline cursor. Long omitted here, which is why the
-            # dashboard could never say which step a book was actually on.
-            "phase": d["phase"],
-            "stage": d["stage"],
-            "progress": d["progress"],
-            "validation_status": d["validation_status"],
-            "total_audio_seconds": d["total_audio_seconds"],
-            "sessions_complete": int(d.get("sessions_complete") or 0),
-            "sessions_total": int(d.get("sessions_total") or 0),
-            # Delivery phases: [] for a project that predates them, which the UI
-            # reads as "no rail, just the old single bar".
-            "phases": wired,
-            "phase_count": len(wired),
-            "active_phase": next(
-                (p["ordinal"] for p in wired if p["status"] in ("queued", "processing")), None
-            ),
-            "ready_phase": next(
-                (p["ordinal"] for p in wired if p["status"] == "ready"), None
-            ),
-            "auto_continue": bool(d.get("auto_continue")),
-            "queue": _ba_queue_wire(d, active_total),
-            "curriculum": _ba_json(d.get("curriculum")),
-            "error": d.get("error_message"),
-            "created_at": _ba_iso(d.get("created_at")),
-            "updated_at": _ba_iso(d.get("updated_at")),
-        }
-
-    def _ba_session_wire(row, ref_map: dict | None = None) -> dict:
-        d = dict(row)
-        chunk_ids = list(d.get("source_chunk_ids") or [])
-        sources = []
-        if ref_map:
-            seen = set()
-            for cid in chunk_ids:
-                ref = ref_map.get(cid)
-                if not ref:
-                    continue
-                key = (ref.get("chapter"), ref.get("page_start"), ref.get("page_end"))
-                if key in seen:
-                    continue
-                seen.add(key)
-                sources.append(ref)
-        return {
-            "session_id": d["id"],
-            "ordinal": d["ordinal"],
-            "title": d["title"],
-            "summary": d["summary"],
-            "status": d["status"],
-            "validation_status": d["validation_status"],
-            "validation_notes": _ba_json(d.get("validation_notes")),
-            "outline": _ba_json(d.get("outline")),
-            "script": d.get("script"),
-            "source_chunk_ids": chunk_ids,
-            "sources": sources,
-            "audio_seconds": d.get("audio_seconds"),
-            "has_audio": bool(d.get("audio_path")),
-            "generated_at": d["generated_at"].isoformat() if d.get("generated_at") else None,
-        }
-
-    @app.post("/projects")
-    async def ba_create_project(
-        user_id: str = Form(...),
-        name: str = Form(""),
-        source_format: str = Form(""),
-        # Repeated field: the URL tab sends up to ten. FastAPI collects repeats into
-        # the list; a single value still arrives as a one-item list, so the old
-        # one-URL client keeps working unchanged.
-        url: List[str] = Form([]),
-        # Bounded like every other text field on this API. Unbounded, a paste was
-        # written to disk and run through the whole course pipeline at whatever size
-        # arrived. 2M characters is a very long book and still a small file.
-        text: str = Form("", max_length=2_000_000),
-        voice: str = Form("default"),
-        depth: str = Form(""),
-        # Delivery direction for the narration, e.g. "read this calmly". Bounded to
-        # match the field's own data-max-chars; long instructions weaken the voice
-        # match, and this rides on every lesson in the course.
-        instruct_text: str = Form("", max_length=200),
-        file: Optional[UploadFile] = File(None),
-    ) -> dict:
-        uid = _ba_user_id(user_id)
-        urls = [u.strip() for u in (url or []) if u and u.strip()][:_BA_MAX_URLS]
-        # The first is what the project row shows and what a one-URL course still uses;
-        # the whole list rides in options for the pipeline to read.
-        first_url = urls[0] if urls else ""
-        text = (text or "").strip()
-
-        # Cheap pre-check so an over-limit upload is rejected before we read the
-        # file; create_project re-checks atomically to close the race.
-        limit = _ba_max_projects()
-        if await ba_db.count_projects(uid) >= limit:
-            raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
-
-        # Determine source format + a default project name.
-        if file is not None and file.filename:
-            ext = _safe_ext(file.filename)
-            fmt = source_format or _BA_FILE_FORMATS.get(ext)
-            if not fmt:
-                raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
-            default_name = _safe_stem(file.filename, "Untitled")
-        elif urls:
-            fmt = "url"
-            default_name = first_url if len(urls) == 1 else f"{len(urls)} articles"
-        elif text:
-            fmt = "text"
-            default_name = "Pasted text"
-        else:
-            raise HTTPException(status_code=400, detail="Provide a file, a URL, or pasted text.")
-
-        proj_name = (name or default_name or "Untitled").strip()[:200]
-        project_id = await ba_db.create_project(
-            user_id=uid, name=proj_name, source_format=fmt,
-            source_path=None, source_url=(first_url or None),
-            options={
-                "voice": voice,
-                "depth": _ba_depth(depth),
-                "instruct_text": (instruct_text or "").strip(),
-                "source_urls": urls,
-            },
-            max_projects=limit,
-        )
-        if project_id is None:  # raced another upload past the pre-check
-            raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
-
-        # Persist the source so processing is fully resumable from disk + DB.
-        if file is not None and file.filename:
-            dest = ba_storage.project_dir(uid, project_id) / f"source{_safe_ext(file.filename) or '.bin'}"
-            await _save_upload(file, dest)
-            await ba_db.set_project(project_id, source_path=str(dest))
-        elif text:
-            dest = ba_storage.project_dir(uid, project_id) / "source.txt"
-            dest.write_text(text, encoding="utf-8")
-            await ba_db.set_project(project_id, source_path=str(dest))
-
-        return {"ok": True, "project_id": project_id}
-
-    @app.get("/projects")
-    async def ba_list_projects(user_id: str) -> dict:
-        uid = _ba_user_id(user_id)
-        rows = await ba_db.list_projects(uid)
-        # One query for every card's phases rather than one per card, so the rail
-        # renders on the list without opening the drawer.
-        by_project: dict[int, list] = {}
-        for p in await ba_db.list_phases_for_projects([int(r["id"]) for r in rows]):
-            by_project.setdefault(int(p["project_id"]), []).append(p)
-        limit = _ba_max_projects()
-        active_total = await ba_db.count_active_projects()
-        # The dashboard gates its upload form on these so it can block (and explain)
-        # an over-limit upload before spending a credit on it.
-        return {
-            "ok": True,
-            "projects": [
-                _ba_project_wire(r, by_project.get(int(r["id"]), []), active_total)
-                for r in rows
-            ],
-            "limit": limit,
-            "remaining": max(0, limit - len(rows)),
-        }
-
-    @app.get("/projects/{project_id}")
-    async def ba_get_project(project_id: int, user_id: str) -> dict:
-        uid = _ba_user_id(user_id)
-        row = await ba_db.get_project(project_id, uid)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        chunks = await ba_db.get_all_chunks(project_id)
-        ref_map = {
-            int(c["id"]): {
-                "chapter": c["chapter"], "section": c["section"],
-                "page_start": c["page_start"], "page_end": c["page_end"],
-            }
-            for c in chunks
-        }
-        sessions = await ba_db.get_sessions(project_id)
-        phases = await ba_db.list_phases_for_projects([project_id])
-        out = _ba_project_wire(row, phases, await ba_db.count_active_projects())
-        out["sessions"] = [_ba_session_wire(s, ref_map) for s in sessions]
-        return {"ok": True, "project": out}
-
-    @app.get("/projects/{project_id}/cover", response_model=None)
-    async def ba_project_cover(project_id: int, user_id: str) -> FileResponse:
-        """The cover lifted from the uploaded book. 404 when it had none."""
-        uid = _ba_user_id(user_id)
-        project = await ba_db.get_project(project_id, uid)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        options = _ba_json(project["options"])
-        name = options.get("cover") if isinstance(options, dict) else None
-        path = ba_cover.cover_file(ba_storage.project_dir(uid, project_id), name)
-        if path is None:
-            raise HTTPException(status_code=404, detail="This course has no cover.")
-        # private: the URL carries the listener's token, and the image is theirs.
-        # A day, because a cover is written once and never changes.
-        return FileResponse(
-            path=str(path), media_type="image/jpeg",
-            headers={"Cache-Control": "private, max-age=86400"},
-        )
-
-    @app.post("/projects/{project_id}/rename")
-    async def ba_rename_project(
-        project_id: int, user_id: str, name: str = Form(..., max_length=200),
-    ) -> dict:
-        """Give a course the title its listener wants.
-
-        ``named_by_user`` is what keeps it: the parse step tidies the upload's
-        filename into a title of its own, and without the mark that tidy-up would
-        overwrite a rename made while a long book was still being read.
-        """
-        uid = _ba_user_id(user_id)
-        project = await ba_db.get_project(project_id, uid)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        cleaned = _ba_course_name(name)
-        if not cleaned:
-            raise HTTPException(status_code=400, detail="Enter a name for the course.")
-        options = _ba_json(project["options"])
-        options = dict(options) if isinstance(options, dict) else {}
-        options["named_by_user"] = True
-        await ba_db.set_project(project_id, name=cleaned, options=options)
-        return {"ok": True, "name": cleaned}
-
-    @app.get("/projects/{project_id}/sessions/{session_id}/audio", response_model=None)
-    async def ba_session_audio(project_id: int, session_id: int, user_id: str) -> FileResponse:
-        uid = _ba_user_id(user_id)
-        project = await ba_db.get_project(project_id, uid)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        sess = await ba_db.get_session(session_id, project_id)
-        if sess is None or not sess["audio_path"]:
-            raise HTTPException(status_code=404, detail="Audio not found.")
-        path = Path(sess["audio_path"])
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail="Audio file missing on disk.")
-        return FileResponse(path=str(path), media_type="audio/mpeg", filename=path.name)
-
-    def _ba_safe_filename(name: str) -> str:
-        """Sanitize a title for use as a file / zip-entry name (keeps spaces)."""
-        cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(name or "")).strip()
-        cleaned = re.sub(r"\s+", " ", cleaned)
-        return cleaned[:120] or "course"
-
-    def _ba_narration_txt(items, course_name: str) -> str:
-        """The whole course as one readable transcript, or "" if there is nothing to write.
-
-        The words cost nothing to include: every lesson's script is already on the row its
-        audio came from, so this is the same narration the listener hears, in the same
-        order, for reading along or searching the course.
-
-        Lessons are numbered exactly as the audio files are, so a line in here can be
-        traced to the track it belongs to. A lesson whose audio did not make it into the
-        zip is left out of the transcript too — the file describes what is in the download,
-        not what the project holds.
-        """
-        blocks = []
-        for ordinal, title, _path, script in items:
-            text = str(script or "").strip()
-            if not text:
+def _ba_session_wire(row, ref_map: dict | None = None) -> dict:
+    d = dict(row)
+    chunk_ids = list(d.get("source_chunk_ids") or [])
+    sources = []
+    if ref_map:
+        seen = set()
+        for cid in chunk_ids:
+            ref = ref_map.get(cid)
+            if not ref:
                 continue
-            blocks.append(f"{ordinal:02d} - {title}\n\n{text}")
-        if not blocks:
-            return ""
-        return f"{course_name}\n\n\n" + "\n\n\n".join(blocks) + "\n"
+            key = (ref.get("chapter"), ref.get("page_start"), ref.get("page_end"))
+            if key in seen:
+                continue
+            seen.add(key)
+            sources.append(ref)
+    return {
+        "session_id": d["id"],
+        "ordinal": d["ordinal"],
+        "title": d["title"],
+        "summary": d["summary"],
+        "status": d["status"],
+        "validation_status": d["validation_status"],
+        "validation_notes": _ba_json(d.get("validation_notes")),
+        "outline": _ba_json(d.get("outline")),
+        "script": d.get("script"),
+        "source_chunk_ids": chunk_ids,
+        "sources": sources,
+        "audio_seconds": d.get("audio_seconds"),
+        "has_audio": bool(d.get("audio_path")),
+        "generated_at": d["generated_at"].isoformat() if d.get("generated_at") else None,
+    }
 
-    class _ZipSink:
-        """A write-only, UNSEEKABLE target for zipfile.
+@app.post("/projects")
+async def ba_create_project(
+    user_id: str = Form(...),
+    name: str = Form(""),
+    source_format: str = Form(""),
+    # Repeated field: the URL tab sends up to ten. FastAPI collects repeats into
+    # the list; a single value still arrives as a one-item list, so the old
+    # one-URL client keeps working unchanged.
+    url: List[str] = Form([]),
+    # Bounded like every other text field on this API. Unbounded, a paste was
+    # written to disk and run through the whole course pipeline at whatever size
+    # arrived. 2M characters is a very long book and still a small file.
+    text: str = Form("", max_length=2_000_000),
+    voice: str = Form("default"),
+    depth: str = Form(""),
+    # Delivery direction for the narration, e.g. "read this calmly". Bounded to
+    # match the field's own data-max-chars; long instructions weaken the voice
+    # match, and this rides on every lesson in the course.
+    instruct_text: str = Form("", max_length=200),
+    file: Optional[UploadFile] = File(None),
+) -> dict:
+    uid = _ba_user_id(user_id)
+    urls = [u.strip() for u in (url or []) if u and u.strip()][:_BA_MAX_URLS]
+    # The first is what the project row shows and what a one-URL course still uses;
+    # the whole list rides in options for the pipeline to read.
+    first_url = urls[0] if urls else ""
+    text = (text or "").strip()
 
-        Unseekable is the whole point. zipfile normally rewinds to patch each entry's
-        header with the CRC and size once it knows them, which is only possible when the
-        output is a file. With no `tell` to call it switches to data descriptors — the
-        sizes are written AFTER the data instead of before it — and that is what lets the
-        archive be produced in one forward pass and handed out as it is made.
-        """
+    # Cheap pre-check so an over-limit upload is rejected before we read the
+    # file; create_project re-checks atomically to close the race.
+    limit = _ba_max_projects()
+    if await ba_db.count_projects(uid) >= limit:
+        raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
 
-        def __init__(self) -> None:
-            self._buf = bytearray()
+    # Determine source format + a default project name.
+    if file is not None and file.filename:
+        ext = _safe_ext(file.filename)
+        fmt = source_format or _BA_FILE_FORMATS.get(ext)
+        if not fmt:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext or 'unknown'}")
+        default_name = _safe_stem(file.filename, "Untitled")
+    elif urls:
+        fmt = "url"
+        default_name = first_url if len(urls) == 1 else f"{len(urls)} articles"
+    elif text:
+        fmt = "text"
+        default_name = "Pasted text"
+    else:
+        raise HTTPException(status_code=400, detail="Provide a file, a URL, or pasted text.")
 
-        def write(self, b) -> int:
-            self._buf += b
-            return len(b)
+    proj_name = (name or default_name or "Untitled").strip()[:200]
+    project_id = await ba_db.create_project(
+        user_id=uid, name=proj_name, source_format=fmt,
+        source_path=None, source_url=(first_url or None),
+        options={
+            "voice": voice,
+            "depth": _ba_depth(depth),
+            "instruct_text": (instruct_text or "").strip(),
+            "source_urls": urls,
+        },
+        max_projects=limit,
+    )
+    if project_id is None:  # raced another upload past the pre-check
+        raise HTTPException(status_code=409, detail=_ba_limit_message(limit))
 
-        def flush(self) -> None:
-            pass
+    # Persist the source so processing is fully resumable from disk + DB.
+    if file is not None and file.filename:
+        dest = ba_storage.project_dir(uid, project_id) / f"source{_safe_ext(file.filename) or '.bin'}"
+        await _save_upload(file, dest)
+        await ba_db.set_project(project_id, source_path=str(dest))
+    elif text:
+        dest = ba_storage.project_dir(uid, project_id) / "source.txt"
+        dest.write_text(text, encoding="utf-8")
+        await ba_db.set_project(project_id, source_path=str(dest))
 
-        def take(self) -> bytes:
-            if not self._buf:
-                return b""
-            out = bytes(self._buf)
-            self._buf.clear()
-            return out
+    return {"ok": True, "project_id": project_id}
 
-    # Past this an archive needs zip64, whose headers are a different size — which would
-    # make the exact length below a lie. Courses are nowhere near it (a 71-track course is
-    # ~600MB), and the staged builder still handles anything that is.
-    _ZIP64_FLOOR = 0xFFFFFFFF
+@app.get("/projects")
+async def ba_list_projects(user_id: str) -> dict:
+    uid = _ba_user_id(user_id)
+    rows = await ba_db.list_projects(uid)
+    # One query for every card's phases rather than one per card, so the rail
+    # renders on the list without opening the drawer.
+    by_project: dict[int, list] = {}
+    for p in await ba_db.list_phases_for_projects([int(r["id"]) for r in rows]):
+        by_project.setdefault(int(p["project_id"]), []).append(p)
+    limit = _ba_max_projects()
+    active_total = await ba_db.count_active_projects()
+    # The dashboard gates its upload form on these so it can block (and explain)
+    # an over-limit upload before spending a credit on it.
+    return {
+        "ok": True,
+        "projects": [
+            _ba_project_wire(r, by_project.get(int(r["id"]), []), active_total)
+            for r in rows
+        ],
+        "limit": limit,
+        "remaining": max(0, limit - len(rows)),
+    }
 
-    def _ba_zip_plan(items, course_name: str):
-        """What the zip will contain, and EXACTLY how many bytes it will be.
+@app.get("/projects/{project_id}")
+async def ba_get_project(project_id: int, user_id: str) -> dict:
+    uid = _ba_user_id(user_id)
+    row = await ba_db.get_project(project_id, uid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
 
-        The size is computable in advance only because the entries are stored rather than
-        deflated: every part of the archive is then a known quantity — 30 bytes of local
-        header and 46 of central directory per entry, both plus the name, a 16-byte data
-        descriptor, the file itself, and 22 bytes to close. Verified against zipfile's own
-        output rather than trusted from the spec.
+    chunks = await ba_db.get_all_chunks(project_id)
+    ref_map = {
+        int(c["id"]): {
+            "chapter": c["chapter"], "section": c["section"],
+            "page_start": c["page_start"], "page_end": c["page_end"],
+        }
+        for c in chunks
+    }
+    sessions = await ba_db.get_sessions(project_id)
+    phases = await ba_db.list_phases_for_projects([project_id])
+    out = _ba_project_wire(row, phases, await ba_db.count_active_projects())
+    out["sessions"] = [_ba_session_wire(s, ref_map) for s in sessions]
+    return {"ok": True, "project": out}
 
-        It buys the download a Content-Length, which is the difference between a progress
-        bar that fills and a browser that can only say how many megabytes have arrived.
-        """
-        narration = _ba_narration_txt(items, course_name)
-        narration_bytes = narration.encode("utf-8") if narration else b""
+@app.get("/projects/{project_id}/cover", response_model=None)
+async def ba_project_cover(project_id: int, user_id: str) -> FileResponse:
+    """The cover lifted from the uploaded book. 404 when it had none."""
+    uid = _ba_user_id(user_id)
+    project = await ba_db.get_project(project_id, uid)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    options = _ba_json(project["options"])
+    name = options.get("cover") if isinstance(options, dict) else None
+    path = ba_cover.cover_file(ba_storage.project_dir(uid, project_id), name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="This course has no cover.")
+    # private: the URL carries the listener's token, and the image is theirs.
+    # A day, because a cover is written once and never changes.
+    return FileResponse(
+        path=str(path), media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
-        entries = []  # (arcname, path or None, size)
+@app.post("/projects/{project_id}/rename")
+async def ba_rename_project(
+    project_id: int, user_id: str, name: str = Form(..., max_length=200),
+) -> dict:
+    """Give a course the title its listener wants.
+
+    ``named_by_user`` is what keeps it: the parse step tidies the upload's
+    filename into a title of its own, and without the mark that tidy-up would
+    overwrite a rename made while a long book was still being read.
+    """
+    uid = _ba_user_id(user_id)
+    project = await ba_db.get_project(project_id, uid)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    cleaned = _ba_course_name(name)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Enter a name for the course.")
+    options = _ba_json(project["options"])
+    options = dict(options) if isinstance(options, dict) else {}
+    options["named_by_user"] = True
+    await ba_db.set_project(project_id, name=cleaned, options=options)
+    return {"ok": True, "name": cleaned}
+
+@app.get("/projects/{project_id}/sessions/{session_id}/audio", response_model=None)
+async def ba_session_audio(project_id: int, session_id: int, user_id: str) -> FileResponse:
+    uid = _ba_user_id(user_id)
+    project = await ba_db.get_project(project_id, uid)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    sess = await ba_db.get_session(session_id, project_id)
+    if sess is None or not sess["audio_path"]:
+        raise HTTPException(status_code=404, detail="Audio not found.")
+    path = Path(sess["audio_path"])
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Audio file missing on disk.")
+    return FileResponse(path=str(path), media_type="audio/mpeg", filename=path.name)
+
+def _ba_safe_filename(name: str) -> str:
+    """Sanitize a title for use as a file / zip-entry name (keeps spaces)."""
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", str(name or "")).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned[:120] or "course"
+
+def _ba_narration_txt(items, course_name: str) -> str:
+    """The whole course as one readable transcript, or "" if there is nothing to write.
+
+    The words cost nothing to include: every lesson's script is already on the row its
+    audio came from, so this is the same narration the listener hears, in the same
+    order, for reading along or searching the course.
+
+    Lessons are numbered exactly as the audio files are, so a line in here can be
+    traced to the track it belongs to. A lesson whose audio did not make it into the
+    zip is left out of the transcript too — the file describes what is in the download,
+    not what the project holds.
+    """
+    blocks = []
+    for ordinal, title, _path, script in items:
+        text = str(script or "").strip()
+        if not text:
+            continue
+        blocks.append(f"{ordinal:02d} - {title}\n\n{text}")
+    if not blocks:
+        return ""
+    return f"{course_name}\n\n\n" + "\n\n\n".join(blocks) + "\n"
+
+class _ZipSink:
+    """A write-only, UNSEEKABLE target for zipfile.
+
+    Unseekable is the whole point. zipfile normally rewinds to patch each entry's
+    header with the CRC and size once it knows them, which is only possible when the
+    output is a file. With no `tell` to call it switches to data descriptors — the
+    sizes are written AFTER the data instead of before it — and that is what lets the
+    archive be produced in one forward pass and handed out as it is made.
+    """
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+
+    def write(self, b) -> int:
+        self._buf += b
+        return len(b)
+
+    def flush(self) -> None:
+        pass
+
+    def take(self) -> bytes:
+        if not self._buf:
+            return b""
+        out = bytes(self._buf)
+        self._buf.clear()
+        return out
+
+# Past this an archive needs zip64, whose headers are a different size — which would
+# make the exact length below a lie. Courses are nowhere near it (a 71-track course is
+# ~600MB), and the staged builder still handles anything that is.
+_ZIP64_FLOOR = 0xFFFFFFFF
+
+def _ba_zip_plan(items, course_name: str):
+    """What the zip will contain, and EXACTLY how many bytes it will be.
+
+    The size is computable in advance only because the entries are stored rather than
+    deflated: every part of the archive is then a known quantity — 30 bytes of local
+    header and 46 of central directory per entry, both plus the name, a 16-byte data
+    descriptor, the file itself, and 22 bytes to close. Verified against zipfile's own
+    output rather than trusted from the spec.
+
+    It buys the download a Content-Length, which is the difference between a progress
+    bar that fills and a browser that can only say how many megabytes have arrived.
+    """
+    narration = _ba_narration_txt(items, course_name)
+    narration_bytes = narration.encode("utf-8") if narration else b""
+
+    entries = []  # (arcname, path or None, size)
+    for ordinal, title, path, _script in items:
+        ext = path.suffix or ".mp3"
+        arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
+        entries.append((arcname, path, path.stat().st_size))
+    if narration_bytes:
+        entries.append((f"{course_name} - Narration.txt", None, len(narration_bytes)))
+
+    total = 22
+    for arcname, _p, size in entries:
+        n = len(arcname.encode("utf-8"))
+        total += 30 + n + size + 16 + 46 + n
+    return entries, narration_bytes, total
+
+def _ba_stream_zip(entries, narration_bytes: bytes, chunk: int = 262144):
+    """Yield the archive as it is built. Blocking; Starlette runs it in a thread.
+
+    The staged builder this replaces read every track, wrote a whole second copy to a
+    temp file, then read THAT back to send it — three passes over the data, all of them
+    finished before the browser received a single byte. On a 600MB course that is a
+    button that appears to do nothing for half a minute. This is one pass, and the
+    first bytes leave while the rest is still being read.
+    """
+    sink = _ZipSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
+        for arcname, path, _size in entries:
+            if path is None:
+                zf.writestr(arcname, narration_bytes)
+            else:
+                with zf.open(arcname, "w") as dest, open(path, "rb") as src:
+                    while True:
+                        buf = src.read(chunk)
+                        if not buf:
+                            break
+                        dest.write(buf)
+                        out = sink.take()
+                        if out:
+                            yield out
+            out = sink.take()
+            if out:
+                yield out
+    # The central directory and end record, written when the ZipFile closes.
+    out = sink.take()
+    if out:
+        yield out
+
+def _ba_build_zip(items, course_name: str) -> str:
+    """Build a zip of session audio (named by session title) plus the course
+    transcript. Blocking; run in a thread. Returns the temp zip path."""
+    import tempfile
+    import zipfile
+
+    tmp = tempfile.NamedTemporaryFile(prefix="ba_zip_", suffix=".zip", delete=False)
+    tmp.close()
+    # STORED, not DEFLATED. The payload is mp3, which is already compressed, so deflate
+    # spends its time re-compressing incompressible data: measured on a real 71-track,
+    # 603MB course, DEFLATED took 29.3s to save 1.08% where STORED took 3.2s and saved
+    # nothing. Nine times the wait for six megabytes in six hundred — and the wait is
+    # paid before the download starts at all, because the whole zip is built to this
+    # temp file before FileResponse sends its first byte. The transcript below is text
+    # and would compress well, but it is a few kilobytes against hundreds of megabytes.
+    with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as zf:
         for ordinal, title, path, _script in items:
             ext = path.suffix or ".mp3"
             arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
-            entries.append((arcname, path, path.stat().st_size))
-        if narration_bytes:
-            entries.append((f"{course_name} - Narration.txt", None, len(narration_bytes)))
+            zf.write(str(path), arcname=arcname)
+        # Only when there is narration to write: an empty transcript beside the audio
+        # reads as a broken file rather than an absent one. Scripts predate the audio
+        # in every path that produces it, so in practice this is always present.
+        narration = _ba_narration_txt(items, course_name)
+        if narration:
+            zf.writestr(f"{course_name} - Narration.txt", narration)
+    return tmp.name
 
-        total = 22
-        for arcname, _p, size in entries:
-            n = len(arcname.encode("utf-8"))
-            total += 30 + n + size + 16 + 46 + n
-        return entries, narration_bytes, total
+def _ba_unlink_quiet(path: str) -> None:
+    try:
+        os.unlink(path)
+    except Exception:  # noqa: BLE001
+        pass
 
-    def _ba_stream_zip(entries, narration_bytes: bytes, chunk: int = 262144):
-        """Yield the archive as it is built. Blocking; Starlette runs it in a thread.
+@app.get("/projects/{project_id}/download", response_model=None)
+async def ba_download_project(project_id: int, user_id: str) -> FileResponse:
+    from starlette.background import BackgroundTask
 
-        The staged builder this replaces read every track, wrote a whole second copy to a
-        temp file, then read THAT back to send it — three passes over the data, all of them
-        finished before the browser received a single byte. On a 600MB course that is a
-        button that appears to do nothing for half a minute. This is one pass, and the
-        first bytes leave while the rest is still being read.
-        """
-        sink = _ZipSink()
-        with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as zf:
-            for arcname, path, _size in entries:
-                if path is None:
-                    zf.writestr(arcname, narration_bytes)
-                else:
-                    with zf.open(arcname, "w") as dest, open(path, "rb") as src:
-                        while True:
-                            buf = src.read(chunk)
-                            if not buf:
-                                break
-                            dest.write(buf)
-                            out = sink.take()
-                            if out:
-                                yield out
-                out = sink.take()
-                if out:
-                    yield out
-        # The central directory and end record, written when the ZipFile closes.
-        out = sink.take()
-        if out:
-            yield out
+    uid = _ba_user_id(user_id)
+    project = await ba_db.get_project(project_id, uid)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
 
-    def _ba_build_zip(items, course_name: str) -> str:
-        """Build a zip of session audio (named by session title) plus the course
-        transcript. Blocking; run in a thread. Returns the temp zip path."""
-        import tempfile
-        import zipfile
+    sessions = await ba_db.get_sessions(project_id)
+    items = []
+    for s in sessions:
+        ap = s["audio_path"]
+        if ap and Path(ap).exists() and Path(ap).is_file():
+            # The script rides along with the audio it was voiced from, so the
+            # transcript in the zip cannot drift out of step with the tracks.
+            items.append((int(s["ordinal"]), s["title"], Path(ap), s["script"]))
+    if not items:
+        raise HTTPException(status_code=404, detail="No audio is available to download yet.")
 
-        tmp = tempfile.NamedTemporaryFile(prefix="ba_zip_", suffix=".zip", delete=False)
-        tmp.close()
-        # STORED, not DEFLATED. The payload is mp3, which is already compressed, so deflate
-        # spends its time re-compressing incompressible data: measured on a real 71-track,
-        # 603MB course, DEFLATED took 29.3s to save 1.08% where STORED took 3.2s and saved
-        # nothing. Nine times the wait for six megabytes in six hundred — and the wait is
-        # paid before the download starts at all, because the whole zip is built to this
-        # temp file before FileResponse sends its first byte. The transcript below is text
-        # and would compress well, but it is a few kilobytes against hundreds of megabytes.
-        with zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_STORED) as zf:
-            for ordinal, title, path, _script in items:
-                ext = path.suffix or ".mp3"
-                arcname = f"{ordinal:02d} - {_ba_safe_filename(title)}{ext}"
-                zf.write(str(path), arcname=arcname)
-            # Only when there is narration to write: an empty transcript beside the audio
-            # reads as a broken file rather than an absent one. Scripts predate the audio
-            # in every path that produces it, so in practice this is always present.
-            narration = _ba_narration_txt(items, course_name)
-            if narration:
-                zf.writestr(f"{course_name} - Narration.txt", narration)
-        return tmp.name
+    course_name = _ba_safe_filename(project["name"] or f"course_{project_id}")
 
-    def _ba_unlink_quiet(path: str) -> None:
-        try:
-            os.unlink(path)
-        except Exception:  # noqa: BLE001
-            pass
+    # Sizing the archive touches the filesystem once per track, so it goes to a thread
+    # like the build it replaces.
+    entries, narration_bytes, total = await asyncio.to_thread(
+        _ba_zip_plan, items, course_name
+    )
 
-    @app.get("/projects/{project_id}/download", response_model=None)
-    async def ba_download_project(project_id: int, user_id: str) -> FileResponse:
-        from starlette.background import BackgroundTask
+    filename = f"{course_name}.zip"
+    # Non-ASCII titles are routine — a course is named after its book. The plain
+    # `filename` is the fallback every client understands; `filename*` is the one that
+    # keeps the accents.
+    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "'")
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{urlquote(filename)}"
+    )
 
-        uid = _ba_user_id(user_id)
-        project = await ba_db.get_project(project_id, uid)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        sessions = await ba_db.get_sessions(project_id)
-        items = []
-        for s in sessions:
-            ap = s["audio_path"]
-            if ap and Path(ap).exists() and Path(ap).is_file():
-                # The script rides along with the audio it was voiced from, so the
-                # transcript in the zip cannot drift out of step with the tracks.
-                items.append((int(s["ordinal"]), s["title"], Path(ap), s["script"]))
-        if not items:
-            raise HTTPException(status_code=404, detail="No audio is available to download yet.")
-
-        course_name = _ba_safe_filename(project["name"] or f"course_{project_id}")
-
-        # Sizing the archive touches the filesystem once per track, so it goes to a thread
-        # like the build it replaces.
-        entries, narration_bytes, total = await asyncio.to_thread(
-            _ba_zip_plan, items, course_name
-        )
-
-        filename = f"{course_name}.zip"
-        # Non-ASCII titles are routine — a course is named after its book. The plain
-        # `filename` is the fallback every client understands; `filename*` is the one that
-        # keeps the accents.
-        ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "'")
-        disposition = (
-            f'attachment; filename="{ascii_name}"; '
-            f"filename*=UTF-8''{urlquote(filename)}"
-        )
-
-        if total >= _ZIP64_FLOOR:
-            # Big enough to need zip64, where the header sizes above no longer hold. Rare
-            # enough to be worth the old path rather than a second size calculation.
-            zip_path = await asyncio.to_thread(_ba_build_zip, items, course_name)
-            return FileResponse(
-                path=zip_path,
-                media_type="application/zip",
-                filename=filename,
-                background=BackgroundTask(_ba_unlink_quiet, zip_path),
-            )
-
-        return StreamingResponse(
-            _ba_stream_zip(entries, narration_bytes),
+    if total >= _ZIP64_FLOOR:
+        # Big enough to need zip64, where the header sizes above no longer hold. Rare
+        # enough to be worth the old path rather than a second size calculation.
+        zip_path = await asyncio.to_thread(_ba_build_zip, items, course_name)
+        return FileResponse(
+            path=zip_path,
             media_type="application/zip",
-            headers={"Content-Disposition": disposition, "Content-Length": str(total)},
+            filename=filename,
+            background=BackgroundTask(_ba_unlink_quiet, zip_path),
         )
 
-    @app.post("/projects/{project_id}/sessions/{session_id}/regenerate")
-    async def ba_regenerate_session(project_id: int, session_id: int, user_id: str) -> dict:
-        uid = _ba_user_id(user_id)
-        project = await ba_db.get_project(project_id, uid)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        sess = await ba_db.get_session(session_id, project_id)
-        if sess is None:
-            raise HTTPException(status_code=404, detail="Session not found.")
+    return StreamingResponse(
+        _ba_stream_zip(entries, narration_bytes),
+        media_type="application/zip",
+        headers={"Content-Disposition": disposition, "Content-Length": str(total)},
+    )
 
-        if sess["audio_path"]:
-            try:
-                Path(sess["audio_path"]).unlink(missing_ok=True)
-            except Exception:  # noqa: BLE001
-                pass
+@app.post("/projects/{project_id}/sessions/{session_id}/regenerate")
+async def ba_regenerate_session(project_id: int, session_id: int, user_id: str) -> dict:
+    uid = _ba_user_id(user_id)
+    project = await ba_db.get_project(project_id, uid)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    sess = await ba_db.get_session(session_id, project_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
 
-        await ba_db.set_session(
-            session_id, status="pending", validation_status="pending",
-            script=None, audio_path=None, audio_seconds=None, validation_notes=None,
-        )
-        # Re-open the project at the sessions phase so the worker re-scripts,
-        # re-validates and re-renders just this session. reopen_project keeps a
-        # live lease rather than clearing it, so a worker already driving this
-        # project picks the session up itself instead of a second worker claiming
-        # the row alongside it.
-        await ba_db.reopen_project(project_id, stage="Regenerating session")
-        return {"ok": True}
-
-    @app.post("/projects/{project_id}/phases/{ordinal}/process")
-    async def ba_process_phase(project_id: int, ordinal: int, user_id: str) -> dict:
-        """Start the delivery phase the listener just asked for.
-
-        The claim is a conditional UPDATE rather than a read-then-write, so a
-        double-clicked button — or two open tabs — can only ever start it once.
-        """
-        uid = _ba_user_id(user_id)
-        if await ba_db.get_project(project_id, uid) is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        phase = await ba_db.claim_phase(project_id, ordinal)
-        if phase is None:
-            raise HTTPException(
-                status_code=409,
-                detail="That phase isn't ready yet, or it's already being processed.",
-            )
-        await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · starting")
-        return {"ok": True, "phase": _ba_phase_wire(phase)}
-
-    @app.post("/projects/{project_id}/process-all")
-    async def ba_process_all(project_id: int, user_id: str) -> dict:
-        """Run every remaining phase back to back, without stopping to ask."""
-        uid = _ba_user_id(user_id)
-        if await ba_db.get_project(project_id, uid) is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        await ba_db.set_project(project_id, auto_continue=True)
-        nxt = await ba_db.claim_next_ready_phase(project_id)
-        if nxt is not None:
-            await ba_db.reopen_project(
-                project_id, stage=f"Phase {nxt['ordinal']} · starting",
-            )
-        return {"ok": True}
-
-    @app.post("/projects/{project_id}/process-all/stop")
-    async def ba_stop_auto(project_id: int, user_id: str) -> dict:
-        """Stop after the phase that is currently running.
-
-        It takes effect at the next boundary. There is nothing to call off
-        mid-lesson, and offering a button that pretended otherwise would be a lie.
-        """
-        uid = _ba_user_id(user_id)
-        if await ba_db.get_project(project_id, uid) is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-        await ba_db.set_project(project_id, auto_continue=False)
-        return {"ok": True}
-
-    @app.post("/projects/{project_id}/phases/{ordinal}/retry")
-    async def ba_retry_phase(project_id: int, ordinal: int, user_id: str) -> dict:
-        """Re-run a phase that failed. Lessons that already have audio are kept."""
-        uid = _ba_user_id(user_id)
-        if await ba_db.get_project(project_id, uid) is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
-
-        phase = await ba_db.retry_phase(project_id, ordinal)
-        if phase is None:
-            raise HTTPException(status_code=409, detail="That phase hasn't failed.")
-        await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · retrying")
-        return {"ok": True, "phase": _ba_phase_wire(phase)}
-
-    @app.delete("/projects/{project_id}")
-    async def ba_delete_project(project_id: int, user_id: str) -> dict:
-        import shutil
-
-        uid = _ba_user_id(user_id)
-        row = await ba_db.delete_project(project_id, uid)
-        if row is None:
-            raise HTTPException(status_code=404, detail="Project not found.")
+    if sess["audio_path"]:
         try:
-            shutil.rmtree(ba_storage.project_dir(uid, project_id), ignore_errors=True)
+            Path(sess["audio_path"]).unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
-        return {"ok": True, "deleted": project_id}
+
+    await ba_db.set_session(
+        session_id, status="pending", validation_status="pending",
+        script=None, audio_path=None, audio_seconds=None, validation_notes=None,
+    )
+    # Re-open the project at the sessions phase so the worker re-scripts,
+    # re-validates and re-renders just this session. reopen_project keeps a
+    # live lease rather than clearing it, so a worker already driving this
+    # project picks the session up itself instead of a second worker claiming
+    # the row alongside it.
+    await ba_db.reopen_project(project_id, stage="Regenerating session")
+    return {"ok": True}
+
+@app.post("/projects/{project_id}/phases/{ordinal}/process")
+async def ba_process_phase(project_id: int, ordinal: int, user_id: str) -> dict:
+    """Start the delivery phase the listener just asked for.
+
+    The claim is a conditional UPDATE rather than a read-then-write, so a
+    double-clicked button — or two open tabs — can only ever start it once.
+    """
+    uid = _ba_user_id(user_id)
+    if await ba_db.get_project(project_id, uid) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    phase = await ba_db.claim_phase(project_id, ordinal)
+    if phase is None:
+        raise HTTPException(
+            status_code=409,
+            detail="That phase isn't ready yet, or it's already being processed.",
+        )
+    await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · starting")
+    return {"ok": True, "phase": _ba_phase_wire(phase)}
+
+@app.post("/projects/{project_id}/process-all")
+async def ba_process_all(project_id: int, user_id: str) -> dict:
+    """Run every remaining phase back to back, without stopping to ask."""
+    uid = _ba_user_id(user_id)
+    if await ba_db.get_project(project_id, uid) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    await ba_db.set_project(project_id, auto_continue=True)
+    nxt = await ba_db.claim_next_ready_phase(project_id)
+    if nxt is not None:
+        await ba_db.reopen_project(
+            project_id, stage=f"Phase {nxt['ordinal']} · starting",
+        )
+    return {"ok": True}
+
+@app.post("/projects/{project_id}/process-all/stop")
+async def ba_stop_auto(project_id: int, user_id: str) -> dict:
+    """Stop after the phase that is currently running.
+
+    It takes effect at the next boundary. There is nothing to call off
+    mid-lesson, and offering a button that pretended otherwise would be a lie.
+    """
+    uid = _ba_user_id(user_id)
+    if await ba_db.get_project(project_id, uid) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    await ba_db.set_project(project_id, auto_continue=False)
+    return {"ok": True}
+
+@app.post("/projects/{project_id}/phases/{ordinal}/retry")
+async def ba_retry_phase(project_id: int, ordinal: int, user_id: str) -> dict:
+    """Re-run a phase that failed. Lessons that already have audio are kept."""
+    uid = _ba_user_id(user_id)
+    if await ba_db.get_project(project_id, uid) is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    phase = await ba_db.retry_phase(project_id, ordinal)
+    if phase is None:
+        raise HTTPException(status_code=409, detail="That phase hasn't failed.")
+    await ba_db.reopen_project(project_id, stage=f"Phase {ordinal} · retrying")
+    return {"ok": True, "phase": _ba_phase_wire(phase)}
+
+@app.delete("/projects/{project_id}")
+async def ba_delete_project(project_id: int, user_id: str) -> dict:
+    import shutil
+
+    uid = _ba_user_id(user_id)
+    row = await ba_db.delete_project(project_id, uid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    def remove_files() -> None:
+        shutil.rmtree(ba_storage.project_dir(uid, project_id), ignore_errors=True)
+
+    # Off the event loop: a finished course is hundreds of narration files, and deleting
+    # them inline stalls every other request this single-worker process is serving.
+    try:
+        await asyncio.to_thread(remove_files)
+    except OSError:
+        # The course is already deleted; files left behind cost disk, not correctness.
+        _log.warning("Could not remove the files of deleted course %s", project_id, exc_info=True)
+    return {"ok": True, "deleted": project_id}

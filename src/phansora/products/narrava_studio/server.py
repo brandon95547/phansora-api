@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -24,9 +25,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
+from phansora.shared.utils.uploads import save_upload
 
 from .config import get_settings  # noqa: E402
 from .models import (  # noqa: E402
@@ -62,13 +63,8 @@ app = FastAPI(
 )
 
 settings = get_settings()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS layer of its own: phansora.main wraps every mounted product in one, from the
+# same CORS_ALLOW_ORIGINS, and that outer layer's headers are the ones a browser sees.
 
 
 @app.get("/")
@@ -115,6 +111,22 @@ def _provider_error(exc: llm.ProviderRejected) -> HTTPException:
         status_code=503,
         detail={"code": "provider_rejected", "message": str(exc)},
     )
+
+
+# Narration and music arrive from the Node app directly, not through nginx, so nginx's
+# 352 MB cap never applies here. The ceiling is the Node app's own limit on a Studio upload
+# (MAX_UPLOAD_BYTES in its src/narrava-studio/routes.js): anything a user can add to a
+# project can still be timed, and nothing larger can fill this host's disk.
+MAX_MEDIA_BYTES = 512 * 1024 * 1024
+
+
+async def _receive(file: UploadFile, *, prefix: str) -> str:
+    """The upload, streamed to a temp file under the cap; the caller removes it."""
+    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
+    fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    os.close(fd)
+    await save_upload(file, Path(temp_path), max_bytes=MAX_MEDIA_BYTES)
+    return temp_path
 
 
 @app.get("/voices")
@@ -340,12 +352,8 @@ async def align_narration(
     and an operator has to fix it; 422 means this particular audio and script do not go
     together and the user has to.
     """
-    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
-    fd, temp_path = tempfile.mkstemp(prefix="narrava_align_", suffix=suffix)
+    temp_path = await _receive(file, prefix="narrava_align_")
     try:
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1 << 20):
-                out.write(chunk)
         result = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: align.aligned_words(
@@ -392,12 +400,8 @@ async def transcribe_lyrics(
     was. 503 means the host cannot transcribe at all; 422 means this audio has no singing
     on it (or cannot be read) and the user has to pick another track.
     """
-    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
-    fd, temp_path = tempfile.mkstemp(prefix="narrava_lyrics_", suffix=suffix)
+    temp_path = await _receive(file, prefix="narrava_lyrics_")
     try:
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1 << 20):
-                out.write(chunk)
         result = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: align.lyric_words(
@@ -441,12 +445,8 @@ async def align_lyrics(
     503 means the host cannot transcribe at all; 422 means these lyrics and this song do
     not go together, and the user has to fix which is wrong.
     """
-    suffix = os.path.splitext(file.filename or "")[1][:8] or ".mp3"
-    fd, temp_path = tempfile.mkstemp(prefix="narrava_lyrics_", suffix=suffix)
+    temp_path = await _receive(file, prefix="narrava_lyrics_")
     try:
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1 << 20):
-                out.write(chunk)
         result = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: align.lyric_alignment(

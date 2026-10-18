@@ -27,10 +27,11 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
 from .research import GroundedAnswer
+from .retries import ProviderError, worth_retrying
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,15 @@ class GeminiResearchClient:
             )
 
     # ------------------------------------------------------------------ transport
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    # Retried only when a second attempt could differ — a timeout, a dropped connection,
+    # a 408/429/5xx — and reraise, so the caller sees Gemini's own error rather than
+    # tenacity's RetryError wrapped around it.
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(min=1, max=8),
+        retry=retry_if_exception(lambda exc: worth_retrying(exc, (httpx.TransportError,))),
+        reraise=True,
+    )
     def _generate(
         self,
         *,
@@ -263,7 +272,7 @@ class GeminiResearchClient:
                 },
             )
         if resp.status_code >= 400:
-            raise RuntimeError(f"Gemini {resp.status_code}: {resp.text[:400]}")
+            raise ProviderError(f"Gemini {resp.status_code}: {resp.text[:400]}", status=resp.status_code)
         data = resp.json()
 
         meta = data.get("usageMetadata") or {}

@@ -19,11 +19,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import APIConnectionError, OpenAI
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
 from .research import GroundedAnswer
+from .retries import worth_retrying
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,23 @@ def _parse_json(raw: str) -> Dict[str, Any]:
         if start != -1 and end != -1 and end > start:
             return json.loads(raw[start : end + 1])
         raise
+
+
+def _worth_retrying(exc: BaseException) -> bool:
+    """A timeout, a dropped connection, a 408/429/5xx — or an answer that did not parse,
+    which the model may well get right the second time. Never a 4xx refusal: a bad key
+    or an empty account answers the same way three times over."""
+    return worth_retrying(exc, (APIConnectionError, json.JSONDecodeError))
+
+
+# reraise: when the attempts run out, the caller gets the provider's own error rather than
+# tenacity's RetryError wrapped around it.
+_RETRY = dict(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=8),
+    retry=retry_if_exception(_worth_retrying),
+    reraise=True,
+)
 
 
 def _env(name: str, default: str = "") -> str:
@@ -116,6 +134,9 @@ class OpenAIResearchConfig:
     search_max_output_tokens: int = 4000
     # The hosted web-search tool type; override to "web_search_preview" on older tiers.
     web_search_tool: str = "web_search"
+    # Per attempt, and its own variable. It used to read CHRONO_REQUEST_TIMEOUT_S, the
+    # handler's whole budget, so raising that budget made each attempt longer by the
+    # same amount and the budget could never get ahead of the client's worst case.
     timeout_s: int = 120
 
     @classmethod
@@ -133,7 +154,7 @@ class OpenAIResearchConfig:
             reason_max_output_tokens=_reason_budget(),
             search_max_output_tokens=int(_env("OPENAI_SEARCH_MAX_TOKENS", "4000")),
             web_search_tool=_env("OPENAI_WEB_SEARCH_TOOL", "web_search"),
-            timeout_s=int(_env("CHRONO_REQUEST_TIMEOUT_S", "120")),
+            timeout_s=int(_env("OPENAI_TIMEOUT_S", "120")),
         )
 
 
@@ -142,13 +163,20 @@ class OpenAIResearchClient:
         self._cfg = config or OpenAIResearchConfig.from_env()
         if not self._cfg.api_key:
             raise RuntimeError("OPENAI_API_KEY is not set.")
-        kwargs: Dict[str, Any] = {"api_key": self._cfg.api_key, "timeout": self._cfg.timeout_s}
+        # max_retries=0: the tenacity decorators below are the retry policy. The SDK's own
+        # default of two retries would run inside each of their attempts, nine calls where
+        # three were meant, and put the worst case far past the handler's budget.
+        kwargs: Dict[str, Any] = {
+            "api_key": self._cfg.api_key,
+            "timeout": self._cfg.timeout_s,
+            "max_retries": 0,
+        }
         if self._cfg.base_url:
             kwargs["base_url"] = self._cfg.base_url
         self._client = OpenAI(**kwargs)
 
     # ------------------------------------------------------------------ search
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(**_RETRY)
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:
         """Responses API call with the native web_search tool (grounded + cited).
 
@@ -187,7 +215,7 @@ class OpenAIResearchClient:
         return GroundedAnswer(text=text, citations=citations, queries=queries)
 
     # --------------------------------------------------------------- reasoning
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+    @retry(**_RETRY)
     def reason_json(
         self,
         prompt: str,

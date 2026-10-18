@@ -34,7 +34,7 @@ too low fails as **422 "cut off before completion"**, not as an error mentioning
 Raise it if that appears; lower it if DeepSeek starts rejecting the request outright,
 which is what exceeding the model's real output ceiling looks like.
 | Chrono-Origin | origin research + reasoning | `CHRONO_LLM_PROVIDER` (`openai`) | `CHRONO_MODEL` → `OPENAI_MODEL` / `DEEPSEEK_MODEL` |
-| Dossier Nova | research synthesis, dossier writing | — (DeepSeek only) | `DEEPSEEK_MODEL` |
+| Research Atlas | source cleanup, profiling, extraction into the report | — (DeepSeek only) | `RESEARCH_ATLAS_MODEL` → `DEEPSEEK_MODEL` |
 | Book Alchemy | book → course structure + lesson text | — (DeepSeek only) | `BOOK_ALCHEMY_MODEL` → `DEEPSEEK_MODEL` |
 | SpokenVerse | OCR cleanup / page merge on scanned PDFs | — (DeepSeek only) | `SPOKENVERSE_OCR_MODEL` → `DEEPSEEK_MODEL` |
 | Talari Book Creator | source analysis, book plans, chapters, revisions, illustration ideas | — (DeepSeek only) | `TALARI_MODEL` → `DEEPSEEK_MODEL` |
@@ -357,7 +357,6 @@ mp3. Long sessions do **not** hit nginx's `proxy_read_timeout` (300 s): the work
 
 ```bash
 phansora tts --help        # batch TTS / PDF→TXT
-phansora dossier --help    # Dossier Nova pipeline
 ```
 
 ## Known issues / what not to do (SpokenVerse + CosyVoice + vLLM)
