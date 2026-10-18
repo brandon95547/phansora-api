@@ -103,7 +103,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "biomechanical": ("realism", "biomechanical art, organic forms fused with machinery, ribbed metallic textures, intricate surreal anatomy"),
     "magical-realism": ("realism", "magical realism, an everyday scene painted realistically with one quiet impossible element, calm luminous mood"),
     "french-impressionism": ("impressionism", "French impressionist painting, broken brushstrokes, shimmering outdoor light, soft blues and greens, painted en plein air"),
-    "american-impressionism": ("impressionism", "American impressionist painting, bright sunlit color, softly broken brushwork, gracious figures and landscapes"),
     "tonalism": ("impressionism", "tonalist painting, a soft muted palette of grays and browns, misty dusk atmosphere, quiet mood"),
     "neo-impressionism": ("impressionism", "neo-impressionist pointillism, small dots of pure color, divisionist technique, luminous optical mixing"),
     "german-expressionism": ("expressionism", "German expressionist art, jagged angular forms, harsh contrasting color, raw emotional intensity"),
