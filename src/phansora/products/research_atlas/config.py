@@ -5,8 +5,8 @@ import openai
 
 from phansora.shared.paths import runtime_root
 
-# Default input/output paths live under the runtime root (CWD / PHANSORA_DATA_DIR),
-# not inside the installed package. Both are overridable via env.
+# The default report path lives under the runtime root (CWD / PHANSORA_DATA_DIR), not
+# inside the installed package. Overridable via TOC_FULL_PATH.
 BASE_DIR = runtime_root()
 
 
@@ -44,74 +44,27 @@ class Config:
             timeout=_get_float_env("DEEPSEEK_TIMEOUT_SECONDS", 90.0),
             max_retries=_get_int_env("DEEPSEEK_MAX_RETRIES", 1),
         )
-        self.similarity_threshold = _get_float_env("SIMILARITY_THRESHOLD", 0.75)
-        self.dimensions = _get_int_env("EMBEDDING_DIMENSIONS", 384)
-        self.input_text_path = os.getenv("INPUT_TEXT_PATH", str(BASE_DIR / "tmp" / "pizza.txt"))
         self.toc_full_path = os.getenv("TOC_FULL_PATH", str(BASE_DIR / "toc" / "full.md"))
         self.max_chunk_chars = _get_int_env("MAX_CHUNK_CHARS", 20000)
-        self.conservative_mode = os.getenv("CONSERVATIVE_MODE", "false").lower() in ("true", "1", "yes")
-        # Retained for the older dossier tooling that still reads it. Research Atlas
-        # does not consult it, and the reason is worth recording:
-        #
-        # SOURCE_ONLY_MODE existed to suppress the AI-authored front matter, because
-        # that front matter was the model's VERDICTS -- confidence ratings and
-        # fact-vs-allegation adjudications -- and shipping them inside a document of
-        # quoted sources was indefensible. Research Atlas does not produce verdicts, so
-        # there is nothing to suppress: the organized report IS the deliverable, and
-        # every line of it is attributed. Removing the judgments is precisely what made
-        # it safe to include the organized content in the document.
-        self.source_only_mode = os.getenv("SOURCE_ONLY_MODE", "true").lower() in ("true", "1", "yes")
+        self.overlap_paragraphs = _get_int_env("OVERLAP_PARAGRAPHS", 2)
 
         # How many LLM calls are in flight at once, across every stage. These calls are
         # pure network wait, so the ceiling is the provider's rate limit rather than this
         # box's CPU — 8 was leaving most of the window unused on multi-source dossiers.
         self.llm_max_workers = _get_int_env("LLM_MAX_WORKERS", 16)
+
+        self.clean_extracted_text = os.getenv("CLEAN_EXTRACTED_TEXT", "true").lower() in ("true", "1", "yes")
+        self.cleanup_chunk_size = _get_int_env("CLEANUP_CHUNK_SIZE", 12000)
         # Skip the cleanup pass on sources that show no extraction damage. Costs one cheap
         # regex scan and saves an entire LLM stage on any dossier built from article URLs.
         self.skip_clean_when_undamaged = os.getenv(
             "SKIP_CLEAN_WHEN_UNDAMAGED", "true"
         ).lower() in ("true", "1", "yes")
-        self.catchall_heading = os.getenv("CATCHALL_HEADING", "Miscellaneous")
-        self.toc_target_heading_count = _get_int_env("TOC_TARGET_HEADING_COUNT", 60)
-        # Ceiling on the TOC-organize answer. That call has to emit the WHOLE table of
-        # contents in one response — every dossier section plus every extracted heading —
-        # so its output grows with the source material while the old hardcoded 2048 did
-        # not. 2048 is roughly 80-140 heading lines; a long multi-source dossier blows
-        # through that, and because deepseek-v4-flash reasons on every tier an exhausted
-        # budget can come back as EMPTY content rather than truncated content. The actual
-        # request scales with the heading count and is clamped to this (see toc_generator
-        # ._organize_max_tokens).
-        self.toc_organize_max_tokens = _get_int_env("TOC_ORGANIZE_MAX_TOKENS", 16384)
-        self.content_similarity_threshold = _get_float_env("CONTENT_SIMILARITY_THRESHOLD", 0.95)
-        self.overlap_paragraphs = _get_int_env("OVERLAP_PARAGRAPHS", 2)
-        self.coverage_threshold = _get_float_env("COVERAGE_THRESHOLD", 0.85)
-        self.clean_extracted_text = os.getenv("CLEAN_EXTRACTED_TEXT", "true").lower() in ("true", "1", "yes")
-        self.cleanup_chunk_size = _get_int_env("CLEANUP_CHUNK_SIZE", 12000)
-        # Cosine-similarity threshold below which two adjacent paragraphs are
-        # treated as a topic boundary in semantic chunking. MiniLM puts most
-        # adjacent article paragraphs in the ~0.3–0.6 range, so the old default of
-        # 0.5 split almost every paragraph into its own chunk (dozens of tiny
-        # fragments → poor coverage, heavy overlap duplication, slow organize).
-        # 0.2 only splits on genuine topic shifts.
-        self.semantic_similarity_drop = _get_float_env("SEMANTIC_SIMILARITY_DROP", 0.2)
 
-        # --- Dossier pipeline settings ---
-        # Maximum share of the final dossier any single source may occupy (0.0–1.0).
-        self.max_source_share = _get_float_env("MAX_SOURCE_SHARE", 0.40)
-        # Cosine-similarity threshold for claim-level deduplication across sources.
-        self.claim_dedup_threshold = _get_float_env("CLAIM_DEDUP_THRESHOLD", 0.90)
-        # Maximum duplication ratio allowed before the validation step triggers a warning.
-        self.max_duplication_ratio = _get_float_env("MAX_DUPLICATION_RATIO", 0.15)
         # Whether to run source profiling (type + role classification) via LLM.
         self.enable_source_profiling = os.getenv("ENABLE_SOURCE_PROFILING", "true").lower() in ("true", "1", "yes")
         # Maximum chars sent to the LLM per source for profiling (first N chars).
         self.profile_sample_chars = _get_int_env("PROFILE_SAMPLE_CHARS", 4000)
-        # Cross-source intelligence synthesis (Phase 1): correlate every source into
-        # one structured model (merged findings + confidence + timeline + evidence
-        # matrix + executive summary) and prepend it as dossier front matter.
-        self.enable_correlation = os.getenv("ENABLE_CORRELATION", "true").lower() in ("true", "1", "yes")
-        # Chars per source fed to the single correlation call (first N chars).
-        self.synthesis_sample_chars = _get_int_env("SYNTHESIS_SAMPLE_CHARS", 8000)
 
     @classmethod
     def from_env(cls):

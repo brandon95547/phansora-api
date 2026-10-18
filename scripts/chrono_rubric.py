@@ -24,11 +24,14 @@ it never dated fails instead of being waved through.
 
     python scripts/chrono_rubric.py trace.json
 
-Get a trace to score with, e.g.:
+Get a trace to score with: submit it as a job, then save the job's `result` once its
+status is "completed" (add the internal key header the API expects), e.g.:
 
-    curl -s -X POST localhost:8000/chrono/trace \\
-      -H 'content-type: application/json' \\
-      -d '{"title":"Jesus Christ"}' > trace.json
+    curl -s -X POST localhost:8000/chrono/trace/jobs \\
+      -H 'content-type: application/json' -H "x-phansora-internal-key: $KEY" \\
+      -d '{"title":"Jesus Christ"}'                       # -> {"job_id": ...}
+    curl -s localhost:8000/chrono/trace/jobs/<job_id> -H "x-phansora-internal-key: $KEY" \\
+      | python -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["result"]))' > trace.json
 """
 from __future__ import annotations
 

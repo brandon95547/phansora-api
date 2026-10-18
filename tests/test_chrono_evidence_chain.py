@@ -20,46 +20,6 @@ pytest.importorskip("pydantic_settings", reason="pydantic-settings not installed
 from phansora.products.chrono_origin.models import EvidenceKind  # noqa: E402
 from phansora.products.chrono_origin.pipeline import orchestrator as orch  # noqa: E402
 
-# The worked example from the product brief: the Jesus chain, in order, as it should
-# come out — seven surviving things, nothing between them.
-JESUS_CHAIN = [
-    ("Hebrew scriptures", "text", -1200, -400),
-    ("Septuagint", "text", -250, -100),
-    ("Dead Sea Scrolls", "scroll", -250, 70),
-    ("Authentic letters of Paul", "letter", 50, 65),
-    ("The four Gospels", "text", 65, 100),
-    ("Josephus, Antiquities", "text", 93, 94),
-    ("Tacitus, Annals", "text", 116, 116),
-]
-
-
-def test_every_kind_in_the_reference_chain_is_evidence():
-    for title, kind, _a, _b in JESUS_CHAIN:
-        assert orch.is_evidence_kind(kind), f"{title} typed as {kind} is not accepted as evidence"
-
-
-@pytest.mark.parametrize(
-    "kind",
-    [
-        # The interpretive vocabulary the old model allowed as chain steps. Each of
-        # these is a conclusion; none is a thing anyone can go and look at.
-        "context",
-        "event",
-        "reconstructed_date",
-        "institutional_development",
-        "term_history",
-        "linguistic_transmission",
-        "dating_framework",
-        "external_attestation",  # renamed: an outside source is just a "text"
-        "messianic_expectation",  # the brief's own example of what must never be a step
-        "",
-        None,
-    ],
-)
-def test_non_evidence_is_refused_entry_to_the_chain(kind):
-    assert not orch.is_evidence_kind(kind)
-
-
 def test_the_gate_does_not_coerce():
     """An unrecognised kind must not become a valid one.
 
@@ -75,53 +35,7 @@ def test_evidence_kinds_match_the_declared_model():
     assert declared == orch._EVIDENCE_KINDS, "model vocabulary and runtime gate have drifted"
 
 
-# ---------------------------------------------------------------- conclusions
-def test_model_conclusions_are_kept_with_their_support():
-    out = orch._build_conclusions(
-        [
-            {
-                "statement": "Paul's letters show a resurrection claim circulating within decades.",
-                "rests_on": ["t4"],
-                "confidence_label": "high",
-                "reasoning": "The letters are dated 50-65 and state the claim directly.",
-                "dissent": "None identified",
-            }
-        ],
-        valid_ids={"origin", "t4"},
-    )
-    assert len(out) == 1
-    assert out[0].rests_on == ["t4"]
-    assert out[0].confidence_label == "high"
-
-
-def test_support_pointing_at_a_step_that_does_not_exist_is_dropped():
-    """A conclusion citing a step that was never emitted reads as supported when it is not."""
-    out = orch._build_conclusions(
-        [{"statement": "A claim.", "rests_on": ["t9", "origin"]}],
-        valid_ids={"origin", "t1"},
-    )
-    assert out[0].rests_on == ["origin"]
-
-
-def test_a_conclusion_resting_on_nothing_survives_rather_than_being_dropped():
-    """Unsupported is a finding, not a reason to hide it — that is the product's whole job."""
-    out = orch._build_conclusions(
-        [{"statement": "Widely held, unevidenced here."}], valid_ids={"origin"}
-    )
-    assert len(out) == 1
-    assert out[0].rests_on == []
-
-
-
-
-def test_junk_conclusions_are_skipped():
-    out = orch._build_conclusions(
-        ["not a dict", {"statement": "   "}, {"no_statement": 1}], valid_ids=set()
-    )
-    assert out == []
-
-
-
+# ---------------------------------------------------------------- citations
 def test_the_citation_list_is_never_silently_trimmed():
     cites = [{"title": f"S{i}", "url": f"https://e.org/{i}"} for i in range(300)]
     assert "further sources gathered" not in orch._format_citations_block(cites)
@@ -137,10 +51,6 @@ def test_a_short_citation_list_is_untouched():
     block = orch._format_citations_block(cites)
     assert "further sources" not in block
     assert "https://e.org/1" in block
-
-
-
-
 
 
 def test_an_unconfigured_search_is_reported_not_guessed(monkeypatch, caplog):
@@ -224,7 +134,6 @@ def test_the_limit_is_overridable_for_a_backend_that_can_take_it(monkeypatch):
     S._semaphores.clear()
 
 
-
 def test_the_research_prompt_does_not_call_descent_background_only():
     """That phrase belonged to the deleted `context` node type.
 
@@ -262,22 +171,6 @@ def test_a_search_can_still_be_disambiguated():
     assert orch.build_research_prompt("Mercury", None) == (
         P.RESEARCH_PROMPT.replace("{title}", "Mercury").replace("{context_clause}", "")
     )
-
-
-
-
-def test_independence_stays_a_dossier_field_not_a_gate():
-    """It must remain something a step CARRIES, not something a step must PASS."""
-    from phansora.products.chrono_origin.pipeline import prompts as P
-
-    assert '"independent_corroboration"' in P.SYNTHESIZE_PROMPT
-    assert "independent_corroboration" not in "".join(
-        ln for ln in P.SYNTHESIZE_PROMPT.split("\n") if "RULES FOR THE CHAIN" in ln
-    )
-
-
-
-
 
 
 def test_the_reasoning_budget_starts_where_the_work_lands():
@@ -726,7 +619,7 @@ def test_nothing_at_all_is_not_a_crash():
 
 
 # --------------------------------------------- the executor must not leak workers
-# /trace and /expand run their work in a ThreadPoolExecutor and bound it with
+# /expand runs its work in a ThreadPoolExecutor and bounds it with
 # asyncio.wait_for, which cancels the AWAIT and cannot cancel the thread. When the
 # budget is shorter than the work, the handler returns 504 and the thread keeps
 # running, holding a worker until it finishes. Four of those exhausted the pool and
@@ -793,62 +686,6 @@ def test_a_span_dated_step_is_not_sorted_to_the_bottom():
     assert orch._sort_key(-400, None) < orch._sort_key(None, None)
 
 
-def test_a_date_the_model_wrote_as_text_is_still_a_date():
-    """The gate ran on the raw JSON, before pydantic would have coerced anything.
-
-    A step dated "-400" or -400.0 was demoted into `conclusions` and told it was "not
-    a surviving object" — untrue, and not the reason.
-    """
-    assert orch._as_year(-400) == -400
-    assert orch._as_year("-400") == -400
-    assert orch._as_year(-400.0) == -400
-    assert orch._as_year("c. 400 BC") == 400  # a number is there; the sign is the model's job
-    assert orch._as_year(None) is None
-    assert orch._as_year("") is None
-    assert orch._as_year("unknown") is None
-
-
-def test_a_boolean_is_not_read_as_a_year():
-    """bool subclasses int, so a flag would otherwise date a step to year 1."""
-    assert orch._as_year(True) is None
-    assert orch._as_year(False) is None
-
-
-
-def test_a_chain_that_starts_at_a_copy_says_so(caplog):
-    """The rule is in the prompt and nothing checked it.
-
-    A trace of Jesus opened at the Dead Sea Scrolls: the copies were there, the
-    scriptures they are copies OF were not. Every step was real, so the trace looked
-    complete and the reader had no way to see the oldest half was missing.
-    """
-    import logging
-
-    from phansora.products.chrono_origin.models import OriginResult, TimelineEvent
-
-    origin = OriginResult(id="origin", year=-250, node_type="scroll",
-                          source_title="The Dead Sea Scrolls", summary="s")
-    later = [TimelineEvent(id="t1", year=50, node_type="letter",
-                           source_title="Paul's letters", claim="c")]
-    with caplog.at_level(logging.WARNING):
-        orch._warn_if_copy_without_work(origin, later)
-    assert any("starts at a copy" in r.message for r in caplog.records)
-
-
-def test_a_chain_whose_copy_has_an_older_step_is_quiet(caplog):
-    import logging
-
-    from phansora.products.chrono_origin.models import OriginResult, TimelineEvent
-
-    origin = OriginResult(id="origin", year=-250, node_type="scroll",
-                          source_title="The Dead Sea Scrolls", summary="s")
-    with_work = [TimelineEvent(id="t1", year=-400, node_type="text",
-                               source_title="Hebrew scriptures", claim="c")]
-    with caplog.at_level(logging.WARNING):
-        orch._warn_if_copy_without_work(origin, with_work)
-    assert not [r for r in caplog.records if "starts at a copy" in r.message]
-
-
 # ------------------------------------------------ the prompts name no subject
 def test_no_prompt_is_written_around_one_subject():
     """Chrono Origin traces anything. Its prompts must not teach from one case.
@@ -890,7 +727,6 @@ def test_no_prompt_is_written_around_one_subject():
     assert not offenders, "a subject leaked into the prompts:\n  " + "\n  ".join(offenders)
 
 
-
 def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
     """Forty sources found, forty on the trace.
 
@@ -927,8 +763,6 @@ def test_a_research_answer_keeps_every_source_end_to_end(monkeypatch, tmp_path):
 
     monkeypatch.setattr(orch, "get_cached", lambda *a, **k: None)
     monkeypatch.setattr(orch, "save_cached", lambda *a, **k: None)
-    # `read_best` used to be stubbed here. The expand path was its last caller and the
-    # merge to one call took it with them, so patching it now raises rather than no-ops.
 
     client = Client()
     o = orch.TraceOrchestrator(client=client)

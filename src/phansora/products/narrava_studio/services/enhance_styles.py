@@ -140,10 +140,6 @@ def entry(style: Optional[str]) -> Dict[str, str]:
     return ENHANCE_STYLES.get((style or "").strip().lower(), ENHANCE_STYLES[DEFAULT_ENHANCE_STYLE])
 
 
-def style_label(style: Optional[str]) -> str:
-    return entry(style)["label"]
-
-
 def voice_block(style: Optional[str]) -> str:
     """The VOICE section of the enhance system prompt.
 

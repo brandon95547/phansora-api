@@ -177,11 +177,6 @@ def entry(style: Optional[str]) -> Optional[Dict[str, str]]:
     return DOC_STYLES.get((style or "").strip().lower())
 
 
-def style_label(style: Optional[str]) -> str:
-    found = entry(style)
-    return found["label"] if found else ""
-
-
 def visual_block(style: Optional[str]) -> str:
     """The style preamble for a picture-writing prompt, or "" when unstyled.
 

@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     #   PEXELS_API_KEY        images + video
     # Set to "placeholder" to force deterministic offline placeholders (dev/CI).
     narrava_media_provider: str = "auto"  # auto | placeholder
-    narrava_media_per_segment: int = 1
     narrava_media_timeout_s: int = 15
 
     @property

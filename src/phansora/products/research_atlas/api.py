@@ -165,15 +165,11 @@ async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> Non
         )
 
         toc_markdown = ""
-        loss_report_markdown = ""
         resolved_toc_path = result.get("toc_full_path") or run_toc_path
         if resolved_toc_path:
             toc_path = Path(resolved_toc_path)
             if toc_path.exists():
                 toc_markdown = toc_path.read_text(encoding="utf-8")
-            loss_report_path = toc_path.parent / "loss_report.md"
-            if loss_report_path.exists():
-                loss_report_markdown = loss_report_path.read_text(encoding="utf-8")
 
         await _set_job_state(
             job_id,
@@ -182,7 +178,6 @@ async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> Non
             result={
                 **result,
                 "toc_markdown": toc_markdown,
-                "loss_report_markdown": loss_report_markdown,
             },
         )
     except Exception as e:
@@ -205,12 +200,6 @@ async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> Non
         if temp_toc_path is not None:
             try:
                 temp_toc_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            # Also clean up the loss report written next to the temp TOC
-            try:
-                temp_loss_report = temp_toc_path.parent / "loss_report.md"
-                temp_loss_report.unlink(missing_ok=True)
             except Exception:
                 pass
         await _prune_finished_jobs()

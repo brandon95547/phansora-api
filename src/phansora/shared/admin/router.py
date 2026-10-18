@@ -10,8 +10,7 @@ once for the whole router. Unset key => locked (403). Mounted on the core app in
 
 Deliberately conservative: model-cache clearing only removes caches that
 re-download automatically (HuggingFace, torch hub). It NEVER touches the
-CosyVoice2 weights (manual re-download), the Dossier Nova embeddings DB
-(expensive to recompute), or the Chrono cache (that has its own button).
+CosyVoice weights (manual re-download) or the Chrono cache (that has its own button).
 """
 from __future__ import annotations
 
@@ -87,10 +86,6 @@ def _cosyvoice_dir() -> Path:
     return Path(repo) / "pretrained_models" / "Fun-CosyVoice3-0.5B-RL"
 
 
-def _dossier_embeddings() -> Path:
-    return runtime_root() / "data" / "dossier_nova" / "embeddings.db"
-
-
 # ---- size / delete helpers --------------------------------------------------
 def _dir_size(p: Path) -> Optional[int]:
     """Fast, bounded directory size via `du`. Returns bytes, or None if it times
@@ -139,8 +134,7 @@ def storage_info() -> dict:
         ("chrono_cache", "Chrono-Origin cache", _chrono_cache_dir(), True, "chrono"),
         ("hf_cache", "HuggingFace model cache", _hf_cache_dir(), True, "model"),
         ("torch_cache", "Torch hub cache", _torch_cache_dir(), True, "model"),
-        ("cosyvoice", "CosyVoice2 weights (do not delete)", _cosyvoice_dir(), False, ""),
-        ("dossier_embeddings", "Dossier embeddings (expensive to rebuild)", _dossier_embeddings(), False, ""),
+        ("cosyvoice", "CosyVoice weights (do not delete)", _cosyvoice_dir(), False, ""),
     ]
     # Size each dir concurrently so the whole call is bounded by the slowest `du`
     # (~12s), not the sum. bytes=null means it timed out / was too large to size.
@@ -167,8 +161,8 @@ def storage_info() -> dict:
 
 @router.post("/storage/clear-model-caches")
 def clear_model_caches() -> dict:
-    # Only caches that re-download automatically. NOT CosyVoice2 weights, NOT the
-    # Dossier embeddings DB, NOT the Chrono cache.
+    # Only caches that re-download automatically. NOT the CosyVoice weights, NOT the
+    # Chrono cache.
     targets = [_hf_cache_dir(), _torch_cache_dir()]
     freed = sum(_clear_contents(p) for p in targets)
     logger.info("cleared model caches, freed %d bytes", freed)

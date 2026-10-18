@@ -31,10 +31,8 @@ from ..config import get_settings
 from ..models import (
     Citation,
     DetailField,
-    Conclusion,
     Connection,
     ConnectionEvidence,
-    EvidenceChain,
     EvidenceDossier,
     ExpandRequest,
     ExpandResponse,
@@ -58,10 +56,8 @@ from .prompts import (
     expand_body,
     expand_mode,
     part_of_line,
-    SYNTHESIZE_PROMPT,
 )
 from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_json
-from .reader import PageRead, format_reads_block
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +68,7 @@ ProgressCallback = Callable[[int, str], None]
 def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
     return None
 
-_VALID_TIERS = sp.VALID_TIERS
+
 _VALID_EVIDENCE_TYPES = {
     "primary_document",
     "archaeological",
@@ -94,35 +90,10 @@ _is_absent = sp.is_absent
 _default_tier = sp.default_tier
 
 
-_VALID_CONFIDENCE = {"high", "moderate", "low", "speculative"}
-
 _EVIDENCE_KINDS = {
     "text", "manuscript", "scroll", "letter", "inscription",
     "document", "record", "artifact", "archaeological_find",
 }
-_VALID_ATTRIBUTION = {"established", "attributed", "disputed", "anonymous", "not_applicable"}
-
-
-def _as_year(value: Any) -> Optional[int]:
-    """A year from whatever the model emitted, or None if there genuinely is not one.
-
-    Strict ``isinstance(value, int)`` was rejecting dates that are perfectly good:
-    a JSON string ``"-400"``, or ``-400.0`` where a range midpoint had been divided.
-    TimelineEvent coerces both, but the gate below runs on the raw dict and never got
-    that far — so a real, dated step was demoted into `conclusions` and told it was
-    "not a surviving object", which is neither true nor the reason.
-    """
-    if isinstance(value, bool):  # bool is an int subclass; a flag is not a year
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        m = re.search(r"-?\d+", value.strip())
-        if m:
-            return int(m.group(0))
-    return None
 
 
 def _claim_of(item: Any) -> str:
@@ -167,96 +138,6 @@ def is_node_kind(value: Any) -> bool:
     would take a whole trace down rather than costing one entry its icon.
     """
     return value in _EVIDENCE_KINDS or value == "event"
-
-
-def is_evidence_kind(value: Any) -> bool:
-    """Is this step a surviving object, i.e. allowed in the chain at all?
-
-    The chain rule is structural, not advisory. The prompt asks for evidence only, but
-    a model under pressure to tell a coherent story will still reach for the connective
-    tissue between documents — an expectation, a movement, a development. Anything whose
-    kind is not one of the nine surviving-object kinds is not evidence, and the caller
-    routes it into "conclusions" rather than letting it stand as a link in the chain.
-
-    Deliberately NOT a coercion. The previous version mapped anything unrecognised onto
-    a valid type, which meant an interpretation arrived with a respectable label and
-    became indistinguishable from an artefact.
-    """
-    return value in _EVIDENCE_KINDS
-
-
-def _attribution(value: Any) -> str:
-    return value if value in _VALID_ATTRIBUTION else "not_applicable"
-
-
-def _warn_if_copy_without_work(origin: Any, timeline: List[Any]) -> None:
-    """A chain that starts at a copy has dropped the thing being copied.
-
-    prompts.py states the rule: if the chain contains a manuscript, a scroll or a
-    fragment, the work it carries is itself a step, dated by COMPOSITION and placed
-    earlier. Nothing enforced it, and the failure is invisible — the trace looks
-    complete, every step is real, and the reader has no way to see that the oldest
-    half is missing. A trace of Jesus opened at the Dead Sea Scrolls: the copies were
-    there, the scriptures they are copies OF were not.
-
-    Warns rather than mutates. The earlier step has to come from the research; this
-    cannot invent one, and inventing one is precisely what the product must not do.
-    """
-    head = origin if origin is not None else (timeline[0] if timeline else None)
-    if head is None:
-        return
-    kind = getattr(head, "node_type", None)
-    if kind not in ("manuscript", "scroll"):
-        return
-    start = _as_year(getattr(head, "year", None))
-    if start is None:
-        start = _as_year(getattr(head, "year_end", None))
-    if start is None:
-        return
-    for e in timeline:
-        other = _as_year(getattr(e, "year", None))
-        if other is None:
-            other = _as_year(getattr(e, "year_end", None))
-        if other is not None and other < start:
-            return
-    logger.warning(
-        "Chain starts at a copy: %r is a %s and nothing in the chain predates it. "
-        "The work it carries should be an earlier step, dated by composition.",
-        getattr(head, "source_title", "?"), kind,
-    )
-
-
-def _build_conclusions(raw: Any, *, valid_ids: set) -> List[Conclusion]:
-    """The readings of the evidence, stated after it.
-
-    Only the model's own conclusions now. Steps used to be demoted in here — anything
-    that was not a "surviving object", and anything undated — which was the code half
-    of a judgement the synthesis prompt was also making in prose. Both are gone; what
-    research finds goes on the timeline.
-    """
-    out: List[Conclusion] = []
-
-    for item in (raw or []):
-        if not isinstance(item, dict):
-            continue
-        statement = str(item.get("statement") or "").strip()
-        if not statement:
-            continue
-        # Only ids that actually exist in the chain — a conclusion citing a step that was
-        # never emitted reads as supported when it is not.
-        rests = [str(r) for r in (item.get("rests_on") or []) if str(r) in valid_ids]
-        label = item.get("confidence_label")
-        out.append(
-            Conclusion(
-                statement=statement,
-                rests_on=rests,
-                confidence_label=label if label in _VALID_CONFIDENCE else "moderate",
-                reasoning=str(item.get("reasoning") or "").strip(),
-                dissent=str(item.get("dissent") or "").strip() or "None identified",
-            )
-        )
-
-    return out
 
 
 # ------------------------------------------------------------------- expansions
@@ -635,78 +516,6 @@ def _coerce_dossier(
     )
 
 
-def _coerce_connection_evidence(
-    raw: Any,
-    *,
-    read_urls: set,
-    citations: List[str],
-    citation_ranks: Optional[Dict[str, int]] = None,
-) -> ConnectionEvidence:
-    """Grade a connection on the same terms as a claim, defaulting to honest ignorance."""
-    raw = raw if isinstance(raw, dict) else {}
-
-    def text(key: str, default: str) -> str:
-        val = raw.get(key)
-        if isinstance(val, (int, float)):
-            val = str(val)
-        if not isinstance(val, str) or not val.strip():
-            return default
-        return val.strip()
-
-    try:
-        conf = float(raw.get("confidence", 0.5) or 0.5)
-    except (TypeError, ValueError):
-        conf = 0.5
-    conf = min(1.0, max(0.0, conf))
-
-    ev_type = raw.get("evidence_type")
-    if ev_type not in _VALID_EVIDENCE_TYPES:
-        ev_type = "scholarly_inference"
-
-    label = raw.get("confidence_label")
-    if label not in _VALID_CONFIDENCE_LABELS:
-        label = (
-            "high" if conf >= 0.75
-            else "moderate" if conf >= 0.5
-            else "low" if conf >= 0.3
-            else "speculative"
-        )
-
-    contradictory = text("contradictory_evidence", "None identified")
-    dispute = text("scholarly_dispute", "None identified")
-
-    cites = [u for u in (citations or []) if u]
-    ranks = citation_ranks or {}
-    best = sp.best_rank(ranks.get(u, sp.WORST_RANK) for u in cites)
-    ev_type = sp.cap_evidence_type(ev_type, best)
-    supporting = text("supporting_evidence", "None identified")
-    verification = sp.verification_for(
-        best_evidence_rank=best,
-        has_citations=bool(cites),
-        read_from_source=bool([u for u in cites if u in (read_urls or set())]),
-        earliest_supporting_source=supporting,
-    )
-    if verification == "unknown":
-        ev_type = "absent"
-
-    return ConnectionEvidence(
-        mechanism=text("mechanism", "No mechanism established."),
-        supporting_evidence=supporting,
-        contradictory_evidence=contradictory,
-        independent_corroboration=text("independent_corroboration", "None identified"),
-        scholarly_dispute=dispute,
-        claim_class=ev.claim_class_for(ev_type, raw.get("claim_class")),
-        evidence_type=ev_type,
-        verification=verification,
-        confidence=conf,
-        confidence_label=label,
-        why=text("why", ""),
-        missing_piece=text("missing_piece", ""),
-        disputed=(ev_type == "disputed") or not _is_absent(contradictory) or not _is_absent(dispute),
-    )
-
-
-
 def _format_citations_block(citations: List[Dict[str, str]]) -> str:
     """Every source gathered, in full.
 
@@ -722,8 +531,6 @@ def _format_citations_block(citations: List[Dict[str, str]]) -> str:
         f"[{i}] {c.get('title') or c.get('url')} -> {c.get('url')}"
         for i, c in enumerate(citations, 1)
     )
-
-
 
 
 def build_research_prompt(title: str, context: Optional[str]) -> str:
@@ -912,23 +719,6 @@ class TraceOrchestrator:
         return response
 
     # ----------------------------------------------------------------- stages
-    @staticmethod
-    def _mention_tiers(mentions: List[Dict[str, Any]]) -> Dict[str, str]:
-        """Tier per URL as claimed at extract time, for use before synthesis runs."""
-        out: Dict[str, str] = {}
-        for m in mentions:
-            tier = m.get("source_tier")
-            if tier not in _VALID_TIERS:
-                continue
-            for url in m.get("citations") or []:
-                # Keep the strongest claim made about a URL across rounds.
-                if url and (
-                    url not in out
-                    or ev.TIER_ORDER.index(tier) < ev.TIER_ORDER.index(out[url])
-                ):
-                    out[url] = tier
-        return out
-
     def _search_prompts(self, prompts: List[str]) -> List[GroundedAnswer]:
         """Run already-formatted search prompts concurrently.
 
@@ -961,40 +751,6 @@ class TraceOrchestrator:
             usage.absorb(snap)
         return [answer for answer, _ in results]
 
-    # ------------------------------------------------------- PARKED: the synthesis path
-    # Nothing below reaches _synthesize, _build_response, _mention_tiers or
-    # _build_connections any more. A trace is one model call and a parser; these turned
-    # a corpus into claims, dossiers, tiers and evaluated connections, and they are kept
-    # because that is the direction the product is going back in, one piece at a time —
-    # descriptions first, then sources.
-    #
-    # They are NOT dead-but-harmless: re-enabling any of them means paying for the
-    # second model call again, with the token ceiling that failed four traces in three
-    # days. Bring one back deliberately, with the budget it needs, not by wiring it
-    # into run() because it happens to be here.
-    def _synthesize(
-        self,
-        *,
-        title: str,
-        corpus: str,
-        citations: List[Dict[str, str]],
-        reads: List[PageRead],
-    ) -> Dict[str, Any]:
-        pages_block = ""
-        if reads:
-            pages_block = (
-                "\nSOURCE PAGES actually read (prefer these over any summary of them):\n"
-                f"{format_reads_block(reads)}\n"
-            )
-        prompt = SYNTHESIZE_PROMPT.format(
-            title=title,
-            mentions_block=corpus,
-            citations_block=_format_citations_block(citations),
-            pages_block=pages_block,
-            max_connections=self.settings.chrono_max_connections,
-        )
-        return self.client.reason_json(prompt, use_reasoning_model=True)
-
     # --------------------------------------------------------------- response
     def _build_list_response(
         self,
@@ -1016,7 +772,8 @@ class TraceOrchestrator:
 
         Everything else keeps its default rather than being filled with something
         invented. Citations stay empty and evidence stays None until sources are the
-        step being added — see _synthesize and _build_response, parked below.
+        step being added. The synthesis pass that once filled them (claims, dossiers,
+        graded connections) is kept at the git tag parked/chrono-synthesis.
         """
         events = [
             TimelineEvent(
@@ -1026,9 +783,8 @@ class TraceOrchestrator:
                 era_label=item.era_label,
                 precision=item.precision,
                 node_type="event",
-                # THE live path. _build_response below reads this too, but it is parked —
-                # a trace runs through here, which is why a flag wired only into the
-                # synthesis path stayed false on every node of a real trace.
+                # The only path a trace takes, so the flag has to be set here: wired
+                # only into the old synthesis path, it stayed false on every node.
                 is_collection=item.is_collection,
                 attribution="not_applicable",
                 source_title=item.title,
@@ -1081,314 +837,6 @@ class TraceOrchestrator:
             iterations=iterations,
             duration_seconds=duration,
         )
-
-    def _build_response(
-        self,
-        *,
-        req: TraceRequest,
-        normalized: str,
-        final: Dict[str, Any],
-        citations: List[Dict[str, str]],
-        mentions: List[Dict[str, Any]],
-        reads: List[PageRead],
-        queries_run: List[str],
-        open_questions: List[str],
-        iterations: int,
-        duration: float,
-    ) -> TraceResponse:
-        url_lookup = {c["url"]: c for c in citations if c.get("url")}
-        read_urls = {r.url for r in reads if r.ok}
-
-        # Tier labels the synthesis stage assigned, falling back to what extract
-        # claimed, then to a host heuristic.
-        declared_tiers = final.get("source_tiers")
-        declared_tiers = declared_tiers if isinstance(declared_tiers, dict) else {}
-        mention_tiers = self._mention_tiers(mentions)
-
-        def tier_for(url: str) -> str:
-            claimed = declared_tiers.get(url)
-            if claimed not in _VALID_TIERS:
-                claimed = mention_tiers.get(url)
-            # resolve_tier, not the raw claim: a wiki labelled "primary" by the
-            # model is still a wiki, and letting the label win is how one got
-            # read as a source page and cited as evidence.
-            return sp.resolve_tier(claimed, url)
-
-        # Which sources are really one source repeated. Computed from the sources
-        # themselves rather than asked for, so "independent corroboration" has an
-        # arithmetic meaning instead of a rhetorical one.
-        chain_of, chain_groups = ev.build_chains(citations, mentions, tier_for)
-
-        # Publication dates, cheapest source first: whatever the synthesis stage
-        # stated, else a year sitting in the URL. Needed because a tier is a
-        # relation between a source and a claim, not a property of a domain — the
-        # same newspaper is primary evidence for the week it was printed and a
-        # secondary account of everything else.
-        declared_dates = final.get("source_dates")
-        declared_dates = declared_dates if isinstance(declared_dates, dict) else {}
-
-        def published_for(url: str) -> Tuple[Optional[str], Optional[int]]:
-            stated = declared_dates.get(url)
-            if isinstance(stated, dict):  # tolerate {"tier":…, "published":…}
-                stated = stated.get("published")
-            year = sp.parse_year(stated) if stated else None
-            if year is None:
-                year = sp.url_year(url)
-            return (str(stated) if stated else (str(year) if year else None)), year
-
-        def rank_urls(urls: List[str], *, claim_year: Any, precision: Any) -> Dict[str, int]:
-            """Rank each citation UNDER THIS CLAIM. The same URL can differ per node."""
-            ranks: Dict[str, int] = {}
-            for u in urls or []:
-                _, pub_year = published_for(u)
-                ranks[u] = sp.rank_for(
-                    tier_for(u),
-                    published_year=pub_year,
-                    claim_year=claim_year if isinstance(claim_year, int) else None,
-                    claim_precision=precision,
-                    url=u,
-                )
-            return ranks
-
-        def to_citations(urls: List[str], ranks: Optional[Dict[str, int]] = None) -> List[Citation]:
-            out: List[Citation] = []
-            ranks = ranks or {}
-            for u in urls or []:
-                meta = url_lookup.get(u, {"url": u})
-                url = meta.get("url", u)
-                rank = ranks.get(u, sp.EVIDENCE_RANK.get(tier_for(url), sp.WORST_RANK))
-                published, _ = published_for(url)
-                out.append(
-                    Citation(
-                        url=url,
-                        title=meta.get("title"),
-                        tier=tier_for(url),
-                        tier_rank=rank,
-                        role=sp.role_for(rank),
-                        published=published,
-                        chain=chain_of.get(url),
-                    )
-                )
-            return out
-
-        origin_data = final.get("origin") or {}
-        origin_conf = float(origin_data.get("confidence", 0.5) or 0.5)
-        origin_cites = origin_data.get("citations", []) or []
-        origin_ranks = rank_urls(
-            origin_cites,
-            claim_year=origin_data.get("year"),
-            precision=origin_data.get("precision", "unknown"),
-        )
-        origin = OriginResult(
-            id="origin",
-            year=origin_data.get("year"),
-            era_label=origin_data.get("era_label"),
-            precision=origin_data.get("precision", "unknown"),
-            year_end=origin_data.get("year_end"),
-            # The origin is the earliest surviving piece of evidence. An origin the model
-            # typed as something non-surviving is defaulted to "text" rather than dropped,
-            # because a trace with no origin has nothing to hang the chain from; the gate
-            # below is what keeps the chain itself clean.
-            node_type=(origin_data.get("node_type") if is_node_kind(origin_data.get("node_type")) else "event"),
-            is_collection=_truthy(origin_data.get("is_collection")),
-            attribution=_attribution(origin_data.get("attribution")),
-            source_title=origin_data.get("source_title", "Unknown"),
-            summary=origin_data.get("summary", ""),
-            citations=to_citations(origin_cites, origin_ranks),
-            confidence=origin_conf,
-            evidence=_coerce_dossier(
-                origin_data.get("evidence"),
-                fallback_claim=origin_data.get("summary", ""),
-                confidence=origin_conf,
-                read_urls=read_urls,
-                citations=origin_cites,
-                citation_ranks=origin_ranks,
-            ),
-        )
-
-        timeline: List[TimelineEvent] = []
-        # Nothing is demoted. Two gates used to stand here — one rejecting anything that
-        # was not one of nine "surviving object" kinds, one rejecting anything undated —
-        # and between them they enforced, in code, the same judgement the synthesis
-        # prompt was making in prose. Two stages adjudicating with differently worded
-        # rules meant they disagreed, and the code always won: research named the Hebrew
-        # scriptures in six runs out of six and no trace ever showed them, because a work
-        # is not an object you can name a shelfmark for.
-        #
-        # The judgement happens once now, in the research prompt, where the searching is.
-        # What comes back goes on the board.
-        used_ids = {"origin"}
-        for i, entry in enumerate(final.get("timeline") or []):
-            year, year_end = _as_year(entry.get("year")), _as_year(entry.get("year_end"))
-            conf = float(entry.get("confidence", 0.5) or 0.5)
-            # Ids come from the model so connections can reference them, but must
-            # be unique and present — a duplicate id would silently reroute edges.
-            raw_id = str(entry.get("id") or "").strip()
-            event_id = raw_id if raw_id and raw_id not in used_ids else f"t{i + 1}"
-            while event_id in used_ids:
-                event_id = f"{event_id}_{i + 1}"
-            used_ids.add(event_id)
-            entry_cites = entry.get("citations", []) or []
-            entry_ranks = rank_urls(
-                entry_cites,
-                claim_year=entry.get("year"),
-                precision=entry.get("precision", "unknown"),
-            )
-            timeline.append(
-                TimelineEvent(
-                    id=event_id,
-                    year=year,
-                    era_label=entry.get("era_label"),
-                    precision=entry.get("precision", "unknown"),
-                    year_end=year_end,
-                    # A label, not a test. An unknown one becomes "event" rather than
-                    # raising — node_type is a Literal, so an odd label would otherwise
-                    # take the entire trace down with it.
-                    node_type=(entry.get("node_type") if is_node_kind(entry.get("node_type")) else "event"),
-                    is_collection=_truthy(entry.get("is_collection")),
-                    attribution=_attribution(entry.get("attribution")),
-                    source_title=entry.get("source_title", "Unknown"),
-                    claim=entry.get("claim", ""),
-                    citations=to_citations(entry_cites, entry_ranks),
-                    confidence=conf,
-                    evidence=_coerce_dossier(
-                        entry.get("evidence"),
-                        fallback_claim=entry.get("claim", ""),
-                        confidence=conf,
-                        read_urls=read_urls,
-                        citations=entry_cites,
-                        citation_ranks=entry_ranks,
-                    ),
-                )
-            )
-
-        # Chronological sort, oldest first; null years go last. Ids were assigned
-        # before this so they survive the reordering and connections stay valid.
-        timeline.sort(key=lambda e: _sort_key(e.year, e.year_end))
-
-        # If the model's origin has no date and the chain does, the two swap places —
-        # ids included, so "origin" keeps naming the first step and connections still
-        # resolve. The model picked the right object last time and simply left the date
-        # off it, which is enough to make a trace look like it starts centuries late.
-        if origin.year is None and origin.year_end is None and timeline:
-            first = timeline.pop(0)
-            displaced = TimelineEvent(**{**origin.model_dump(), "id": first.id, "claim": origin.summary})
-            origin = OriginResult(**{**first.model_dump(), "id": "origin", "summary": first.claim})
-            timeline.append(displaced)
-            timeline.sort(key=lambda e: _sort_key(e.year, e.year_end))
-
-        _warn_if_copy_without_work(origin, timeline)
-
-        conclusions = _build_conclusions(
-            final.get("conclusions"), valid_ids=used_ids
-        )
-
-
-        connections = self._build_connections(
-            raw=final.get("connections"),
-            valid_ids=used_ids,
-            to_citations=to_citations,
-            read_urls=read_urls,
-            rank_urls=rank_urls,
-            node_types={e.id: e.node_type for e in timeline} | {"origin": origin.node_type},
-        )
-
-        # The trace-level source list. Every citation attached to a NODE carries
-        # its rank and its role, and this list — the one the UI renders as
-        # "sources" — carried neither, so a reader looking at it saw a hundred
-        # and thirty-seven undifferentiated links with the leads and the
-        # manuscript repositories side by side. A trace whose whole argument is
-        # that the tier matters cannot present its own bibliography as a flat
-        # list. Ranked without a claim to be contemporary with, since a source
-        # list is not an argument about any one moment.
-        all_citations = []
-        for c in citations:
-            url = c.get("url")
-            if not url:
-                continue
-            rank = sp.rank_for(tier_for(url), url=url)
-            published, _ = published_for(url)
-            all_citations.append(
-                Citation(
-                    url=url,
-                    title=c.get("title"),
-                    tier=tier_for(url),
-                    tier_rank=rank,
-                    role=sp.role_for(rank),
-                    published=published,
-                    chain=chain_of.get(url),
-                )
-            )
-
-        snap = usage.snapshot()
-        return TraceResponse(
-            title=req.title,
-            normalized_title=normalized,
-            origin=origin,
-            timeline=timeline,
-            connections=connections,
-            reasoning=final.get("reasoning", ""),
-            confidence=float(final.get("confidence", 0.5) or 0.5),
-            queries_run=queries_run,
-            citations=all_citations,
-            chains=[EvidenceChain(**g) for g in chain_groups],
-            independent_chain_count=len(chain_groups),
-            sources_read=sorted(read_urls),
-            open_questions=open_questions,
-            conclusions=conclusions,
-            usage=TokenUsage(
-                input_tokens=snap["input_tokens"],
-                output_tokens=snap["output_tokens"],
-                total_tokens=snap["total_tokens"],
-                llm_calls=snap["llm_calls"],
-                pages_read=len(read_urls),
-                by_stage=snap["by_stage"],
-            ),
-            iterations=iterations,
-            duration_seconds=round(duration, 2),
-        )
-
-    def _build_connections(
-        self,
-        *,
-        raw: Any,
-        valid_ids: set,
-        to_citations: Callable[..., List[Citation]],
-        read_urls: set,
-        rank_urls: Optional[Callable[..., Dict[str, int]]] = None,
-        node_types: Optional[Dict[str, str]] = None,
-    ) -> List[Connection]:
-        """Validate, then grade, the edges the model proposed."""
-        cleaned = ev.validate_connections(
-            raw,
-            valid_ids,
-            max_connections=self.settings.chrono_max_connections,
-            node_types=node_types,
-        )
-        out: List[Connection] = []
-        for item in cleaned:
-            cites = item.get("citations", []) or []
-            # An edge is a claim about a relationship, not about a moment, so its
-            # citations are ranked without a date to be contemporary with.
-            ranks = rank_urls(cites, claim_year=None, precision=None) if rank_urls else {}
-            try:
-                out.append(
-                    Connection(
-                        from_id=item["from_id"],
-                        to_id=item["to_id"],
-                        relation=item["relation"],
-                        evidence=_coerce_connection_evidence(
-                            item.get("evidence"),
-                            read_urls=read_urls,
-                            citations=cites,
-                            citation_ranks=ranks,
-                        ),
-                        citations=to_citations(cites, ranks),
-                    )
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Skipping malformed connection: %s", exc)
-        return out
 
     # ------------------------------------------------------------------ expand
     def expand(self, req: ExpandRequest) -> ExpandResponse:

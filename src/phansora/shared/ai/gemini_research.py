@@ -476,7 +476,6 @@ class GeminiResearchClient:
         self,
         prompt: str,
         *,
-        schema: Optional[Dict[str, Any]] = None,
         temperature: float = 0.2,
         use_reasoning_model: bool = True,
     ) -> Dict[str, Any]:

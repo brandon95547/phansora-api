@@ -62,13 +62,13 @@ data/voices/
 # Book Alchemy — per-user source uploads + narrated session audio
 /book_alchemy/
 
-# Dossier Nova — temp uploads + generated TOC output
+# Research Atlas — temp uploads + generated TOC output
 tmp/
 toc/
 
-# Dossier Nova — cumulative local vector store (appended to on every generation)
-data/dossier_nova/*
-!data/dossier_nova/.gitkeep
+# Dossier Nova's retired local vector store. Nothing writes it any more; ignored so a
+# copy left on an older host does not show up as untracked.
+data/dossier_nova/
 
 # Chrono-Origin — cached trace results (written on every trace)
 data/chrono_origin/cache/*

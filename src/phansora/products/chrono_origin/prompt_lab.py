@@ -26,7 +26,7 @@ So this runs a prompt N times, in parallel, and reports what actually varies:
 
 Two prompts given, or more, are run against each other on the same subject.
 
-``--full`` runs synthesis too and prints the timeline. Worth the extra time and
+``--full`` runs the whole trace and prints the timeline. Worth the extra time and
 money, because the research call finding something is not the same as it reaching
 the board: a corpus that named the Hebrew scriptures in three runs out of three
 produced a timeline containing them in none of them.
@@ -162,10 +162,12 @@ def _research(client, prompt: str) -> RunResult:
 
 
 def _full(prompt: str, subject: str, context: str) -> RunResult:
-    """Research AND synthesis, so the timeline is what gets judged.
+    """The whole trace, so the timeline is what gets judged.
 
     The shipped research prompt is swapped for the candidate for the duration of
-    the call. Module state, so runs are serialised by the caller.
+    the call. Module state, so runs are serialised by the caller. A trace is one
+    research call and a parser, so there is no corpus apart from the timeline to
+    report: ``text`` stays empty and the timeline is what gets scored.
     """
     from .pipeline import orchestrator as orch
 
@@ -176,15 +178,7 @@ def _full(prompt: str, subject: str, context: str) -> RunResult:
     orch.get_cached = lambda *a, **k: None      # a test tool must never serve a cached answer
     orch.save_cached = lambda *a, **k: None     # nor leave one behind
     try:
-        o = orch.TraceOrchestrator()
-        seen: Dict[str, Any] = {}
-        real = o._synthesize
-        def spy(**kw):
-            seen["corpus"] = kw.get("corpus", "")
-            seen["citations"] = kw.get("citations", [])
-            return real(**kw)
-        o._synthesize = spy
-        result = o.run(TraceRequest(title=subject, context=context or None))
+        result = orch.TraceOrchestrator().run(TraceRequest(title=subject, context=context or None))
     finally:
         orch.RESEARCH_PROMPT = original
         orch.get_cached, orch.save_cached = saved_get, saved_save
@@ -193,7 +187,7 @@ def _full(prompt: str, subject: str, context: str) -> RunResult:
         ok=True, seconds=time.time() - started,
         queries=list(result.queries_run or []),
         citations=[{"url": c.url, "title": c.title or ""} for c in (result.citations or [])],
-        text=seen.get("corpus", ""),
+        text="",
         origin=f"{result.origin.source_title} ({result.origin.year}..{result.origin.year_end})",
         timeline=[f"{e.source_title} ({e.year}..{e.year_end})" for e in result.timeline],
     )
@@ -281,7 +275,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="score each run on whether its answer matches this")
     ap.add_argument("-c", "--context", default="", help="disambiguating context")
     ap.add_argument("--full", action="store_true",
-                    help="run synthesis too and print the timeline (slower, costs more)")
+                    help="run the whole trace and print the timeline (slower, costs more)")
     ap.add_argument("--show", action="store_true", help="print the first answer in full")
     ap.add_argument("--model", help="override GEMINI_MODEL for this run only")
     ap.add_argument("--workers", type=int, default=4, help="parallel runs (default 4)")

@@ -19,8 +19,8 @@ import aiohttp
 
 from phansora.shared.ai.deepseek import DeepSeekChatConfig  # reuse existing config/env
 from phansora.shared.ai.retries import ProviderError, worth_retrying
-# Shared with the reasoning-model client (shared/ai/deepseek_reasoner.py) — aliased to
-# their historical private names so call sites below read unchanged.
+# The shared JSON salvage, aliased to its historical private names so call sites below
+# read unchanged.
 from phansora.shared.ai.json_repair import (
     parse_json_loose as _parse_json_loose,
     repair_truncated_json as _repair_truncated_json,

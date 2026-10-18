@@ -1,4 +1,4 @@
-"""In-memory async job manager for /trace runs.
+"""In-memory async job manager for trace runs (/trace/jobs).
 
 Jobs are kept in process memory, keyed by UUID. Old jobs are evicted after
 ``JOB_TTL_SECONDS`` so the dict can't grow without bound.

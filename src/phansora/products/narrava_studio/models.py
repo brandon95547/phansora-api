@@ -102,18 +102,7 @@ class AnimationGenerateResponse(BaseModel):
     transparent: bool
 
 
-# ── Segmentation (for a pasted/uploaded script) ──────────────────────────────
-class SegmentRequest(BaseModel):
-    script_text: str = Field(..., min_length=3)
-    title: Optional[str] = None
-    words_per_minute: Optional[int] = Field(default=None, ge=60, le=300)
-
-
-class SegmentResponse(BaseModel):
-    script: Script
-
-
-# ── Timeline ─────────────────────────────────────────────────────────────────
+# ── Media clips ──────────────────────────────────────────────────────────────
 class MediaClip(BaseModel):
     id: str
     segment_id: str
@@ -128,34 +117,6 @@ class MediaClip(BaseModel):
     query: str = ""
     start_sec: float = 0.0
     end_sec: float = 0.0
-
-
-class Transition(BaseModel):
-    type: Literal["none", "cut", "fade", "crossfade", "slide"] = "fade"
-    duration_sec: float = 0.5
-
-
-class TimelineItem(BaseModel):
-    segment_id: str
-    clip: MediaClip
-    transition_in: Transition = Field(default_factory=Transition)
-
-
-class Timeline(BaseModel):
-    voice_id: Optional[str] = None
-    items: List[TimelineItem] = Field(default_factory=list)
-    total_duration_sec: float = 0.0
-
-
-class TimelineBuildRequest(BaseModel):
-    segments: List[ScriptSegment]
-    voice_id: Optional[str] = None
-    media_types: List[Literal["image", "video"]] = Field(default_factory=lambda: ["image"])
-    per_segment: int = Field(default=1, ge=1, le=4)
-
-
-class TimelineBuildResponse(BaseModel):
-    timeline: Timeline
 
 
 # ── Media search (replace-a-clip) ────────────────────────────────────────────

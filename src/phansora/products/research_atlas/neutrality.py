@@ -122,8 +122,6 @@ _EVALUATIVE_TF: Sequence[Tuple[str, str]] = (
     ("true/false verdict", r"(?:true|false)\s+(?:claim|claims|story|stories|account|accounts|statement|statements|allegation|allegations|narrative|narratives)"),
 )
 
-BANNED_TERMS: Tuple[str, ...] = tuple(sorted({label for label, _ in _STEM_TERMS} | {"true/false verdict"}))
-
 _PATTERNS: List[Tuple[str, re.Pattern]] = (
     [(label, re.compile(rf"\b(?:{pat})\b", re.IGNORECASE)) for label, pat in _STEM_TERMS]
     + [(label, re.compile(rf"\b(?:{pat})\b", re.IGNORECASE)) for label, pat in _EVALUATIVE_TF]

@@ -275,7 +275,7 @@ def test_it_satisfies_the_same_contract_as_the_other_clients():
     search = inspect.signature(G.GeminiResearchClient.grounded_search)
     assert "temperature" in search.parameters
     reason = inspect.signature(G.GeminiResearchClient.reason_json)
-    for kw in ("schema", "temperature", "use_reasoning_model"):
+    for kw in ("temperature", "use_reasoning_model"):
         assert kw in reason.parameters, kw
 
 

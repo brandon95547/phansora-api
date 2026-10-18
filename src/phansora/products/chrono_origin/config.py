@@ -13,26 +13,14 @@ class Settings(BaseSettings):
     # and read directly by the research clients in phansora.shared.ai; no
     # provider keys live here.
 
-    # Pipeline limits. max_depth is a ceiling, not a target: the loop stops as soon
-    # as a round stops finding new evidence, so most traces never reach it.
-    #
-    # It went 4 -> 6 when the objective was "cover every strand this subject has",
-    # which meant researching language history, institutional development and the
-    # calendar alongside the texts. Under the chain rule the question is narrower —
-    # what survives, in order — and a narrower question converges in fewer rounds.
-    # Each round costs seven LLM calls, so a ceiling nobody reaches is still a
-    # ceiling that occasionally gets reached at seven calls a time.
-    chrono_max_depth: int = 3
-    chrono_min_depth: int = 2
-    chrono_max_queries_per_stage: int = 6
     # MUST exceed the LLM client's worst case, or every slow call leaks a thread.
     #
-    # /trace and /expand run their work in a ThreadPoolExecutor and bound it with
-    # asyncio.wait_for. wait_for cancels the AWAIT; it cannot cancel the thread. So
-    # when the budget is shorter than the work, the handler returns 504 and the thread
-    # keeps running, holding a worker until it finishes on its own. Four of those and
-    # the pool is exhausted: later requests queue and never start, which looks exactly
-    # like the product being dead — requests arriving, no LLM calls being made.
+    # /expand runs its work in a ThreadPoolExecutor and bounds it with asyncio.wait_for.
+    # wait_for cancels the AWAIT; it cannot cancel the thread. So when the budget is
+    # shorter than the work, the handler returns 504 and the thread keeps running,
+    # holding a worker until it finishes on its own. Four of those and the pool is
+    # exhausted: later requests queue and never start, which looks exactly like the
+    # product being dead — requests arriving, no LLM calls being made.
     #
     # Every provider client makes 3 attempts with backoff between them (1s, then 2s):
     # DeepSeek and OpenAI are 120s per attempt (OPENAI_TIMEOUT_S for the latter), Gemini
@@ -40,25 +28,6 @@ class Settings(BaseSettings):
     # always completes before the handler gives up. The caller sees a failure sooner
     # regardless — the Node proxy times out at 180s — but the worker is always returned.
     chrono_request_timeout_s: int = 420
-
-    # Reading real source pages. This is the expensive half of the budget and the
-    # only thing that makes a provenance claim checkable rather than recalled, so
-    # it is spent narrowly: a few top-tier pages, truncated, one per domain.
-    # Raised from 4: a claim can only be marked verified if its page was actually
-    # read, so the read budget is also the ceiling on how much of a trace can come
-    # back as anything better than "unverified".
-    chrono_read_sources: int = 6
-    chrono_read_chars: int = 6000
-    chrono_expand_read_sources: int = 2
-
-    # Chasing citations backward. Mining is two HTTP fetches and a regex — it
-    # costs no tokens, so it stays on. The search half only fires for claims that
-    # are still resting on a lead after the rounds finish, which on a
-    # well-sourced subject is none of them.
-
-    # Ceiling on evaluated edges. Well past what a readable timeline needs — it
-    # exists to stop a model emitting an edge for every pair of events.
-    chrono_max_connections: int = 8
 
     # Cache
     chrono_cache_dir: str = "./data/chrono_origin/cache"

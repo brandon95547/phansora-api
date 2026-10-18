@@ -2,11 +2,16 @@
 
 Mounted by phansora.main under ``/studio``. Endpoints:
 
-  GET  /voices           -> preset narration voices
-  POST /script/generate  -> prompt      -> narrator script (timed beats)   [LLM]
-  POST /script/enhance   -> narration   -> the same narration, in a voice  [DeepSeek]
-  POST /script/segment   -> pasted text -> timed beats                     [no LLM]
-  POST /timeline/build   -> beats       -> preliminary media timeline      [LLM+web]
+  GET  /voices             -> preset narration voices
+  POST /script/generate    -> prompt      -> narrator script (timed beats)   [LLM]
+  POST /script/enhance     -> narration   -> the same narration, in a voice  [DeepSeek]
+  POST /media/animation    -> description -> canvas animation document       [LLM]
+  POST /media/search       -> query       -> stock or web media to place
+  POST /scene/suggest      -> one scene   -> fresh visual direction          [LLM]
+  POST /storyboard         -> narration   -> media-placeholder scenes        [LLM]
+  POST /narration/align    -> audio + script -> word timings
+  POST /lyrics/transcribe  -> song        -> sung words with timings
+  POST /lyrics/align       -> song + lyrics  -> word timings
 
 All blocking work (LLM SDK calls, media HTTP) runs in a thread executor so the
 event loop stays responsive.
@@ -41,20 +46,16 @@ from .models import (  # noqa: E402
     ScriptEnhanceResponse,
     ScriptGenerateRequest,
     ScriptGenerateResponse,
-    SegmentRequest,
-    SegmentResponse,
     StoryboardRequest,
     StoryboardResponse,
-    TimelineBuildRequest,
-    TimelineBuildResponse,
 )
-from .services import align, animation, llm, media, script, storyboard, timeline, voices, web_images  # noqa: E402
+from .services import align, animation, llm, media, script, storyboard, voices, web_images  # noqa: E402
 
 logger = logging.getLogger("narrava-studio")
 
 app = FastAPI(
     title="Narrava Studio API",
-    description="AI-assisted video production: script -> timed beats -> media timeline.",
+    description="AI-assisted video production: script, storyboard, timings and media.",
     version="0.1.0",
     # Only the Node worker calls this product today, but the dependency costs one
     # dict read per request and means a browser token could never act cross-user
@@ -233,20 +234,6 @@ async def generate_media_animation(req: AnimationGenerateRequest):
     )
 
 
-@app.post("/script/segment", response_model=SegmentResponse)
-async def segment_script(req: SegmentRequest):
-    result = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: script.segment_script(
-            req.script_text,
-            title=req.title or "",
-            wpm=req.words_per_minute,
-            source="provided",
-        ),
-    )
-    return SegmentResponse(script=result)
-
-
 @app.post("/media/search", response_model=MediaSearchResponse)
 async def search_media(req: MediaSearchRequest):
     """Search fair-use media for a query — powers 'replace this clip'.
@@ -285,22 +272,6 @@ async def search_media(req: MediaSearchRequest):
         ),
     )
     return MediaSearchResponse(clips=clips)
-
-
-@app.post("/timeline/build", response_model=TimelineBuildResponse)
-async def build_timeline(req: TimelineBuildRequest):
-    if not req.segments:
-        raise HTTPException(status_code=400, detail="No segments provided.")
-    result = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: timeline.build_timeline(
-            req.segments,
-            voice_id=req.voice_id,
-            media_types=req.media_types,
-            per_segment=req.per_segment,
-        ),
-    )
-    return TimelineBuildResponse(timeline=result)
 
 
 @app.post("/scene/suggest", response_model=SceneSuggestResponse)

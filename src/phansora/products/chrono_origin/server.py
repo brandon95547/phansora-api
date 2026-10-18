@@ -17,7 +17,7 @@ from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 
 from .config import get_settings  # noqa: E402
-from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest, TraceResponse  # noqa: E402
+from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest  # noqa: E402
 from .pipeline.orchestrator import TraceOrchestrator  # noqa: E402
 from .services.cache import delete_cached  # noqa: E402
 from .services.job_manager import JobManager  # noqa: E402
@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
     provider = _provider()
     key = "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
     if not os.getenv(key):
-        logger.warning("%s is not set. /trace will fail until configured.", key)
+        logger.warning("%s is not set. Traces will fail until it is configured.", key)
     logger.info("Chrono-Origin LLM provider: %s", provider)
     if provider == "deepseek":
         logger.info("DeepSeek external search: %s", os.getenv("CHRONO_SEARCH_PROVIDER", "auto"))
@@ -81,30 +81,6 @@ def _ensure_configured() -> None:
     if not _provider_configured():
         key = "DEEPSEEK_API_KEY" if _provider() == "deepseek" else "OPENAI_API_KEY"
         raise HTTPException(status_code=503, detail=f"{key} is not configured.")
-
-
-@app.post("/trace", response_model=TraceResponse)
-async def trace(req: TraceRequest):
-    """Synchronous trace - kept for backwards compatibility / quick CLI use."""
-    _ensure_configured()
-    loop = asyncio.get_running_loop()
-    timeout = get_settings().chrono_request_timeout_s
-    try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(app.state.executor, app.state.orchestrator.run, req),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail=f"Trace exceeded {timeout}s timeout.") from None
-    except RuntimeError as exc:
-        # RuntimeError reaches here from the LLM client, whose message embeds the
-        # provider's raw response body — not something to hand back to a browser.
-        raise fail(503, "The tracing service is unavailable.", exc, logger=logger,
-                   context="Chrono upstream unavailable") from exc
-    except Exception as exc:
-        logger.exception("Trace failed")
-        raise fail(500, "The trace failed.", exc, logger=logger, context="Trace failed") from exc
-    return result
 
 
 # ---------------------------------------------------------------- async jobs

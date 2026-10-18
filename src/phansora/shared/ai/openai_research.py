@@ -220,13 +220,12 @@ class OpenAIResearchClient:
         self,
         prompt: str,
         *,
-        schema: Optional[Dict[str, Any]] = None,
         temperature: float = 0.2,
         use_reasoning_model: bool = True,
     ) -> Dict[str, Any]:
         """Responses call in JSON-object mode.
 
-        ``schema`` and ``temperature`` are accepted for interface parity; the JSON
+        ``temperature`` is accepted for interface parity; the JSON
         shape is steered via the system prompt. ``use_reasoning_model`` toggles
         reasoning effort (heavier for the main reasoning passes, lighter for the
         cheap auxiliary ones).

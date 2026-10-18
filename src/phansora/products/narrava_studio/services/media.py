@@ -83,9 +83,9 @@ def search_media(
 ) -> List[MediaClip]:
     """Return up to ``limit`` fair-use clips for ``query`` (best-effort, never raises).
 
-    ``allow_placeholder`` controls the empty case: the timeline builder needs *something*
-    per beat, so it keeps the placeholder; interactive search passes False and gets an
-    empty list, which the UI reports as "no results" rather than a fake tile.
+    ``allow_placeholder`` controls the empty case: True answers with a placeholder clip, for
+    a caller that needs something in every slot; interactive search passes False and gets
+    an empty list, which the UI reports as "no results" rather than a fake tile.
     """
     query = (query or "").strip()
     settings = config.get_settings()
