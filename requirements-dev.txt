@@ -1,0 +1,5 @@
+# Tools for working on this repo: the test runner and the linter. Not needed to run the API.
+#   pip install -r requirements-dev.txt
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.4

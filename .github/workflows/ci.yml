@@ -1,0 +1,44 @@
+# Lint and test on every push to main and every pull request into it.
+#
+# The dependency set is requirements-ci.txt, not requirements.txt: the latter pins cp310
+# CUDA torch wheels and vLLM, which need the production GPU, and nothing in the suite
+# imports them. The versions it does install are prod's (tests/test_requirements.py).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-ci.txt
+            requirements-dev.txt
+
+      # The audio tests shell out to ffmpeg, as the API does.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Install dependencies
+        run: pip install -r requirements-ci.txt
+
+      - name: Ruff
+        run: ruff check
+
+      # Reported, not enforced: `except Exception: pass` that may be hiding a real failure.
+      - name: Ruff warnings
+        run: ruff check --select S110 --exit-zero
+
+      - name: Tests
+        run: python -m pytest -q

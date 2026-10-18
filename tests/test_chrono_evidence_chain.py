@@ -291,11 +291,16 @@ def test_the_reasoning_budget_starts_where_the_work_lands():
 # Expanding exists to GROW a timeline. Unaimed, an expansion mostly returns the
 # anchor's own neighbours — ask around Paul's letters and the gospels come back,
 # which are already the next step along.
-def test_the_three_modes_are_the_ones_the_dialog_offers():
+def test_the_modes_are_the_ones_the_dialog_offers():
+    """The dialog's list lives in the Node app (assets/js/admin/chrono-expand-modes.js,
+    and the allow-list in src/chrono-origin/routes.js); these are its ids."""
     from phansora.products.chrono_origin.models import ExpandMode
     from phansora.products.chrono_origin.pipeline.prompts import EXPAND_MODES
 
-    ids = {"discovery", "earlier", "context"}
+    ids = {
+        "discovery", "earlier", "people", "events", "chronology", "places", "lineages",
+        "nations", "beliefs", "texts", "objects", "practices", "traditions",
+    }
     assert set(ExpandMode.__args__) == ids
     assert set(EXPAND_MODES) == ids, "model vocabulary and prompt directives have drifted"
 
@@ -411,7 +416,7 @@ def test_the_expand_prompt_states_a_query_the_client_can_find():
     m = P.expand_mode("discovery")
     out = P.EXPAND_PROMPT.format(
         parent_source_title="Hebrew scriptures", mode_query=m["query"],
-        context_line="", existing_block=P.format_existing_block([]),
+        context_line="", part_of_line="",
         mode_body=P.expand_body(m, "Hebrew scriptures"),
     )
     found = _QUERY_LINE.search(out)
@@ -430,12 +435,12 @@ def test_the_expand_query_is_aimed_by_the_mode():
         m = P.expand_mode(mode)
         out = P.EXPAND_PROMPT.format(
             parent_source_title="Anchor", mode_query=m["query"], context_line="",
-            existing_block=P.format_existing_block([]),
+            part_of_line="",
             mode_body=P.expand_body(m, "Anchor"),
         )
         return _QUERY_LINE.search(out).group(1).strip()
 
-    # Six modes must produce six different searches, or the choice is decorative.
+    # Every mode must produce its own search, or the choice is decorative.
     queries = {q for q in (query_for(m) for m in P.EXPAND_MODES)}
     assert len(queries) == len(P.EXPAND_MODES)
 
@@ -457,10 +462,10 @@ def test_the_anchor_is_what_the_fallback_angle_picks_up():
     from phansora.products.chrono_origin.pipeline import prompts as P
     from phansora.shared.ai.deepseek_research import _QUOTED
 
-    m = P.expand_mode("context")
+    m = P.expand_mode("earlier")
     out = P.EXPAND_PROMPT.format(
         parent_source_title="Dead Sea Scrolls", mode_query=m["query"], context_line="",
-        existing_block=P.format_existing_block([]),
+        part_of_line="",
         mode_body=P.expand_body(m, "Dead Sea Scrolls"),
     )
     first = _QUOTED.search(out).group(1).strip()

@@ -447,7 +447,6 @@ def _pdf_assets(pdf, pictures: Pictures, *, budget: float = ASSET_SECONDS, scann
             logger.warning("Talari: stopped looking for pictures and tables at page %d of %d", pno + 1, pdf.page_count)
             break
         page = pdf.load_page(pno)
-        area = page.rect.width * page.rect.height
         zoom = fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM)
         drawings = page.get_drawings()
         tables = []

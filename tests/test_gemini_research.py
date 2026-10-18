@@ -221,10 +221,13 @@ def test_unparseable_output_is_an_empty_dict_not_a_crash(monkeypatch):
     assert c.reason_json("p") == {}
 
 
-def test_a_json_array_is_not_passed_off_as_an_object(monkeypatch):
-    """Callers index by key; a list would raise somewhere far from the cause."""
+def test_a_bare_json_array_is_read_as_events(monkeypatch):
+    """Callers index by key, so a list is never handed back as it came — but it is not
+    thrown away either. A model asked for {"events": [...]} returns the bare array often
+    enough that discarding it reported a search that had worked as one that found nothing
+    (8f2c031); `events` is the only list-shaped contract the callers have."""
     c, _ = client(monkeypatch, json_body("[1, 2, 3]"))
-    assert c.reason_json("p") == {}
+    assert c.reason_json("p") == {"events": [1, 2, 3]}
 
 
 def test_the_reasoning_model_is_used_for_judgement(monkeypatch):

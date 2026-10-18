@@ -44,7 +44,7 @@ async def email_user(request: Request) -> dict:
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from None
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 

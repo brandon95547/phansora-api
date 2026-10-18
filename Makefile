@@ -14,7 +14,7 @@
 #   package there. Either way, verify what actually landed:
 #     tesseract --version && tesseract --list-langs   # must list `eng`
 #   Run `make doctor` on a freshly provisioned box to find these before users do.
-.PHONY: help doctor install install-dev install-tts install-mac dev run worker test compile clean
+.PHONY: help doctor install install-dev install-tts install-mac dev run worker test lint compile clean
 
 VENV   ?= .venv
 # Where the CosyVoice TTS engine checkout lives (git clone, not a pip package).
@@ -211,8 +211,11 @@ run: ## Run the unified API (no reload)
 worker: ## Run the Book Alchemy durable worker
 	$(PY) -m phansora.products.book_alchemy.worker
 
-test: ## Run the test suite
+test: ## Run the test suite (deps: pip install -r requirements-ci.txt)
 	$(PY) -m pytest -q
+
+lint: ## Run ruff, as CI does
+	$(PY) -m ruff check
 
 compile: ## Byte-compile every module (fast syntax check)
 	$(PY) -m py_compile $$(find src -name '*.py')

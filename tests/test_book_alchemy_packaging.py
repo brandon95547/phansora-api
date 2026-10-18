@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from phansora.products.book_alchemy import prompts
 from phansora.products.book_alchemy.parsers import _is_reference_line, classify_block

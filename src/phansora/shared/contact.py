@@ -99,7 +99,7 @@ async def submit_contact(request: Request) -> dict:
     try:
         data = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from None
 
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
@@ -133,7 +133,7 @@ async def submit_contact(request: Request) -> dict:
         result = await send_email(payload)
     except ValueError as e:
         # Validation problem with the request payload.
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         # SMTP / delivery failure — must not report success. The SMTP error names the
         # mail host and its reply, which is for the log, not for a public form.

@@ -31,9 +31,6 @@ from . import admission
 from fastapi.responses import FileResponse, PlainTextResponse
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
-
-logger = logging.getLogger("spokenverse")
-
 from phansora.shared.paths import runtime_root
 from phansora.shared.utils.uploads import (
     safe_ext as _safe_ext,
@@ -48,6 +45,8 @@ from phansora.products.spokenverse.txt_to_voice.adapters.backend import (
 from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
 from phansora.products.spokenverse import voices as voice_store
+
+logger = logging.getLogger("spokenverse")
 
 
 # ----------------------------
@@ -795,7 +794,7 @@ async def voice_rename(voice_id: str, user_id: str = Form(...), name: str = Form
     try:
         rec = voice_store.rename_voice(_safe_user_id(user_id), voice_id, name)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if rec is None:
         raise HTTPException(status_code=404, detail="Voice not found.")
     return {"ok": True, "voice": rec}

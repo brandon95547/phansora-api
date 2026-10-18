@@ -20,7 +20,7 @@ or `text=` (both 3.7+).
 import shutil
 import subprocess
 import sys
-from typing import Callable, List, NamedTuple, Optional, Tuple
+from typing import Callable, List, NamedTuple, Tuple
 
 
 class Check(NamedTuple):

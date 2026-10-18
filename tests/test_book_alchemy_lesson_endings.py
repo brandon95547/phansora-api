@@ -366,7 +366,7 @@ def test_no_runt_survives_beside_a_neighbor_that_could_take_it():
         natural = {i for i in range(1, n) if rng.random() < 0.4}
         cuts = _plan_cuts(digests, natural, STANDARD) + [n]
 
-        def length(a: int, b: int) -> float:
+        def length(a: int, b: int, digests: list = digests) -> float:
             words = sum(d["words"] for d in digests[a:b])
             concepts = sum(d["concepts"] for d in digests[a:b])
             return planned_lesson_words(

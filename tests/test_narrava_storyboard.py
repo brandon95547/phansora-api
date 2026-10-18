@@ -263,6 +263,8 @@ def test_deepseek_402_becomes_a_refusal(monkeypatch):
     from phansora.products.narrava_studio.services import llm
     from phansora.shared.ai import deepseek as ds
 
+    # The DeepSeek path, whatever provider the environment (or a .env) chose.
+    monkeypatch.setenv("NARRAVA_LLM_PROVIDER", "deepseek")
     monkeypatch.setattr(
         ds.DeepSeekChatConfig, "from_env",
         classmethod(lambda cls, **k: types.SimpleNamespace(

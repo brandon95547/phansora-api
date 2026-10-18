@@ -95,15 +95,15 @@ async def trace(req: TraceRequest):
             timeout=timeout,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=504, detail=f"Trace exceeded {timeout}s timeout.")
+        raise HTTPException(status_code=504, detail=f"Trace exceeded {timeout}s timeout.") from None
     except RuntimeError as exc:
         # RuntimeError reaches here from the LLM client, whose message embeds the
         # provider's raw response body — not something to hand back to a browser.
         raise fail(503, "The tracing service is unavailable.", exc, logger=logger,
-                   context="Chrono upstream unavailable")
+                   context="Chrono upstream unavailable") from exc
     except Exception as exc:
         logger.exception("Trace failed")
-        raise fail(500, "The trace failed.", exc, logger=logger, context="Trace failed")
+        raise fail(500, "The trace failed.", exc, logger=logger, context="Trace failed") from exc
     return result
 
 
@@ -157,13 +157,13 @@ async def expand(req: ExpandRequest):
             "Expand exceeded %ss; its worker is still occupied until the work finishes.",
             timeout,
         )
-        raise HTTPException(status_code=504, detail=f"Expand exceeded {timeout}s timeout.")
+        raise HTTPException(status_code=504, detail=f"Expand exceeded {timeout}s timeout.") from None
     except RuntimeError as exc:
         # RuntimeError reaches here from the LLM client, whose message embeds the
         # provider's raw response body — not something to hand back to a browser.
         raise fail(503, "The tracing service is unavailable.", exc, logger=logger,
-                   context="Chrono upstream unavailable")
+                   context="Chrono upstream unavailable") from exc
     except Exception as exc:
         logger.exception("Expand failed")
-        raise fail(500, "The expand failed.", exc, logger=logger, context="Expand failed")
+        raise fail(500, "The expand failed.", exc, logger=logger, context="Expand failed") from exc
     return result

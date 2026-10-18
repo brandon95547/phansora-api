@@ -40,6 +40,11 @@ import uuid
 from pathlib import Path
 from typing import List, Optional
 
+from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client import (
+    LANGUAGES, LANGUAGE_DEFAULT,
+    SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
+    INSTRUCT_MAX_CHARS,
+)
 from phansora.shared.paths import assets_dir, runtime_dir
 
 # CosyVoice2 works best with a 3-10 second reference clip (longer errors out). We keep
@@ -68,11 +73,7 @@ PENDING_TTL_SECONDS = 6 * 3600
 # captured at approval and reapplied when the voice is later used for TTS. CosyVoice
 # clones from the clip PLUS its transcript, so the reference transcript (``ref_text``)
 # stored on the voice record is required at synthesis time (passed as prompt_text).
-from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client import (
-    LANGUAGES, LANGUAGE_DEFAULT,
-    SPEED_MIN, SPEED_MAX, SPEED_DEFAULT,
-    INSTRUCT_MAX_CHARS,
-)
+# The limits themselves (LANGUAGES, SPEED_MIN/MAX, INSTRUCT_MAX_CHARS) come from the client.
 
 # All persisted setting keys (used to backfill/read from the manifest + pending JSON).
 SETTING_KEYS = ("language", "speed", "instruct_text")

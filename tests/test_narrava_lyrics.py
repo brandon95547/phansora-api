@@ -411,7 +411,7 @@ def test_every_way_the_aligner_can_fail_keeps_the_inferred_answer(monkeypatch):
 
     for boom in (forced_align.ForcedAlignUnavailable("no weights"), RuntimeError("out of memory")):
         monkeypatch.setattr(forced_align, "enabled", lambda: True)
-        monkeypatch.setattr(forced_align, "align", lambda *a, **k: (_ for _ in ()).throw(boom))
+        monkeypatch.setattr(forced_align, "align", lambda *a, boom=boom, **k: (_ for _ in ()).throw(boom))
         assert align._measured("song.mp3", "Take me home", [(1.0, 1.4), (1.4, 1.6), (1.7, 2.3)]) is None
 
 

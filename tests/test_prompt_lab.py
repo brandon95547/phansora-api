@@ -147,15 +147,20 @@ class TestItCannotContaminateProduction:
 
 class TestTheCommandLine:
     def test_a_missing_prompt_file_fails_loudly(self, capsys):
-        assert L.main(["X", "-p", "/nope/does-not-exist.txt"]) == 2
+        # --env at nothing: main() otherwise reads a real .env into os.environ for good.
+        assert L.main(["X", "-p", "/nope/does-not-exist.txt", "--env", "/nope/.env"]) == 2
         assert "no such prompt file" in capsys.readouterr().err
 
-    def test_model_override_clears_the_product_override_too(self, monkeypatch):
+    def test_model_override_clears_the_product_override_too(self, monkeypatch, tmp_path):
         """CHRONO_MODEL outranks GEMINI_MODEL, so setting only the latter would be
         silently ignored and the run would grade the wrong model."""
         monkeypatch.setenv("CHRONO_MODEL", "some-other-model")
+        # Recorded so the override main() writes is undone after the test.
+        monkeypatch.delenv("GEMINI_MODEL", raising=False)
+        # The editable prompt in tmp_path, not seeded into the repo root, and no .env read.
+        monkeypatch.setattr(L, "default_prompt_path", lambda: tmp_path / L.DEFAULT_PROMPT_FILE)
         monkeypatch.setattr(L, "run_many", lambda *a, **k: [L.RunResult(error="stopped")])
-        L.main(["X", "--model", "gemini-3.5-flash"])
+        L.main(["X", "--model", "gemini-3.5-flash", "--env", str(tmp_path / "no.env")])
         import os
         assert os.environ["GEMINI_MODEL"] == "gemini-3.5-flash"
         assert "CHRONO_MODEL" not in os.environ
@@ -225,7 +230,7 @@ def test_shipped_is_a_baseline_not_a_replacement(tmp_path, monkeypatch, capsys):
     seen = []
     monkeypatch.setattr(L, "run_many",
                         lambda prompt, *a, **k: seen.append(prompt) or [L.RunResult(ok=True, text="")])
-    L.main(["Kites", "--shipped"])
+    L.main(["Kites", "--shipped", "--env", str(tmp_path / "no.env")])
     assert len(seen) == 2, "only one prompt was run"
     assert seen[0] == "my candidate Kites"
     assert "{title}" not in seen[1] and len(seen[1]) > 200   # the real shipped prompt, filled

@@ -110,7 +110,8 @@ async def render_script_to_audio(
                 raise VoiceServiceBusy(int(retry_after) if retry_after.isdigit() else 60)
             if resp.status >= 400:
                 raise VoiceServiceError(resp.status, await resp.text())
-            with open(out_path, "wb") as fh:
+            # 64 KB local writes between network reads; not worth a thread each.
+            with open(out_path, "wb") as fh:  # noqa: ASYNC230
                 async for chunk in resp.content.iter_chunked(1 << 16):
                     fh.write(chunk)
 

@@ -17,7 +17,7 @@ from typing import Any, TypeVar
 
 from . import llm, prompts
 from .errors import ServiceError
-from .markup import as_markdown, as_text, blocks_as_html, inline_html, parse_blocks, plain
+from .markup import as_markdown, as_text, blocks_as_html, parse_blocks, plain
 from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,

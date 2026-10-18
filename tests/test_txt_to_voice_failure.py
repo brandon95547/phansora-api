@@ -13,7 +13,6 @@ import asyncio
 import logging
 import time
 
-import pytest
 
 from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client import SynthesisStopped
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig, _describe

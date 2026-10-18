@@ -50,11 +50,14 @@ def test_shared_does_not_import_products():
     assert not offenders, f"shared/ must not import products: {offenders}"
 
 
-@pytest.mark.parametrize("module", [
-    "phansora.shared.ai.anthropic",
+@pytest.mark.parametrize("module, sdk", [
+    ("phansora.shared.ai.openai_research", "openai"),
+    ("phansora.shared.ai.gemini_research", "httpx"),
+    ("phansora.shared.ai.deepseek_research", "httpx"),
+    ("phansora.shared.ai.deepseek", "aiohttp"),
 ])
-def test_optional_ai_client_import(module):
-    """shared.ai.anthropic imports the 'anthropic' SDK; skip if not installed."""
-    pytest.importorskip("anthropic")
+def test_optional_ai_client_import(module, sdk):
+    """The provider clients import their SDKs at module level; skip where one is absent."""
+    pytest.importorskip(sdk)
     pytest.importorskip("tenacity")
     importlib.import_module(module)

@@ -28,13 +28,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple, get_args
 
 from ..config import get_settings
-
-
-ProgressCallback = Callable[[int, str], None]
-
-
-def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
-    return None
 from ..models import (
     Citation,
     DetailField,
@@ -43,6 +36,8 @@ from ..models import (
     ConnectionEvidence,
     EvidenceChain,
     EvidenceDossier,
+    ExpandRequest,
+    ExpandResponse,
     OriginResult,
     RelationType,
     TimelineEvent,
@@ -69,6 +64,13 @@ from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_js
 from .reader import PageRead, format_reads_block
 
 logger = logging.getLogger(__name__)
+
+
+ProgressCallback = Callable[[int, str], None]
+
+
+def _noop_progress(_percent: int, _stage: str) -> None:  # pragma: no cover
+    return None
 
 _VALID_TIERS = sp.VALID_TIERS
 _VALID_EVIDENCE_TYPES = {
@@ -1389,11 +1391,8 @@ class TraceOrchestrator:
         return out
 
     # ------------------------------------------------------------------ expand
-    def expand(self, req: "ExpandRequest") -> "ExpandResponse":  # type: ignore[name-defined]
+    def expand(self, req: ExpandRequest) -> ExpandResponse:
         """Expand a single timeline item into finer-grained, chronologically ordered sub-events."""
-        # Local import to avoid a circular import at module load time.
-        from ..models import ExpandRequest, ExpandResponse  # noqa: F401
-
         started = time.time()
         usage.start()
 

@@ -107,7 +107,7 @@ def _ba_user_id(user_id: str) -> int:
     try:
         return int(str(user_id).strip())
     except Exception:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail="Valid numeric user_id is required.")
+        raise HTTPException(status_code=400, detail="Valid numeric user_id is required.") from None
 
 def _ba_depth(value: str) -> str:
     """Validate the requested course depth, defaulting rather than rejecting.

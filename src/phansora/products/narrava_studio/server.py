@@ -153,7 +153,7 @@ async def generate_script(req: ScriptGenerateRequest):
         raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Script generation failed")
-        raise fail(502, "Script generation failed.", exc, logger=logger, context="Script generation failed")
+        raise fail(502, "Script generation failed.", exc, logger=logger, context="Script generation failed") from exc
     return ScriptGenerateResponse(script=result)
 
 
@@ -180,7 +180,7 @@ async def enhance_narration(req: ScriptEnhanceRequest):
         raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Narration enhance failed")
-        raise fail(502, "Enhancing the narration failed.", exc, logger=logger, context="Narration enhance failed")
+        raise fail(502, "Enhancing the narration failed.", exc, logger=logger, context="Narration enhance failed") from exc
     return ScriptEnhanceResponse(text=text)
 
 
@@ -220,10 +220,10 @@ async def generate_media_animation(req: AnimationGenerateRequest):
             "Animation rejected (%s via %s): %s",
             animation.model_name(), animation.provider_name(), exc,
         )
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Animation generation failed")
-        raise fail(502, "Animation generation failed.", exc, logger=logger, context="Animation generation failed")
+        raise fail(502, "Animation generation failed.", exc, logger=logger, context="Animation generation failed") from exc
     return AnimationGenerateResponse(
         html=html,
         duration_sec=req.duration_sec,
@@ -323,7 +323,7 @@ async def suggest_scene(req: SceneSuggestRequest):
         raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Scene suggestion failed")
-        raise fail(502, "Scene suggestion failed.", exc, logger=logger, context="Scene suggestion failed")
+        raise fail(502, "Scene suggestion failed.", exc, logger=logger, context="Scene suggestion failed") from exc
     return SceneSuggestResponse(
         rationale=suggestion.get("rationale", ""),
         media_type=suggestion.get("media_type", "image"),
@@ -365,10 +365,10 @@ async def align_narration(
         )
     except align.AlignmentUnavailable as exc:
         logger.error("Narration alignment unavailable: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except align.AlignmentFailed as exc:
         logger.warning("Narration alignment failed: %s", exc)
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         try:
             os.unlink(temp_path)
@@ -412,10 +412,10 @@ async def transcribe_lyrics(
         )
     except align.AlignmentUnavailable as exc:
         logger.error("Lyrics transcription unavailable: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except align.AlignmentFailed as exc:
         logger.warning("Lyrics transcription failed: %s", exc)
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         try:
             os.unlink(temp_path)
@@ -458,10 +458,10 @@ async def align_lyrics(
         )
     except align.AlignmentUnavailable as exc:
         logger.error("Lyrics alignment unavailable: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except align.AlignmentFailed as exc:
         logger.warning("Lyrics alignment failed: %s", exc)
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         try:
             os.unlink(temp_path)
@@ -495,12 +495,12 @@ async def build_storyboard(req: StoryboardRequest):
     except storyboard.NarrationNotTimed as exc:
         # Placeholders that are only nearly on the voice are the bug, so an untimed
         # narration is refused rather than approximated.
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except llm.ProviderRejected as exc:
         raise _provider_error(exc) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Storyboard build failed")
-        raise fail(502, "Storyboard build failed.", exc, logger=logger, context="Storyboard build failed")
+        raise fail(502, "Storyboard build failed.", exc, logger=logger, context="Storyboard build failed") from exc
     return StoryboardResponse(scenes=scenes)
 
 
