@@ -61,7 +61,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from phansora.shared.auth import enforce_user_scope
 
-from . import library, material, sources, writing
+from . import image_guide, library, material, matting, sources, writing
 from .comfy import ComfyUI
 from .config import Settings, load_settings
 from .downloads import download_message
@@ -84,6 +84,10 @@ from .schemas import (
     IllustrationPromptsResponse,
     IllustrationRequest,
     IllustrationResponse,
+    ImageBrief,
+    ImageComposeRequest,
+    ImageComposeResponse,
+    ImageGuideResponse,
     LabOptions,
     LabRequest,
     LabResponse,
@@ -144,10 +148,19 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def illustrate(user_id: str, body: IllustrationRequest, request: Request) -> IllustrationResponse:
         folder = user_images(user_id)
         image, seed = await request.app.state.comfy.generate(body)
+        # Cut out before enlarging: the matting model works at its own size, and the edges
+        # it leaves are smoothed by the enlargement rather than drawn on it.
+        transparent = False
+        if body.transparent:
+            cut = await asyncio.to_thread(matting.remove_background, image)
+            if cut is not None:
+                image, transparent = cut, True
+        if body.upscale > 1:
+            image = await asyncio.to_thread(matting.upscale, image, body.upscale)
         folder.mkdir(parents=True, exist_ok=True)
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
-        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
+        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed, transparent=transparent)
 
     # --- the ComfyUI lab --------------------------------------------------------------
 
@@ -357,6 +370,17 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def illustration_prompts(user_id: str, body: IllustrationPromptsRequest) -> IllustrationPromptsResponse:
         check_user(user_id)
         return await writing.illustration_prompts(body)
+
+    # A picture made by a conversation: the next question, and the description it is drawn from.
+    @app.post("/users/{user_id}/images/guide", response_model=ImageGuideResponse, response_model_by_alias=True)
+    async def image_guide_next(user_id: str, body: ImageBrief) -> ImageGuideResponse:
+        check_user(user_id)
+        return await image_guide.guide(body)
+
+    @app.post("/users/{user_id}/images/compose", response_model=ImageComposeResponse, response_model_by_alias=True)
+    async def image_compose(user_id: str, body: ImageComposeRequest) -> ImageComposeResponse:
+        check_user(user_id)
+        return await image_guide.compose(body)
 
     return app
 

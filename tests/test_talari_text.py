@@ -1102,3 +1102,56 @@ def test_pictures_are_looked_at_by_the_vision_model_when_there_is_a_key(client: 
     ]
     assert len(sent) == 1 and sent[0]["model"] == "gpt-5-nano"
     assert sent[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+# --- a picture made by a conversation ---------------------------------------------------
+
+BRIEF = {"book": {"title": "Gate Keeper", "description": "A girl finds a gate in the fog."}, "purpose": "cover", "mode": "background", "look": "Art Nouveau, watercolor"}
+
+
+def test_a_picture_is_planned_one_question_at_a_time(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"question": {"id": "Subject", "text": "What should the cover show?", "suggestions": ["A gate in fog", "A gate in fog", "Let Talari decide", "A girl with a key", "x" * 200]}, "summary": "A gate in the fog."}]
+    response = client.post("/users/7/images/guide", json=BRIEF)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["question"]["id"] == "subject"
+    # No repeats, no "decide" (the app offers that itself), and each answer kept short.
+    assert body["question"]["suggestions"] == ["A gate in fog", "A girl with a key", "x" * 80]
+    assert body["summary"] == "A gate in the fog."
+    user = deepseek.calls[0]["user"]
+    assert "Art Nouveau, watercolor" in user and "never ask about art style" in user
+    assert "where the title and words will sit" in user
+
+
+def test_a_question_already_asked_or_full_of_jargon_is_not_put_to_the_author(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    answered = {**BRIEF, "answers": [{"id": "subject", "question": "What should the cover show?", "answer": "", "decide": True}]}
+    deepseek.replies = [{"question": {"id": "subject", "text": "What else should it show?", "suggestions": []}, "summary": "A gate."}]
+    assert client.post("/users/7/images/guide", json=answered).json()["question"] is None
+    assert "Let Talari decide" in deepseek.calls[0]["user"]
+    deepseek.replies = [{"question": {"id": "ratio", "text": "Which aspect ratio for the prompt?", "suggestions": ["2:3"]}, "summary": "A gate."}]
+    assert client.post("/users/7/images/guide", json=answered).json()["question"] is None
+
+
+def test_after_six_answers_only_the_summary_comes_back(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    answers = [{"id": f"q{i}", "question": f"Question {i}?", "answer": "Yes"} for i in range(6)]
+    deepseek.replies = [{"question": {"id": "more", "text": "And the colors?", "suggestions": ["Warm"]}, "summary": "A full picture."}]
+    body = client.post("/users/7/images/guide", json={**BRIEF, "answers": answers}).json()
+    assert body == {"question": None, "summary": "A full picture."}
+
+
+def test_the_answers_become_a_description_the_author_never_sees(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"prompt": "An iron gate in morning fog, a girl in green before it.", "caption": "The gate", "summary": "A girl at a gate in fog.", "shape": "tall"}]
+    response = client.post("/users/7/images/compose", json={**BRIEF, "mode": "media", "purpose": "interior", "transparent": True, "pageText": "She stood at the gate."})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"prompt": "An iron gate in morning fog, a girl in green before it.", "caption": "The gate", "summary": "A girl at a gate in fog.", "shape": "square"}
+    user = deepseek.calls[0]["user"]
+    assert "isolated on a plain flat white background" in user and "She stood at the gate." in user
+
+
+def test_a_change_rewrites_the_description_and_drawing_again_needs_no_words(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"prompt": "The gate at dusk, darker.", "caption": "Gate at dusk", "summary": "The gate, darker.", "shape": "portrait"}]
+    body = client.post("/users/7/images/compose", json={**BRIEF, "previous": "The gate at noon.", "instruction": "Make the lighting darker"}).json()
+    assert body["prompt"] == "The gate at dusk, darker."
+    assert "The gate at noon." in deepseek.calls[0]["user"] and "Make the lighting darker" in deepseek.calls[0]["user"]
+    again = client.post("/users/7/images/compose", json={**BRIEF, "previous": "The gate at noon."}).json()
+    assert again["prompt"] == "The gate at noon." and len(deepseek.calls) == 1

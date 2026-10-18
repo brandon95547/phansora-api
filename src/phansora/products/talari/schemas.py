@@ -36,6 +36,11 @@ class IllustrationRequest(Model):
     # keeps the reference as it is, 1 ignores it entirely.
     reference: str | None = Field(default=None, max_length=40_000_000)
     strength: float = Field(default=0.6, ge=0.05, le=1.0)
+    # Just the subject, on nothing: the drawn background is taken away (matting.py), for a
+    # picture placed over a page.
+    transparent: bool = False
+    # Enlarged after drawing (Lanczos), for a picture that fills a printed page.
+    upscale: float = Field(default=1.0, ge=1.0, le=2.0)
 
     @model_validator(mode="after")
     def _something_to_draw(self) -> "IllustrationRequest":
@@ -49,6 +54,8 @@ class IllustrationResponse(Model):
     # cannot send a header with an <img> adds ?pt=<token>, which the auth gate accepts.
     src: str
     seed: int
+    # Whether its background was taken away, when that was asked for.
+    transparent: bool = False
 
 
 class ServiceState(Model):
@@ -450,6 +457,59 @@ class IllustrationIdea(Lenient):
 
 class IllustrationPromptsResponse(Lenient):
     prompts: list[IllustrationIdea]
+
+
+# --- a picture made by a conversation (image_guide.py) -----------------------------------
+
+
+class ImageAnswer(Lenient):
+    id: str = Field(default="", max_length=60)
+    question: str = Field(default="", max_length=300)
+    answer: str = Field(default="", max_length=300)
+    # "Let Talari decide": the model chooses, and says what in the summary.
+    decide: bool = False
+
+
+class ImageBrief(Lenient):
+    book: IllustrationBook = Field(default_factory=IllustrationBook)
+    # A cover's background (front or back), or a picture for a page inside.
+    purpose: Literal["interior", "cover", "back-cover"] = "interior"
+    # A background fills the page; media is a picture placed on it, in its own shape.
+    mode: Literal["background", "media"] = "media"
+    # The page's own words, for a picture made for it.
+    page_text: str = Field(default="", max_length=8000)
+    # The look it will be drawn in, in words (an art style and a medium): already chosen.
+    look: str = Field(default="", max_length=200)
+    transparent: bool = False
+    answers: list[ImageAnswer] = Field(default_factory=list, max_length=12)
+
+
+class ImageQuestion(Lenient):
+    id: str
+    text: str
+    suggestions: list[str] = Field(default_factory=list)
+
+
+class ImageGuideResponse(Lenient):
+    # The next question, or none when the picture needs nothing more.
+    question: ImageQuestion | None = None
+    # The picture as it stands, in plain words for the author.
+    summary: str = ""
+
+
+class ImageComposeRequest(ImageBrief):
+    # A change to a picture already made: its description, and the change in the author's words.
+    previous: str = Field(default="", max_length=4000)
+    instruction: str = Field(default="", max_length=300)
+
+
+class ImageComposeResponse(Lenient):
+    # For the image model only: never shown to the author.
+    prompt: str
+    caption: str = ""
+    summary: str = ""
+    # A placed picture's shape; a background is the page's.
+    shape: Literal["portrait", "square", "landscape"] = "square"
 
 
 # --- the ComfyUI lab ------------------------------------------------------------------

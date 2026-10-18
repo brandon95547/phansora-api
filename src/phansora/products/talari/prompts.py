@@ -19,6 +19,8 @@ from .schemas import (
     ChapterRequest,
     ChatTurn,
     IllustrationPromptsRequest,
+    ImageBrief,
+    ImageComposeRequest,
     Rewrite,
     SourceChapterText,
 )
@@ -627,6 +629,111 @@ Return a JSON object with one key, "claims": an array of these notes, or an empt
 
 
 # --- illustration -------------------------------------------------------------
+
+
+# --- a picture made by a conversation -----------------------------------------------------
+
+# What each kind of picture is, to the model.
+IMAGE_KINDS = {
+    ("cover", "background"): "the art filling the book's front cover, behind its title and author's name, which are set in type over it separately",
+    ("back-cover", "background"): "the art filling the book's back cover, behind the blurb, which is set in type over it separately",
+    ("interior", "background"): "a picture filling a whole page of the book, behind the page's text",
+    ("cover", "media"): "a picture placed on the book's front cover, over its background",
+    ("back-cover", "media"): "a picture placed on the book's back cover",
+    ("interior", "media"): "a picture placed on a page of the book, beside or over its text",
+}
+
+GUIDE_ROLE = (
+    "You help an author describe one picture for their book, by asking them questions one at a time, like "
+    "a good art director: plain, friendly and brief. The author never sees an image prompt and never needs "
+    "to know how images are made."
+)
+
+
+def _image_card(request: ImageBrief) -> str:
+    book = request.book
+    card = _lines(("Title", book.title or "Untitled"), ("About the book", book.description), ("Tone", book.tone))
+    kind = IMAGE_KINDS[(request.purpose, request.mode)]
+    parts = [f"THE BOOK\n{card}", f"THE PICTURE\nIt is {kind}."]
+    if request.look:
+        parts.append(f"It will be drawn as {request.look}. That is decided: never ask about art style, medium, technique or artist.")
+    if request.transparent:
+        parts.append("It is cut out on a transparent background: just its subject, no scenery behind it.")
+    if request.page_text.strip():
+        parts.append(f"THE PAGE IT IS FOR\n{_clip(request.page_text, 3000)}")
+    return "\n\n".join(parts)
+
+
+def _image_answers(request: ImageBrief) -> str:
+    if not request.answers:
+        return "Nothing asked yet."
+    lines = []
+    for a in request.answers:
+        said = "(Let Talari decide: choose what suits the book best.)" if a.decide else a.answer
+        lines.append(f"- [{a.id}] {a.question}\n  {said}")
+    return "\n".join(lines)
+
+
+def image_guide(request: ImageBrief, remaining: int) -> tuple[str, str]:
+    cover = request.mode == "background" and request.purpose in ("cover", "back-cover")
+    user = f"""{_image_card(request)}
+
+ASKED SO FAR
+{_image_answers(request)}
+
+Decide whether one more question would make this picture clearly better. Up to {remaining} more may be asked, but ask fewer when the picture is clear enough: every question costs the author a moment.
+
+If one is worth asking, ask the one that matters most of what is still open, usually in this order: what the picture shows (its subject){', where the title and words will sit, so that part of the picture stays calm' if cover else ''}, the setting, the mood and light, the composition or viewpoint, the colors. Never ask again about anything already asked, decided or answered, nor about what the book or the page already makes plain. Ask in under 15 words, in everyday language, with no jargon (never "prompt", "render", "aspect ratio", "composition", "seed", "style").
+
+Give 3 or 4 suggested answers that fit this book, each a concrete choice in 2 to 8 words, different from one another.
+
+Also write "summary": the picture as it now stands, in one or two plain sentences for the author, beginning "A" or "An" (e.g. "A misty forest at dawn, a small girl in a red coat at the edge of it."). Where the author let Talari decide, choose something fitting and include it. Never mention the art style, prompts or anything technical.
+
+Return a JSON object: {{"question": {{"id": "a short-kebab-case name for what it asks about", "text": "the question", "suggestions": ["…", "…", "…"]}} or null when nothing more is worth asking, "summary": "…"}}"""
+    return GUIDE_ROLE, user
+
+
+def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
+    cover = request.purpose in ("cover", "back-cover") and request.mode == "background"
+    rules = [
+        "Describe what is seen, concretely: the subject, what it is doing, the setting, the light, the mood, the viewpoint and the colors.",
+        "Leave out any art style, medium or artist: the look is applied separately.",
+        "Never include words, letters, titles, signs or typography in the picture.",
+    ]
+    if cover:
+        rules.append("Keep the area where the words will sit calm and uncluttered, as the answers say (else the upper third).")
+    if request.mode == "background":
+        rules.append("It fills the whole page edge to edge: a full scene, with nothing important at the very edges, which are trimmed.")
+    if request.transparent:
+        rules.append(
+            "Show a single subject, whole and uncropped, isolated on a plain flat white background, with no scenery, "
+            "ground, shadow or frame around it."
+        )
+    change = ""
+    if request.previous.strip():
+        change = f"""
+
+THE PICTURE AS IT WAS DESCRIBED
+{request.previous.strip()}
+
+THE AUTHOR'S CHANGE
+{request.instruction.strip() or "Draw it again, the same picture."}
+
+Rewrite the description with this change made, keeping everything else as it was."""
+    user = f"""{_image_card(request)}
+
+THE AUTHOR'S ANSWERS
+{_image_answers(request)}{change}
+
+Write the description an illustrator (an image model) will draw from, in one paragraph of at most 90 words. Where the author let Talari decide, choose what suits the book best.
+{chr(10).join("- " + r for r in rules)}
+
+Return a JSON object with:
+- "prompt": that description.
+- "caption": a short name for the picture, at most 6 words, for the author's list of pictures.
+- "summary": the picture in one or two plain sentences for the author, beginning "A" or "An", with nothing technical.
+- "shape": "portrait", "square" or "landscape" — the shape that suits the picture best."""
+    return ROLE, user
 
 
 def illustration_ideas(request: IllustrationPromptsRequest, style: str, text: str, count: int) -> tuple[str, str]:
