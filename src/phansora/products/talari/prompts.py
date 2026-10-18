@@ -657,8 +657,6 @@ def _image_card(request: ImageBrief) -> str:
     parts = [f"THE BOOK\n{card}", f"THE PICTURE\nIt is {kind}."]
     if request.look:
         parts.append(f"It will be drawn as {request.look}. That is decided: never ask about art style, medium, technique or artist.")
-    if request.transparent:
-        parts.append("It is cut out on a transparent background: just its subject, no scenery behind it.")
     if request.page_text.strip():
         parts.append(f"THE PAGE IT IS FOR\n{_clip(request.page_text, 3000)}")
     return "\n\n".join(parts)
@@ -704,11 +702,6 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
         rules.append("Keep the area where the words will sit calm and uncluttered, as the answers say (else the upper third).")
     if request.mode == "background":
         rules.append("It fills the whole page edge to edge: a full scene, with nothing important at the very edges, which are trimmed.")
-    if request.transparent:
-        rules.append(
-            "Show a single subject, whole and uncropped, isolated on a plain flat white background, with no scenery, "
-            "ground, shadow or frame around it."
-        )
     change = ""
     if request.previous.strip():
         change = f"""

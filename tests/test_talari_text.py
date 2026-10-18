@@ -1141,11 +1141,11 @@ def test_after_six_answers_only_the_summary_comes_back(client: TestClient, deeps
 
 def test_the_answers_become_a_description_the_author_never_sees(client: TestClient, deepseek: FakeDeepSeek) -> None:
     deepseek.replies = [{"prompt": "An iron gate in morning fog, a girl in green before it.", "caption": "The gate", "summary": "A girl at a gate in fog.", "shape": "tall"}]
-    response = client.post("/users/7/images/compose", json={**BRIEF, "mode": "media", "purpose": "interior", "transparent": True, "pageText": "She stood at the gate."})
+    response = client.post("/users/7/images/compose", json={**BRIEF, "mode": "media", "purpose": "interior", "pageText": "She stood at the gate."})
     assert response.status_code == 200, response.text
     assert response.json() == {"prompt": "An iron gate in morning fog, a girl in green before it.", "caption": "The gate", "summary": "A girl at a gate in fog.", "shape": "square"}
     user = deepseek.calls[0]["user"]
-    assert "isolated on a plain flat white background" in user and "She stood at the gate." in user
+    assert "She stood at the gate." in user and "Never include words" in user
 
 
 def test_a_change_rewrites_the_description_and_drawing_again_needs_no_words(client: TestClient, deepseek: FakeDeepSeek) -> None:

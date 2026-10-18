@@ -561,7 +561,7 @@ def test_the_lab_gives_exactly_the_size_asked_for(make_client, network: Recorder
     assert "13" not in exact and exact["10"]["inputs"]["images"] == ["9", 0]
 
 
-# --- after drawing: cut out, enlarged ---------------------------------------------------
+# --- after drawing: enlarged ---------------------------------------------------------
 
 
 def real_png(width: int = 64, height: int = 48) -> bytes:
@@ -580,29 +580,17 @@ def saved_picture(tmp_path: Path, src: str):
     return Image.open(tmp_path / "talari" / "images" / "7" / src.rsplit("/", 1)[1])
 
 
-def test_a_page_filling_picture_is_enlarged_and_a_placed_one_cut_out(client: TestClient, network: Recorder, tmp_path: Path, monkeypatch) -> None:
-    from phansora.products.talari import matting
-
+def test_a_page_filling_picture_is_enlarged(client: TestClient, network: Recorder, tmp_path: Path) -> None:
     drawn = real_png()
     base = comfy()
     network.handler = lambda r: httpx.Response(200, content=drawn) if r.url.path == "/view" else base(r)
 
     response = client.post("/users/7/illustrations", json={**REQUEST, "upscale": 2})
     assert response.status_code == 200, response.text
-    assert response.json()["transparent"] is False
     assert saved_picture(tmp_path, response.json()["src"]).size == (128, 96)
-
-    # rembg, stood in for: whatever it cuts out is kept, with its alpha.
-    monkeypatch.setattr(matting, "_rembg", lambda: (lambda picture, session, post_process_mask: picture.convert("RGBA"), None))
-    response = client.post("/users/7/illustrations", json={**REQUEST, "transparent": True})
-    assert response.json()["transparent"] is True
-    assert saved_picture(tmp_path, response.json()["src"]).mode == "RGBA"
-
-    # Without rembg the picture is kept as drawn, and the caller is told.
-    monkeypatch.setattr(matting, "_rembg", lambda: None)
-    response = client.post("/users/7/illustrations", json={**REQUEST, "transparent": True})
-    assert response.status_code == 200 and response.json()["transparent"] is False
-    assert saved_picture(tmp_path, response.json()["src"]).mode == "RGB"
+    # Without asking, it is kept as drawn.
+    response = client.post("/users/7/illustrations", json=REQUEST)
+    assert saved_picture(tmp_path, response.json()["src"]).size == (64, 48)
 
 
 def test_an_enlargement_is_capped_at_twice(client: TestClient, network: Recorder) -> None:

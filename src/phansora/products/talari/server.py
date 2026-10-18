@@ -61,7 +61,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from phansora.shared.auth import enforce_user_scope
 
-from . import image_guide, library, material, matting, sources, writing
+from . import enlarge, image_guide, library, material, sources, writing
 from .comfy import ComfyUI
 from .config import Settings, load_settings
 from .downloads import download_message
@@ -148,19 +148,12 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def illustrate(user_id: str, body: IllustrationRequest, request: Request) -> IllustrationResponse:
         folder = user_images(user_id)
         image, seed = await request.app.state.comfy.generate(body)
-        # Cut out before enlarging: the matting model works at its own size, and the edges
-        # it leaves are smoothed by the enlargement rather than drawn on it.
-        transparent = False
-        if body.transparent:
-            cut = await asyncio.to_thread(matting.remove_background, image)
-            if cut is not None:
-                image, transparent = cut, True
         if body.upscale > 1:
-            image = await asyncio.to_thread(matting.upscale, image, body.upscale)
+            image = await asyncio.to_thread(enlarge.upscale, image, body.upscale)
         folder.mkdir(parents=True, exist_ok=True)
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
-        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed, transparent=transparent)
+        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
 
     # --- the ComfyUI lab --------------------------------------------------------------
 

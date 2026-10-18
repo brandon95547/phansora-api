@@ -91,9 +91,6 @@ pydantic-settings==2.14.2  # chrono_origin settings
 numba<0.61; sys_platform == "darwin" and platform_machine == "x86_64"
 pymupdf
 pillow
-# rembg[cpu] — optional, installed by hand on the API server (Talari matting.py takes a placed
-# picture's background away with it). Not pinned here: it brings onnxruntime and opencv, to be
-# checked against this stack when installed. Without it, a transparent picture keeps its background.
 pytesseract
 faster-whisper
 aiosmtplib

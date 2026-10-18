@@ -36,10 +36,7 @@ class IllustrationRequest(Model):
     # keeps the reference as it is, 1 ignores it entirely.
     reference: str | None = Field(default=None, max_length=40_000_000)
     strength: float = Field(default=0.6, ge=0.05, le=1.0)
-    # Just the subject, on nothing: the drawn background is taken away (matting.py), for a
-    # picture placed over a page.
-    transparent: bool = False
-    # Enlarged after drawing (Lanczos), for a picture that fills a printed page.
+    # Enlarged after drawing (Lanczos, enlarge.py), for a picture that fills a printed page.
     upscale: float = Field(default=1.0, ge=1.0, le=2.0)
 
     @model_validator(mode="after")
@@ -54,8 +51,6 @@ class IllustrationResponse(Model):
     # cannot send a header with an <img> adds ?pt=<token>, which the auth gate accepts.
     src: str
     seed: int
-    # Whether its background was taken away, when that was asked for.
-    transparent: bool = False
 
 
 class ServiceState(Model):
@@ -480,7 +475,6 @@ class ImageBrief(Lenient):
     page_text: str = Field(default="", max_length=8000)
     # The look it will be drawn in, in words (an art style and a medium): already chosen.
     look: str = Field(default="", max_length=200)
-    transparent: bool = False
     answers: list[ImageAnswer] = Field(default_factory=list, max_length=12)
 
 
