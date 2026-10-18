@@ -16,7 +16,6 @@ salvage logic the other research clients use.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -28,6 +27,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
+from .json_repair import parse_json_loose
 from .research import GroundedAnswer
 from .retries import ProviderError, worth_retrying
 from .search import SearchConfig, SearchResult, web_search
@@ -73,20 +73,13 @@ def _parse_json(raw: str) -> Dict[str, Any]:
 
     So the salvaged slice must start at the FIRST brace and end at the LAST, and it is
     accepted only if the whole slice parses. A partial answer raises, which is what the
-    truncation retry in reason_json is there to catch.
+    truncation retry in reason_json is there to catch. The shared salvage holds to that:
+    every span it tries runs to the LAST closing bracket, so a cut-off document still
+    fails, and an array it may find inside one is refused below.
     """
-    raw = (raw or "").strip()
-    if not raw:
+    if not (raw or "").strip():
         return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise
-        # No second except: if this slice does not parse either, the answer is
-        # incomplete and the JSONDecodeError is the correct outcome.
-        parsed = json.loads(raw[start : end + 1])
+    parsed = parse_json_loose(raw)
 
     if not isinstance(parsed, dict):
         raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")

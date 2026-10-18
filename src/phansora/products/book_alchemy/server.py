@@ -598,7 +598,7 @@ def _ba_build_zip(items, course_name: str) -> str:
 def _ba_unlink_quiet(path: str) -> None:
     try:
         os.unlink(path)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110 — a temp file, removed best-effort
         pass
 
 @app.get("/projects/{project_id}/download", response_model=None)
@@ -669,7 +669,7 @@ async def ba_regenerate_session(project_id: int, session_id: int, user_id: str) 
     if sess["audio_path"]:
         try:
             Path(sess["audio_path"]).unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110 — replaced by the new recording anyway
             pass
 
     await ba_db.set_session(

@@ -25,17 +25,13 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 from phansora.shared.utils.uploads import save_upload
 
-from .config import get_settings  # noqa: E402
-from .models import (  # noqa: E402
+from .config import get_settings
+from .models import (
     AnimationGenerateRequest,
     AnimationGenerateResponse,
     MediaSearchRequest,
@@ -49,7 +45,7 @@ from .models import (  # noqa: E402
     StoryboardRequest,
     StoryboardResponse,
 )
-from .services import align, animation, llm, media, script, storyboard, voices, web_images  # noqa: E402
+from .services import align, animation, llm, media, script, storyboard, voices, web_images
 
 logger = logging.getLogger("narrava-studio")
 
@@ -477,6 +473,10 @@ async def build_storyboard(req: StoryboardRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    from dotenv import load_dotenv
+
+    # Run on its own, nothing else has loaded .env (in the API, phansora.config does).
+    load_dotenv()
 
     port = int(os.getenv("PORT", "8010"))
     uvicorn.run("phansora.products.narrava_studio.server:app", host="0.0.0.0", port=port, reload=True)

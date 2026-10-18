@@ -16,10 +16,13 @@ documents work within the model's context window.
 
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from phansora.shared.ai.deepseek import chat_model
+
+logger = logging.getLogger("research_atlas.text_cleaner")
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +151,7 @@ def clean_extracted_text(
     # Parallel cleanup — API calls are I/O-bound, safe to overlap
     def _do_clean(idx_chunk: tuple[int, str]) -> tuple[int, str | None]:
         idx, chunk = idx_chunk
-        print(f"[CLEAN] Cleaning chunk {idx}/{len(chunks)} ({len(chunk)} chars)...")
+        logger.info("Cleaning chunk %d/%d (%d chars)", idx, len(chunks), len(chunk))
         return idx, _clean_chunk(chunk, client)
 
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
@@ -162,7 +165,7 @@ def clean_extracted_text(
             cleaned.append(result)
 
     if failures:
-        print(f"[CLEAN] ⚠️  {failures}/{len(chunks)} chunk(s) fell back to originals.")
+        logger.warning("%d/%d chunk(s) fell back to the original text", failures, len(chunks))
 
     return "\n\n".join(cleaned)
 
@@ -223,13 +226,13 @@ def _clean_chunk(chunk: str, client: Any) -> str | None:
         # Safety: if the model returned significantly less text, it
         # probably hallucinated or truncated — keep the original.
         if not result or len(result) < len(chunk) * 0.5:
-            print(
-                f"  -> Cleanup returned suspicious length "
-                f"({len(result)} chars vs {len(chunk)} original), keeping original."
+            logger.warning(
+                "Cleanup returned a suspicious length (%d chars vs %d original), keeping the original",
+                len(result), len(chunk),
             )
             return None
 
         return result
     except Exception as e:
-        print(f"  -> Cleanup failed: {e}")
+        logger.warning("Cleanup failed: %s", e, exc_info=True)
         return None

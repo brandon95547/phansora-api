@@ -13,6 +13,10 @@ from typing import List
 
 from dotenv import load_dotenv
 
+# The one place the API loads .env. phansora.main and phansora.cli import this module
+# before any product, so every product reads an environment that already has it; the
+# Book Alchemy worker, a process of its own, loads it the same way. It never overrides
+# a variable that is already set, so under systemd (EnvironmentFile) it changes nothing.
 load_dotenv()
 
 # All products the platform knows about. A product is mounted only if it imports

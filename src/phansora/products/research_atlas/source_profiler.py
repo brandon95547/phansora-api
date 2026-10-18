@@ -15,11 +15,14 @@ call, not the product's. See neutrality.py for why that line is drawn here.
 
 from __future__ import annotations
 
-import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from phansora.shared.ai.deepseek import chat_model
+from phansora.shared.ai.json_repair import parse_json_loose
+
+logger = logging.getLogger("research_atlas.source_profiler")
 
 
 @dataclass
@@ -132,7 +135,7 @@ def profile_sources(
                     char_count=len(text),
                 )
         except Exception as e:
-            print(f"[PROFILE] Failed to profile '{label}': {e}")
+            logger.warning("Failed to profile %r: %s", label, e, exc_info=True)
 
         return SourceProfile(source_label=label, char_count=len(text))
 
@@ -141,29 +144,18 @@ def profile_sources(
         profiles = list(executor.map(_profile_one, sources))
 
     for p in profiles:
-        print(
-            f"[PROFILE] {p.source_label}: form={p.source_type}, "
-            f"claims={len(p.key_claims)}, chars={p.char_count}"
+        logger.info(
+            "%s: form=%s, claims=%d, chars=%d",
+            p.source_label, p.source_type, len(p.key_claims), p.char_count,
         )
 
     return profiles
 
 
 def _extract_json(raw: str) -> Optional[Dict]:
-    """Try to parse JSON from LLM output, tolerating fences and stray text."""
-    if not raw:
-        return None
-    raw = raw.strip()
-    # Remove code fences if present
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        raw = "\n".join(lines).strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
+    """The JSON object in a model's answer (fences and stray prose tolerated), or None."""
     try:
-        return json.loads(raw[start:end + 1])
-    except json.JSONDecodeError:
+        data = parse_json_loose(raw)
+    except ValueError:
         return None
+    return data if isinstance(data, dict) else None

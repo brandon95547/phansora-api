@@ -11,6 +11,10 @@ from __future__ import annotations
 import sys
 from typing import List, Optional
 
+# Loads .env, once, before any product module reads the environment — the same import
+# that does it for the API in phansora.main.
+import phansora.config  # noqa: F401
+
 
 def _forward(argv: List[str], prog: str) -> None:
     """Reset sys.argv so a delegate that reads it directly sees only its args."""

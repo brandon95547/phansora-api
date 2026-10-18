@@ -36,9 +36,5 @@ jobs:
       - name: Ruff
         run: ruff check
 
-      # Reported, not enforced: `except Exception: pass` that may be hiding a real failure.
-      - name: Ruff warnings
-        run: ruff check --select S110 --exit-zero
-
       - name: Tests
         run: python -m pytest -q

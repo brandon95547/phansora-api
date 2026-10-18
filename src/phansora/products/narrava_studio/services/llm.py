@@ -11,9 +11,10 @@ thread executor so the FastAPI event loop stays free.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Dict
+
+from phansora.shared.ai.json_repair import parse_json_loose
 
 from .. import config
 
@@ -182,17 +183,13 @@ def generate_json(system: str, user: str, *, max_output_tokens: int = 2000) -> D
     return _parse_json(raw)
 
 
-def _parse_json(raw: str) -> Dict[str, Any]:
-    raw = (raw or "").strip()
-    if not raw:
-        return {}
+def _parse_json(raw: str) -> Any:
+    """The answer as JSON, or {} when there is none to read.
+
+    The shared salvage (fences, prose around the object, stray backslashes). Not narrowed
+    to a dict: the callers check the shape they need themselves.
+    """
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(raw[start : end + 1])
-            except json.JSONDecodeError:
-                return {}
+        return parse_json_loose(raw)
+    except ValueError:
         return {}

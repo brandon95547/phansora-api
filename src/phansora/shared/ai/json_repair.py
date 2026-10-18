@@ -6,10 +6,11 @@ Two failure modes this handles, both routine with chat models:
   * The model was cut off mid-generation (``finish_reason == "length"``), leaving a
     structurally invalid document whose *completed* items are still perfectly good.
 
-Extracted from Book Alchemy's DeepSeek client so the reasoning-model client can reuse it
-rather than carry a second copy of logic this fiddly. ``deepseek-reasoner`` needs it more,
-not less: it does not support JSON mode at all, so every structured response from it
-arrives as free text that has to be parsed leniently.
+Extracted from Book Alchemy's DeepSeek client so every provider client reads model JSON
+the same way rather than each carrying its own copy of logic this fiddly: Book Alchemy,
+Talari, Narrava Studio, Research Atlas and the three Chrono research clients all parse
+through ``parse_json_loose``. What a caller does with a result of the wrong shape (an
+array where it wanted an object) stays with the caller.
 """
 from __future__ import annotations
 
@@ -27,7 +28,7 @@ def parse_json_loose(raw: str) -> Any:
     """Best-effort JSON extraction from a model response."""
     raw = (raw or "").strip()
     if not raw:
-        raise ValueError("Empty DeepSeek JSON response.")
+        raise ValueError("Empty JSON response.")
     # Strip ```json ... ``` fences if present.
     fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, re.DOTALL)
     if fenced:
@@ -40,7 +41,7 @@ def parse_json_loose(raw: str) -> Any:
             return json.loads(candidate, strict=False)
         except json.JSONDecodeError:
             continue
-    raise ValueError(f"Could not parse JSON from DeepSeek response: {raw[:300]}")
+    raise ValueError(f"Could not parse JSON from the model's response: {raw[:300]}")
 
 
 def _candidates(raw: str) -> Iterator[str]:

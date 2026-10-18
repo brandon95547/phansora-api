@@ -192,16 +192,14 @@ async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> Non
                        context=f"Research Atlas job {job_id} failed").detail,
         )
     finally:
-        if temp_input_path is not None:
-            try:
-                temp_input_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        if temp_toc_path is not None:
-            try:
-                temp_toc_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        # Best-effort: the job's answer is already recorded, and a leftover temp file
+        # costs only disk.
+        for temp in (temp_input_path, temp_toc_path):
+            if temp is not None:
+                try:
+                    temp.unlink(missing_ok=True)
+                except OSError:  # noqa: S110
+                    pass
         await _prune_finished_jobs()
 
 

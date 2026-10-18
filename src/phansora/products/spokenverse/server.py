@@ -102,11 +102,12 @@ async def health() -> dict:
 @app.on_event("startup")
 async def _sweep_stale_pending_voices() -> None:
     # Clear pending voice clips abandoned before the last restart. Best-effort:
-    # never let cleanup failures block startup.
+    # never let cleanup failures block startup — but say so, or abandoned clips pile up
+    # on disk with nothing anywhere saying why.
     try:
         voice_store.prune_all_pending()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.warning("Pruning abandoned pending voices failed", exc_info=True)
 
 
 @app.on_event("startup")
@@ -309,7 +310,7 @@ async def pdf_to_txt(
         # keep temp PDF only if you want to debug; otherwise remove it
         try:
             pdf_path.unlink(missing_ok=True)
-        except Exception:
+        except Exception:  # noqa: S110 — a temp upload, removed best-effort
             pass
 
     _append_history_event(
@@ -465,7 +466,7 @@ async def txt_to_audio(
             for p in tmp_in_dir.glob("*"):
                 p.unlink(missing_ok=True)
             tmp_in_dir.rmdir()
-        except Exception:
+        except Exception:  # noqa: S110 — a temp folder, removed best-effort
             pass
 
     # The audio filename is based on the txt stem; here it's job_id
@@ -551,7 +552,7 @@ async def audio_to_txt(
     finally:
         try:
             audio_path.unlink(missing_ok=True)
-        except Exception:
+        except Exception:  # noqa: S110 — a temp upload, removed best-effort
             pass
 
     _append_history_event(

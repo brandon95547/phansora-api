@@ -198,6 +198,8 @@ def delete_cached(title: str) -> int:
         try:
             path.unlink()
             removed += 1
-        except Exception:
-            pass
+        except OSError:
+            # Not fatal to the request, but the trace the user deleted is still served
+            # from here until this is fixed, so it has to be visible.
+            logger.warning("Could not remove cached trace %s", path, exc_info=True)
     return removed

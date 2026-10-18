@@ -66,7 +66,7 @@ def record(*, input_tokens: int = 0, output_tokens: int = 0) -> None:
         bucket["input_tokens"] += it
         bucket["output_tokens"] += ot
         bucket["calls"] += 1
-    except Exception:  # pragma: no cover - a broken counter must stay invisible
+    except Exception:  # noqa: S110  # pragma: no cover - a broken counter must stay invisible
         pass
 
 
@@ -122,7 +122,7 @@ def absorb(child: Dict[str, Any]) -> None:
             bucket["input_tokens"] += int((vals or {}).get("input_tokens") or 0)
             bucket["output_tokens"] += int((vals or {}).get("output_tokens") or 0)
             bucket["calls"] += int((vals or {}).get("calls") or 0)
-    except Exception:  # pragma: no cover
+    except Exception:  # noqa: S110  # pragma: no cover - same: metering never fails a call
         pass
 
 

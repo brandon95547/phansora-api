@@ -25,12 +25,16 @@ of which sources carry an item; the reader weighs it. See neutrality.py.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from phansora.shared.ai.deepseek import chat_model
+from phansora.shared.ai.json_repair import parse_json_loose
 
 from . import neutrality
+
+logger = logging.getLogger("research_atlas.extraction")
 
 # ---------------------------------------------------------------------------
 # The per-chunk extraction call
@@ -153,19 +157,12 @@ Use plain ASCII."""
 
 
 def _extract_json(raw: str) -> Optional[Dict]:
-    """Parse JSON from model output, tolerating fences and stray prose."""
-    if not raw:
-        return None
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = "\n".join(l for l in raw.splitlines() if not l.strip().startswith("```")).strip()
-    start, end = raw.find("{"), raw.rfind("}")
-    if start == -1 or end <= start:
-        return None
+    """The JSON object in a model's answer (fences and stray prose tolerated), or None."""
     try:
-        return json.loads(raw[start:end + 1])
-    except json.JSONDecodeError:
+        data = parse_json_loose(raw)
+    except ValueError:
         return None
+    return data if isinstance(data, dict) else None
 
 
 def call_neutral(
@@ -194,7 +191,7 @@ def call_neutral(
             )
             return _extract_json((resp.choices[0].message.content or "").strip())
         except Exception as e:  # noqa: BLE001 -- a failed call must not kill the run
-            print(f"[ATLAS] extraction call failed: {e}")
+            logger.warning("Extraction call failed: %s", e, exc_info=True)
             return None
 
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -206,7 +203,7 @@ def call_neutral(
     if not violations:
         return parsed, []
 
-    print(f"[ATLAS] neutrality: {len(violations)} unattributed characterization(s); retrying")
+    logger.info("Neutrality: %d unattributed characterization(s); retrying", len(violations))
     retry = _ask(messages + [
         {"role": "assistant", "content": json.dumps(parsed)},
         {"role": "user", "content": neutrality.REWRITE_INSTRUCTION + "\n\nSpecifically:\n"
@@ -218,7 +215,7 @@ def call_neutral(
         if not violations:
             return parsed, []
 
-    print(f"[ATLAS] neutrality: {len(violations)} survived the retry; redacting")
+    logger.info("Neutrality: %d survived the retry; redacting", len(violations))
     return _redact_fields(parsed, source_labels), violations
 
 

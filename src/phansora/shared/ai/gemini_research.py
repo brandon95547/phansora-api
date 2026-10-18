@@ -17,7 +17,6 @@ REQUEST rather than per token, and the free monthly allowance covers ordinary us
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -30,6 +29,7 @@ import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
+from .json_repair import parse_json_loose
 from .research import GroundedAnswer
 from .retries import ProviderError, worth_retrying
 
@@ -186,22 +186,16 @@ def _wrap(parsed: Any) -> Dict[str, Any]:
 
 
 def _parse_json(raw: str) -> Dict[str, Any]:
-    """Parse, falling back to the outermost object or array if there is text around it."""
-    text = _strip_fences(raw)
+    """Parse, falling back to the outermost object or array if there is text around it.
+
+    The shared salvage tries both shapes — hunting only for braces finds the first OBJECT
+    INSIDE an array and parses `{a},{b},{c}`, which is not JSON at all. Nothing readable
+    is {}, as it always was here.
+    """
     try:
-        return _wrap(json.loads(text))
-    except json.JSONDecodeError:
-        pass
-    # Both shapes, and whichever starts first wins — hunting only for braces finds the
-    # first OBJECT INSIDE an array and parses `{a},{b},{c}`, which is not JSON at all.
-    for opener, closer in (("{", "}"), ("[", "]")):
-        start, end = text.find(opener), text.rfind(closer)
-        if start != -1 and end > start:
-            try:
-                return _wrap(json.loads(text[start : end + 1]))
-            except json.JSONDecodeError:
-                continue
-    return {}
+        return _wrap(parse_json_loose(_strip_fences(raw)))
+    except ValueError:
+        return {}
 
 
 class GeminiResearchClient:

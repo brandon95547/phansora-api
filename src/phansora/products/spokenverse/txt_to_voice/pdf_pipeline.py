@@ -21,8 +21,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
-from dotenv import load_dotenv
-
 from phansora.products.spokenverse.services.pdf_render import PdfRenderConfig, render_pdf_to_images_bytes
 from phansora.products.spokenverse.services.ocr_tesseract import TesseractOCRConfig, ocr_image_bytes
 from phansora.shared.ai.deepseek import DeepSeekChatConfig, clean_ocr_text
@@ -71,10 +69,6 @@ class PdfToTxtConfig:
 
 class PdfConverter:
     def __init__(self, cfg: PdfToTxtConfig | None = None) -> None:
-        # Load .env from the process runtime root (repo root / PHANSORA_DATA_DIR).
-        from phansora.shared.paths import runtime_root
-        load_dotenv(dotenv_path=runtime_root() / ".env")
-
         self.cfg = cfg or PdfToTxtConfig()
         self.chat_cfg = DeepSeekChatConfig.from_env(product_var="SPOKENVERSE_OCR_MODEL")
 

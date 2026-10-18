@@ -1,24 +1,20 @@
+"""Outbound email over SMTP: the contact form's fixed recipient, and admin mail to a user.
+
+The SMTP settings are read when a message is sent, not when this module is imported, so
+they never depend on which module happened to load .env first (phansora.config loads it
+once, at startup).
+"""
 import os
 from email.message import EmailMessage
+
 from aiosmtplib import send
-from dotenv import load_dotenv
-
-# Load credentials from .env
-load_dotenv()
-
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASS = os.getenv("SMTP_PASS")
-EMAIL_TO = os.getenv("EMAIL_TO")      # 👈 env-controlled recipient
-DEFAULT_FROM = os.getenv("DEFAULT_FROM", SMTP_USER)
 
 
 async def send_email(data):
     # Always send to EMAIL_TO from env. This is what the public /contact route calls,
     # so a submission can never choose where the mail goes.
     return await send_message(
-        EMAIL_TO,
+        os.getenv("EMAIL_TO"),
         data.get("subject", "No Subject"),
         data.get("message", ""),
         data.get("reply_to", ""),
@@ -34,8 +30,9 @@ async def send_message(to_address, subject, message_body, reply_to=""):
     if not message_body:
         raise ValueError("Missing 'message'")
 
+    smtp_user = os.getenv("SMTP_USER")
     msg = EmailMessage()
-    msg["From"] = DEFAULT_FROM
+    msg["From"] = os.getenv("DEFAULT_FROM", smtp_user)
     msg["To"] = to_address
     msg["Subject"] = subject
 
@@ -51,10 +48,10 @@ async def send_message(to_address, subject, message_body, reply_to=""):
     # non-2xx status instead of reporting a false success.
     await send(
         msg,
-        hostname=SMTP_HOST,
-        port=SMTP_PORT,
-        username=SMTP_USER,
-        password=SMTP_PASS,
+        hostname=os.getenv("SMTP_HOST"),
+        port=int(os.getenv("SMTP_PORT", "587")),
+        username=smtp_user,
+        password=os.getenv("SMTP_PASS"),
         start_tls=True,
     )
     return "Email sent"

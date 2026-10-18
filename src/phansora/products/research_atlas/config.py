@@ -1,6 +1,5 @@
 import os
 
-from dotenv import load_dotenv
 import openai
 
 from phansora.shared.paths import runtime_root
@@ -32,8 +31,6 @@ def _get_float_env(name: str, default: float) -> float:
 
 class Config:
     def __init__(self):
-        load_dotenv()
-
         api_key = os.getenv("DEEPSEEK_API_KEY")
         # Bound every LLM call. Without these the OpenAI SDK defaults to a 600s
         # (10-minute) timeout with 2 retries, so a single slow/hung DeepSeek call

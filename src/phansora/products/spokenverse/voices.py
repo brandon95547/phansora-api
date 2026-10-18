@@ -30,6 +30,7 @@ sample (what the user hears when playing the voice back).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -46,6 +47,8 @@ from phansora.products.spokenverse.txt_to_voice.adapters.cosyvoice3_client impor
     INSTRUCT_MAX_CHARS,
 )
 from phansora.shared.paths import assets_dir, runtime_dir
+
+logger = logging.getLogger("spokenverse.voices")
 
 # CosyVoice works best with a 3-10 second reference clip (longer errors out). We keep
 # the first 9s (safely inside the range) — this clip is what it clones from, and
@@ -295,8 +298,10 @@ def _read_pending_settings(user_id: str, token: str) -> dict:
                 if data.get("ref_text"):
                     out["ref_text"] = data["ref_text"]
                 return out
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # The voice is still approved, but with default knobs and no transcript instead
+            # of the ones the user chose: worth a line in the log.
+            logger.warning("Pending voice settings unreadable at %s; using defaults", p, exc_info=True)
     return clamp_settings()
 
 
@@ -370,7 +375,7 @@ def _prune_dir(pending_dir: Path, cutoff: float) -> int:
             if p.is_file() and p.stat().st_mtime < cutoff:
                 p.unlink(missing_ok=True)
                 removed += 1
-        except Exception:
+        except Exception:  # noqa: S110 — best-effort pruning; the next sweep tries again
             pass
     return removed
 

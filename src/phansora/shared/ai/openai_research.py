@@ -13,7 +13,6 @@ Responses call in JSON-object mode.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -23,6 +22,7 @@ from openai import APIConnectionError, OpenAI
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from . import usage
+from .json_repair import parse_json_loose
 from .research import GroundedAnswer
 from .retries import worth_retrying
 
@@ -37,24 +37,21 @@ _JSON_SYSTEM = (
 
 
 def _parse_json(raw: str) -> Dict[str, Any]:
-    """Parse a JSON object, salvaging by trimming to the outermost braces."""
-    raw = (raw or "").strip()
-    if not raw:
+    """Parse a JSON answer with the shared salvage; {} for an empty one.
+
+    An answer with nothing parseable in it raises ValueError, which reason_json's retry
+    treats as worth another attempt.
+    """
+    if not (raw or "").strip():
         return {}
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        start, end = raw.find("{"), raw.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            return json.loads(raw[start : end + 1])
-        raise
+    return parse_json_loose(raw)
 
 
 def _worth_retrying(exc: BaseException) -> bool:
     """A timeout, a dropped connection, a 408/429/5xx — or an answer that did not parse,
     which the model may well get right the second time. Never a 4xx refusal: a bad key
     or an empty account answers the same way three times over."""
-    return worth_retrying(exc, (APIConnectionError, json.JSONDecodeError))
+    return worth_retrying(exc, (APIConnectionError, ValueError))
 
 
 # reraise: when the attempts run out, the caller gets the provider's own error rather than

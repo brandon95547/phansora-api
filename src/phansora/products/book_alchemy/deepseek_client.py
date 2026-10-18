@@ -154,7 +154,7 @@ class DeepSeekClient:
                         # be both cut off AND carry a literal backslash copied out of the
                         # source, and only the loose parser fixes the second.
                         return _parse_json_loose(repaired)
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001, S110 — the original error is raised next
                         pass
                 raise
         raise last_err  # pragma: no cover

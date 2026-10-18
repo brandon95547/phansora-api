@@ -1,26 +1,21 @@
 """Chrono-Origin FastAPI entrypoint."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-import asyncio  # noqa: E402
-
-from fastapi import Depends, FastAPI, HTTPException  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 
-from .config import get_settings  # noqa: E402
-from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest  # noqa: E402
-from .pipeline.orchestrator import TraceOrchestrator  # noqa: E402
-from .services.cache import delete_cached  # noqa: E402
-from .services.job_manager import JobManager  # noqa: E402
+from .config import get_settings
+from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest
+from .pipeline.orchestrator import TraceOrchestrator
+from .services.cache import delete_cached
+from .services.job_manager import JobManager
 
 logger = logging.getLogger("chrono-origin")
 

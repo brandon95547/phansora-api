@@ -23,6 +23,7 @@ reasoning as config.llm_max_workers elsewhere.
 """
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -32,6 +33,8 @@ from . import extraction, neutrality, report
 from .config import Config
 from .source_profiler import profile_sources
 from .text_cleaner import clean_extracted_text, needs_cleanup
+
+logger = logging.getLogger("research_atlas.pipeline")
 
 
 def chunk_source(text: str, max_chars: int, overlap_paragraphs: int = 1) -> List[str]:
@@ -82,7 +85,7 @@ def run_pipeline(
     if not resolved:
         raise ValueError("No usable sources were supplied.")
     labels = [s["label"] for s in resolved]
-    print(f"[ATLAS] {len(resolved)} source(s): {', '.join(labels)}")
+    logger.info("%d source(s): %s", len(resolved), ", ".join(labels))
 
     # 2. Repair extraction damage, but only where there is damage to repair. A clean
     #    article costs a regex scan instead of an LLM pass.
@@ -94,7 +97,7 @@ def run_pipeline(
                     src["text"], client, chunk_size=config.cleanup_chunk_size
                 ) or src["text"]
             else:
-                print(f"[ATLAS] {src['label']}: undamaged (score {score:.2f}), skipping cleanup")
+                logger.info("%s: undamaged (score %.2f), skipping cleanup", src["label"], score)
 
     # 3. Describe each source's FORM (transcript, filing, article). Descriptive only --
     #    the Source Index prints it and nothing weighs it.
@@ -107,7 +110,7 @@ def run_pipeline(
                 max_workers=config.llm_max_workers,
             )
         except Exception as e:  # noqa: BLE001 -- a missing profile costs a label, not the run
-            print(f"[ATLAS] source profiling failed, continuing without it: {e}")
+            logger.warning("Source profiling failed, continuing without it: %s", e, exc_info=True)
 
     # 4. MAP. Every unit is (label, chunk); the label rides along so the extracted
     #    record can be attributed by code rather than by the model.
@@ -115,7 +118,7 @@ def run_pipeline(
     for src in resolved:
         for chunk in chunk_source(src["text"], max_chars, config.overlap_paragraphs):
             units.append((src["label"], chunk))
-    print(f"[ATLAS] extracting from {len(units)} chunk(s) across {len(resolved)} source(s)")
+    logger.info("Extracting from %d chunk(s) across %d source(s)", len(units), len(resolved))
 
     per_chunk: List[Tuple[str, Dict]] = []
     with ThreadPoolExecutor(max_workers=max(1, config.llm_max_workers)) as pool:
@@ -127,40 +130,39 @@ def run_pipeline(
             try:
                 rec = fut.result()
             except Exception as e:  # noqa: BLE001
-                print(f"[ATLAS] chunk extraction failed for {label}: {e}")
+                logger.warning("Chunk extraction failed for %s: %s", label, e, exc_info=True)
                 continue
             if rec:
                 per_chunk.append((label, rec))
-    print(f"[ATLAS] {len(per_chunk)}/{len(units)} chunk(s) produced a record")
+    logger.info("%d/%d chunk(s) produced a record", len(per_chunk), len(units))
 
     # 5. REDUCE
     record = extraction.merge_extractions(per_chunk)
-    print(
-        f"[ATLAS] merged: {len(record['people'])} people, "
-        f"{len(record['organizations'])} organizations, {len(record['places'])} places, "
-        f"{len(record['timeline'])} timeline entries, {len(record['claims'])} claims, "
-        f"{len(record['relationships'])} relationships, "
-        f"{len(record['date_conflicts'])} date disagreement(s)"
+    logger.info(
+        "Merged: %d people, %d organizations, %d places, %d timeline entries, %d claims, "
+        "%d relationships, %d date disagreement(s)",
+        len(record["people"]), len(record["organizations"]), len(record["places"]),
+        len(record["timeline"]), len(record["claims"]), len(record["relationships"]),
+        len(record["date_conflicts"]),
     )
 
     # 6. Connective sections, over the merged skeleton rather than the raw text.
     connective, violations = extraction.build_connective_sections(client, record, labels)
     if violations:
-        print(f"[ATLAS] {len(violations)} characterization(s) redacted from the connective pass")
+        logger.info("%d characterization(s) redacted from the connective pass", len(violations))
 
     # 7. Render and audit. The audit runs on the finished document, so it also catches
     #    anything the renderer's own phrasing introduces.
     markdown = report.render_report(record, connective, labels, title=title, profiles=profiles)
     residual = report.audit_report(markdown, labels)
     if residual:
-        print("[ATLAS] NEUTRALITY WARNINGS IN FINAL REPORT:")
-        print(neutrality.summarize(residual))
+        logger.warning("Neutrality warnings in the final report:\n%s", neutrality.summarize(residual))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(markdown, encoding="utf-8")
 
     elapsed = time.time() - started
-    print(f"[ATLAS] report written to {out_path} in {elapsed:.1f}s")
+    logger.info("Report written to %s in %.1fs", out_path, elapsed)
 
     return {
         # The Node worker treats a result without `ok` as a failed run, and the HTTP

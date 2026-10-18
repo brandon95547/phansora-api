@@ -10,10 +10,13 @@ missing optional package (e.g. MOBI support) never breaks importing this module.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+log = logging.getLogger("book_alchemy.parsers")
 
 
 @dataclass
@@ -281,37 +284,36 @@ def _parse_html(raw: str, title: str) -> ParsedDoc:
 def _parse_url(url: str, title: str) -> ParsedDoc:
     if not url:
         raise UnsupportedSourceError("No URL provided.")
-    # Prefer trafilatura's main-content extraction; fall back to raw HTML parse.
-    html = None
+    # Fetched through safe_fetch and nothing else: http(s) only, public addresses only,
+    # re-checked on every redirect. This was urllib.request.urlopen, whose default opener
+    # honours file:// — a `url` of file:///var/www/phansora-api/.env parsed this server's
+    # secrets into the caller's book — and after that fix trafilatura.fetch_url still ran
+    # FIRST, checking no address at all, so a link to anything this host could reach
+    # (another local service, a metadata endpoint) was read and handed back as the book.
+    from phansora.shared.net.safe_fetch import UnsafeUrlError, fetch_text
+
+    try:
+        html = fetch_text(url, user_agent="Mozilla/5.0 BookAlchemy", timeout=30)
+    except UnsafeUrlError as exc:
+        # Re-raised as the pipeline's own input error so it reaches the reader as
+        # "that link cannot be used" rather than as an unhandled 500. The message
+        # is this server's own words, naming only what the caller already sent.
+        raise UnsupportedSourceError(str(exc)) from exc
+
+    # Prefer trafilatura's main-content extraction; fall back to a raw HTML parse.
     try:
         import trafilatura  # lazy
 
-        html = trafilatura.fetch_url(url)
-        if html:
-            extracted = trafilatura.extract(
-                html, include_comments=False, include_tables=False, favor_recall=True
-            )
-            if extracted and extracted.strip():
-                doc = _parse_plain(extracted, title)
-                doc.title = title or url
-                return doc
-    except Exception:
-        pass
-
-    if html is None:
-        # Was urllib.request.urlopen, whose default opener honours file:// — so a
-        # `url` of file:///var/www/phansora-api/.env parsed this server's secrets
-        # into the caller's book. safe_fetch allows only http(s) and only public
-        # addresses, re-checked on every redirect.
-        from phansora.shared.net.safe_fetch import UnsafeUrlError, fetch_text
-
-        try:
-            html = fetch_text(url, user_agent="Mozilla/5.0 BookAlchemy", timeout=30)
-        except UnsafeUrlError as exc:
-            # Re-raised as the pipeline's own input error so it reaches the reader as
-            # "that link cannot be used" rather than as an unhandled 500. The message
-            # is this server's own words, naming only what the caller already sent.
-            raise UnsupportedSourceError(str(exc)) from exc
+        extracted = trafilatura.extract(
+            html, include_comments=False, include_tables=False, favor_recall=True
+        )
+    except Exception:  # noqa: BLE001 — the raw parse below still reads the page
+        log.warning("trafilatura could not extract %s; reading the raw HTML instead", url, exc_info=True)
+        extracted = None
+    if extracted and extracted.strip():
+        doc = _parse_plain(extracted, title)
+        doc.title = title or url
+        return doc
     return _parse_html(html, title or url)
 
 
@@ -392,8 +394,8 @@ def _parse_epub(path: Optional[str], title: str) -> ParsedDoc:
         t = book.get_metadata("DC", "title")
         if t and t[0]:
             meta_title = t[0][0]
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — the caller's title, or none, still names it
+        log.debug("EPUB title metadata unreadable in %s", path, exc_info=True)
 
     blocks: list[Block] = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
