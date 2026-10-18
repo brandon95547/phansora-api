@@ -465,6 +465,16 @@ class ImageAnswer(Lenient):
     decide: bool = False
 
 
+# A background design (image_guide.designs): what it looks like, the kinds it combines —
+# border, corners, texture, pattern, minimal, scene, emblem, abstract — and colors for its
+# preview, as #rrggbb.
+class ImageDesign(Lenient):
+    title: str = Field(default="", max_length=120)
+    description: str = Field(default="", max_length=400)
+    kinds: list[str] = Field(default_factory=list, max_length=4)
+    palette: list[str] = Field(default_factory=list, max_length=4)
+
+
 class ImageBrief(Lenient):
     book: IllustrationBook = Field(default_factory=IllustrationBook)
     # A cover's background (front or back), or a picture for a page inside.
@@ -475,6 +485,10 @@ class ImageBrief(Lenient):
     page_text: str = Field(default="", max_length=8000)
     # The look it will be drawn in, in words (an art style and a medium): already chosen.
     look: str = Field(default="", max_length=200)
+    # The page's size and shape, in words ("6 × 9 in, portrait"): already chosen.
+    size: str = Field(default="", max_length=80)
+    # The background design (or designs, combined) the author chose to begin from.
+    designs: list[ImageDesign] = Field(default_factory=list, max_length=3)
     answers: list[ImageAnswer] = Field(default_factory=list, max_length=12)
 
 
@@ -489,6 +503,16 @@ class ImageGuideResponse(Lenient):
     question: ImageQuestion | None = None
     # The picture as it stands, in plain words for the author.
     summary: str = ""
+
+
+class ImageDesignsRequest(ImageBrief):
+    # Designs already shown, for "Explore other designs": not suggested again.
+    exclude: list[str] = Field(default_factory=list, max_length=40)
+    count: int = Field(default=5, ge=4, le=6)
+
+
+class ImageDesignsResponse(Lenient):
+    designs: list[ImageDesign]
 
 
 class ImageComposeRequest(ImageBrief):

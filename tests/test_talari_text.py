@@ -1155,3 +1155,43 @@ def test_a_change_rewrites_the_description_and_drawing_again_needs_no_words(clie
     assert "The gate at noon." in deepseek.calls[0]["user"] and "Make the lighting darker" in deepseek.calls[0]["user"]
     again = client.post("/users/7/images/compose", json={**BRIEF, "previous": "The gate at noon."}).json()
     assert again["prompt"] == "The gate at noon." and len(deepseek.calls) == 1
+
+
+def test_background_designs_are_made_for_the_book_and_its_look(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"designs": [
+        {"title": "Flowing dragon corner ornaments", "description": "Coiling dragons in each corner.", "kinds": ["corners", "nonsense"], "palette": ["#1f3b2d", "#c9a227", "red"]},
+        {"title": "Flowing dragon corner ornaments", "description": "The same again.", "kinds": ["corners"]},
+        {"title": "Patterned parchment", "description": "Soft parchment with a faint dragon-scale pattern.", "kinds": ["texture", "pattern"], "palette": []},
+        {"title": "Old map", "kinds": []},
+        {"title": "The prompt seed", "kinds": ["scene"]},
+        {"title": "Ornamental dragon emblem", "description": "A round medallion.", "kinds": ["emblem"]},
+    ]}]
+    body = {**BRIEF, "book": {"title": "Dragons of the East"}, "size": "6 × 9 in, portrait", "exclude": ["Old map"], "count": 4}
+    response = client.post("/users/7/images/designs", json=body)
+    assert response.status_code == 200, response.text
+    designs = response.json()["designs"]
+    assert [d["title"] for d in designs] == ["Flowing dragon corner ornaments", "Patterned parchment", "Ornamental dragon emblem"]
+    assert designs[0]["kinds"] == ["corners"] and designs[0]["palette"] == ["#1f3b2d", "#c9a227"]
+    user = deepseek.calls[0]["user"]
+    assert "Dragons of the East" in user and "Art Nouveau, watercolor" in user and "6 × 9 in, portrait" in user
+    assert "corner ornaments" in user and "Old map" in user and "calm area for the title" in user
+
+
+def test_after_a_design_the_questions_are_about_what_it_needs(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    design = {"title": "Flowing dragon corner ornaments", "description": "Coiling dragons in each corner.", "kinds": ["corners"]}
+    deepseek.replies = [{"question": {"id": "reach", "text": "How far should the dragons reach in?", "suggestions": ["Just the corners", "A third of the way"]}, "summary": "Dragons in the corners."}]
+    client.post("/users/7/images/guide", json={**BRIEF, "designs": [design]})
+    user = deepseek.calls[0]["user"]
+    assert "THE BACKGROUND DESIGN THE AUTHOR CHOSE" in user and "how far in they reach" in user
+    assert "never about the look, the size or shape of the page" in user
+    deepseek.replies = [{"prompt": "Four coiling dragons in the corners of a pale ground.", "caption": "Dragon corners", "summary": "Dragons in the corners.", "shape": "portrait"}]
+    client.post("/users/7/images/compose", json={**BRIEF, "designs": [design]})
+    rules = deepseek.calls[1]["user"]
+    assert "ornaments in the corners only" in rules and "Keep the open part of the page plain and calm" in rules
+    assert "No figures, creatures or scenery beyond the decoration itself." in rules
+
+
+def test_with_no_design_yet_a_background_asks_what_kind_it_is(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"question": {"id": "kind", "text": "What kind of background?", "suggestions": ["A border"]}, "summary": ""}]
+    client.post("/users/7/images/guide", json=BRIEF)
+    assert "a decorative border, corner ornaments, a texture" in deepseek.calls[0]["user"]

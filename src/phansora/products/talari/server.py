@@ -87,6 +87,8 @@ from .schemas import (
     ImageBrief,
     ImageComposeRequest,
     ImageComposeResponse,
+    ImageDesignsRequest,
+    ImageDesignsResponse,
     ImageGuideResponse,
     LabOptions,
     LabRequest,
@@ -369,6 +371,11 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def image_guide_next(user_id: str, body: ImageBrief) -> ImageGuideResponse:
         check_user(user_id)
         return await image_guide.guide(body)
+
+    @app.post("/users/{user_id}/images/designs", response_model=ImageDesignsResponse, response_model_by_alias=True)
+    async def image_designs(user_id: str, body: ImageDesignsRequest) -> ImageDesignsResponse:
+        check_user(user_id)
+        return await image_guide.designs(body)
 
     @app.post("/users/{user_id}/images/compose", response_model=ImageComposeResponse, response_model_by_alias=True)
     async def image_compose(user_id: str, body: ImageComposeRequest) -> ImageComposeResponse:

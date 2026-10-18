@@ -21,6 +21,7 @@ from .schemas import (
     IllustrationPromptsRequest,
     ImageBrief,
     ImageComposeRequest,
+    ImageDesignsRequest,
     Rewrite,
     SourceChapterText,
 )
@@ -643,6 +644,29 @@ IMAGE_KINDS = {
     ("interior", "media"): "a picture placed on a page of the book, beside or over its text",
 }
 
+# The kinds of background design — design categories, not looks: what each one is, and what
+# the follow-up questions for it are about.
+DESIGN_KINDS = {
+    "border": "a decorative border or frame around the edges, the middle left open",
+    "corners": "ornaments in the corners only, the rest of the page open",
+    "texture": "a surface or material across the whole page (paper, parchment, linen, stone, leather…), with no objects",
+    "pattern": "a repeating pattern of small motifs across the page",
+    "minimal": "a minimal ground: a soft gradient or a few flat fields of color",
+    "scene": "a full illustrated scene, edge to edge",
+    "emblem": "a single central emblem or medallion on a plain or textured ground",
+    "abstract": "abstract shapes, strokes and color, nothing recognizable",
+}
+DESIGN_QUESTIONS = {
+    "border": "the border's motifs, how wide and how ornate it is, what fills the middle",
+    "corners": "the corner motifs, how far in they reach, all four corners or two",
+    "texture": "the material, its age and wear, its tone, how strong the grain is",
+    "pattern": "the motif, its scale and spacing, how much it stands out",
+    "minimal": "the colors, the direction and softness of the blend, any single accent",
+    "scene": "what it shows, the setting, the light and mood, the viewpoint",
+    "emblem": "the emblem's motif, its size, its framing, the ground behind it",
+    "abstract": "the shapes and their movement, how busy it is",
+}
+
 GUIDE_ROLE = (
     "You help an author describe one picture for their book, by asking them questions one at a time, like "
     "a good art director: plain, friendly and brief. The author never sees an image prompt and never needs "
@@ -654,9 +678,14 @@ def _image_card(request: ImageBrief) -> str:
     book = request.book
     card = _lines(("Title", book.title or "Untitled"), ("About the book", book.description), ("Tone", book.tone))
     kind = IMAGE_KINDS[(request.purpose, request.mode)]
-    parts = [f"THE BOOK\n{card}", f"THE PICTURE\nIt is {kind}."]
+    parts = [f"THE BOOK\n{card}", f"THE PICTURE\nIt is {kind}." + (f" The page is {request.size}." if request.size else "")]
     if request.look:
         parts.append(f"It will be drawn as {request.look}. That is decided: never ask about art style, medium, technique or artist.")
+    if request.designs:
+        lines = "\n".join(
+            f"- {d.title}: {d.description} ({', '.join(DESIGN_KINDS.get(k, k) for k in d.kinds)})" for d in request.designs
+        )
+        parts.append(f"THE BACKGROUND DESIGN THE AUTHOR CHOSE\n{lines}")
     if request.page_text.strip():
         parts.append(f"THE PAGE IT IS FOR\n{_clip(request.page_text, 3000)}")
     return "\n\n".join(parts)
@@ -672,8 +701,21 @@ def _image_answers(request: ImageBrief) -> str:
     return "\n".join(lines)
 
 
+def _design_needs(request: ImageBrief) -> str:
+    kinds = list(dict.fromkeys(k for d in request.designs for k in d.kinds if k in DESIGN_QUESTIONS))
+    return "; ".join(DESIGN_QUESTIONS[k] for k in kinds)
+
+
 def image_guide(request: ImageBrief, remaining: int) -> tuple[str, str]:
     cover = request.mode == "background" and request.purpose in ("cover", "back-cover")
+    words = ", where the title and words will sit, so that part stays calm" if cover else ""
+    if request.mode == "background" and request.designs:
+        # A chosen design: the questions are about what it needs, not about a subject.
+        order = f"what this design still needs: {_design_needs(request)}{words}, then the colors and the atmosphere"
+    elif request.mode == "background":
+        order = f"the kind of background (a decorative border, corner ornaments, a texture, a pattern, an emblem, a minimal ground or a full scene) and what it shows{words}, the mood and light, the colors"
+    else:
+        order = f"what the picture shows (its subject){words}, the setting, the mood and light, the composition or viewpoint, the colors"
     user = f"""{_image_card(request)}
 
 ASKED SO FAR
@@ -681,7 +723,7 @@ ASKED SO FAR
 
 Decide whether one more question would make this picture clearly better. Up to {remaining} more may be asked, but ask fewer when the picture is clear enough: every question costs the author a moment.
 
-If one is worth asking, ask the one that matters most of what is still open, usually in this order: what the picture shows (its subject){', where the title and words will sit, so that part of the picture stays calm' if cover else ''}, the setting, the mood and light, the composition or viewpoint, the colors. Never ask again about anything already asked, decided or answered, nor about what the book or the page already makes plain. Ask in under 15 words, in everyday language, with no jargon (never "prompt", "render", "aspect ratio", "composition", "seed", "style").
+If one is worth asking, ask the one that matters most of what is still open, usually in this order: {order}. Never ask again about anything already asked, decided or answered, nor about what the book or the page already makes plain, and never about the look, the size or shape of the page, or what the picture is for: those are decided. Ask in under 15 words, in everyday language, with no jargon (never "prompt", "render", "aspect ratio", "composition", "seed", "style").
 
 Give 3 or 4 suggested answers that fit this book, each a concrete choice in 2 to 8 words, different from one another.
 
@@ -689,6 +731,24 @@ Also write "summary": the picture as it now stands, in one or two plain sentence
 
 Return a JSON object: {{"question": {{"id": "a short-kebab-case name for what it asks about", "text": "the question", "suggestions": ["…", "…", "…"]}} or null when nothing more is worth asking, "summary": "…"}}"""
     return GUIDE_ROLE, user
+
+
+def image_designs(request: ImageDesignsRequest) -> tuple[str, str]:
+    cover = request.purpose in ("cover", "back-cover")
+    kinds = "\n".join(f"- {k}: {v}" for k, v in DESIGN_KINDS.items())
+    avoid = ("\n\nAlready suggested, so suggest none of these again or anything close to them: " + "; ".join(request.exclude)) if request.exclude else ""
+    room = " Every design leaves a calm area for the title and the author's name." if cover else ""
+    user = f"""{_image_card(request)}
+
+Recommend {request.count} background designs for it, made for this book: its title and subject, and the look it is drawn in — an Art Nouveau watercolor and a minimalist design should get very different suggestions. A background is often a decorative design rather than a picture of the book's subject: borders, corner ornaments, textures, patterns, emblems. A full scene can be one of them.{room}
+
+The kinds of design:
+{kinds}
+
+Make them varied: at least three different kinds among them, never two alike, and at least two that are not a picture of the subject. A design may combine kinds (a textured parchment with corner ornaments).{avoid}
+
+Return a JSON object: {{"designs": [{{"title": "the design in 3 to 7 words", "description": "one plain sentence for the author: what it looks like", "kinds": ["one to three of: border, corners, texture, pattern, minimal, scene, emblem, abstract"], "palette": ["three colors as #rrggbb that suit it and the look"]}}]}}"""
+    return ROLE, user
 
 
 def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
@@ -700,8 +760,16 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
     ]
     if cover:
         rules.append("Keep the area where the words will sit calm and uncluttered, as the answers say (else the upper third).")
+    kinds = {k for d in request.designs for k in d.kinds}
     if request.mode == "background":
-        rules.append("It fills the whole page edge to edge: a full scene, with nothing important at the very edges, which are trimmed.")
+        rules.append("It fills the whole page edge to edge, with nothing important at the very edges, which are trimmed.")
+        for kind in sorted(kinds):
+            if kind in DESIGN_KINDS:
+                rules.append(f"It is {DESIGN_KINDS[kind]}.")
+        if kinds & {"border", "corners", "emblem"}:
+            rules.append("Keep the open part of the page plain and calm, a flat or softly textured ground, so words can sit on it.")
+        if kinds and not kinds & {"scene", "emblem"}:
+            rules.append("No figures, creatures or scenery beyond the decoration itself.")
     change = ""
     if request.previous.strip():
         change = f"""
