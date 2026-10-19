@@ -112,7 +112,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "color-field": ("abstract-expressionism", "color field painting, broad expanses of flat soaked color, soft edges, meditative calm"),
     "organic-abstraction": ("abstract", "organic abstraction, flowing biomorphic shapes, natural curves, soft layered color"),
     "lyrical-abstraction": ("abstract", "lyrical abstraction, loose poetic brushwork, luminous washes, free flowing color"),
-    "monochromatic-minimalism": ("minimalism", "monochromatic minimalism, one color in subtle tonal variations, a quiet near-empty composition"),
     "hard-edge-painting": ("minimalism", "hard-edge minimalism, crisp sharp-edged shapes of flat color, high contrast, clean abrupt transitions"),
     "vienna-secession": ("art-nouveau", "Vienna Secession style, geometric ornament, gold leaf mosaics, flat stylized figures, decorative patterning"),
     "glasgow-style": ("art-nouveau", "Glasgow style, elongated vertical lines, stylized roses, a restrained palette of mauve and green, delicate geometric ornament"),
