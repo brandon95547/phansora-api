@@ -117,7 +117,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "streamline-moderne": ("art-deco", "streamline moderne, sleek aerodynamic curves, horizontal speed lines, polished chrome, nautical motifs"),
     "egyptian-revival": ("art-deco", "Egyptian revival art deco, lotus and scarab motifs, pyramids, gold, lapis and black, symmetrical stylized figures"),
     "rococo": ("classical", "Rococo painting, playful pastel colors, light airy brushwork, ornate scrolls, romantic garden scenes"),
-    "neoclassicism": ("classical", "Neoclassical painting, clean precise lines, calm restrained composition, classical antiquity, cool even light"),
     "rubber-hose": ("cartoon", "rubber hose cartoon, 1930s animation, noodle limbs, pie-cut eyes, white gloves, muted vintage color"),
     "storybook-cartoon": ("cartoon", "storybook cartoon illustration, gentle rounded characters, soft textured color, cozy picture-book charm"),
     "modern-cartoon": ("cartoon", "modern cartoon style, flat vector shapes, thick clean lines, bold saturated colors, simple geometric characters"),
