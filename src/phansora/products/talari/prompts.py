@@ -13,6 +13,7 @@ from collections.abc import Sequence
 
 from .schemas import (
     AnalyzeRequest,
+    BackgroundChoicesRequest,
     Blueprint,
     BlueprintRequest,
     BlueprintSource,
@@ -667,6 +668,29 @@ DESIGN_QUESTIONS = {
     "abstract": "the shapes and their movement, how busy it is",
 }
 
+# What a background is (the app's model.js BACKGROUND_TYPES and BACKGROUND_TEXTURES, by
+# id): its type, then its texture — set choices the author picks, never written here.
+BACKGROUND_TYPES = {
+    "atmospheric": "light and mood more than things: mist, haze, glow, smoke, soft depths of shadow",
+    "scenic": "a place seen whole: a landscape, a sky, an interior",
+    "abstract": "shapes, strokes and color, nothing recognizable",
+    "geometric": "geometric shapes, lines and repeating forms",
+    "decorative": "ornament: borders, flourishes, motifs, filigree",
+    "material": "a surface or material across the whole page, with no objects",
+}
+BACKGROUND_TEXTURES = {
+    "smooth": "smooth and even, with no grain",
+    "paper": "paper and parchment",
+    "canvas": "canvas and woven fabric",
+    "leather": "leather",
+    "wood": "wood and its grain",
+    "stone": "stone and marble",
+    "metallic": "metal with a metallic sheen",
+    "painted": "a painted, brushed surface",
+    "distressed": "distressed: aged, worn and scratched",
+    "organic": "organic matter: leaves, moss, bark, petals",
+}
+
 GUIDE_ROLE = (
     "You help an author describe one picture for their book, by asking them questions one at a time, like "
     "a good art director: plain, friendly and brief. The author never sees an image prompt and never needs "
@@ -676,9 +700,19 @@ GUIDE_ROLE = (
 
 def _image_card(request: ImageBrief) -> str:
     book = request.book
-    card = _lines(("Title", book.title or "Untitled"), ("About the book", book.description), ("Tone", book.tone))
     kind = IMAGE_KINDS[(request.purpose, request.mode)]
-    parts = [f"THE BOOK\n{card}", f"THE PICTURE\nIt is {kind}." + (f" The page is {request.size}." if request.size else "")]
+    parts = [f"THE PICTURE\nIt is {kind}." + (f" The page is {request.size}." if request.size else "")]
+    # A background is made from what the author says of it, not from the book: the app sends
+    # no book for one, and then there is none here to draw on.
+    if book.title or book.description or book.tone:
+        card = _lines(("Title", book.title or "Untitled"), ("About the book", book.description), ("Tone", book.tone))
+        parts.insert(0, f"THE BOOK\n{card}")
+    background = [
+        f"Type: {BACKGROUND_TYPES[request.background_type]}." if request.background_type in BACKGROUND_TYPES else "",
+        f"Texture: {BACKGROUND_TEXTURES[request.texture]}." if request.texture in BACKGROUND_TEXTURES else "",
+    ]
+    if request.mode == "background" and any(background):
+        parts.append("THE BACKGROUND THE AUTHOR CHOSE\n" + "\n".join(x for x in background if x))
     if request.look:
         parts.append(f"It will be drawn as {request.look}. That is decided: never ask about art style, medium, technique or artist.")
     if request.designs:
@@ -691,12 +725,16 @@ def _image_card(request: ImageBrief) -> str:
     return "\n\n".join(parts)
 
 
+def _fits(request: ImageBrief) -> str:
+    return "this background" if request.mode == "background" and not (request.book.title or request.book.description) else "the book"
+
+
 def _image_answers(request: ImageBrief) -> str:
     if not request.answers:
         return "Nothing asked yet."
     lines = []
     for a in request.answers:
-        said = "(Let Talari decide: choose what suits the book best.)" if a.decide else a.answer
+        said = f"(Let Talari decide: choose what suits {_fits(request)} best.)" if a.decide else a.answer
         lines.append(f"- [{a.id}] {a.question}\n  {said}")
     return "\n".join(lines)
 
@@ -708,10 +746,15 @@ def _design_needs(request: ImageBrief) -> str:
 
 def image_guide(request: ImageBrief, remaining: int) -> tuple[str, str]:
     cover = request.mode == "background" and request.purpose in ("cover", "back-cover")
+    chosen = " Never ask about the type of background or its texture: the author chose them." if request.mode == "background" and (request.background_type or request.texture) else ""
     words = ", where the title and words will sit, so that part stays calm" if cover else ""
     if request.mode == "background" and request.designs:
         # A chosen design: the questions are about what it needs, not about a subject.
         order = f"what this design still needs: {_design_needs(request)}{words}, then the colors and the atmosphere"
+    elif request.mode == "background" and (request.background_type or request.texture):
+        # Its type and texture picked: the questions are about what they still leave open.
+        order = (f"what this background still needs for its type and texture — for a scenic one what it shows, for a decorative one its "
+                 f"motifs, for a material or a texture its wear and grain{words} — then the mood and light, then the colors")
     elif request.mode == "background":
         order = f"the kind of background (a decorative border, corner ornaments, a texture, a pattern, an emblem, a minimal ground or a full scene) and what it shows{words}, the mood and light, the colors"
     else:
@@ -723,9 +766,9 @@ ASKED SO FAR
 
 Decide whether one more question would make this picture clearly better. Up to {remaining} more may be asked, but ask fewer when the picture is clear enough: every question costs the author a moment.
 
-If one is worth asking, ask the one that matters most of what is still open, usually in this order: {order}. Never ask again about anything already asked, decided or answered, nor about what the book or the page already makes plain, and never about the look, the size or shape of the page, or what the picture is for: those are decided. Ask in under 15 words, in everyday language, with no jargon (never "prompt", "render", "aspect ratio", "composition", "seed", "style").
+If one is worth asking, ask the one that matters most of what is still open, usually in this order: {order}. Never ask again about anything already asked, decided or answered, nor about what the book or the page already makes plain, and never about the look, the size or shape of the page, or what the picture is for: those are decided.{chosen} Ask in under 15 words, in everyday language, with no jargon (never "prompt", "render", "aspect ratio", "composition", "seed", "style").
 
-Give 3 or 4 suggested answers that fit this book, each a concrete choice in 2 to 8 words, different from one another.
+Give 3 or 4 suggested answers that fit {_fits(request)}, each a concrete choice in 2 to 8 words, different from one another.
 
 Also write "summary": the picture as it now stands, in one or two plain sentences for the author, beginning "A" or "An" (e.g. "A misty forest at dawn, a small girl in a red coat at the edge of it."). Where the author let Talari decide, choose something fitting and include it. Never mention the art style, prompts or anything technical.
 
@@ -763,6 +806,12 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
     kinds = {k for d in request.designs for k in d.kinds}
     if request.mode == "background":
         rules.append("It fills the whole page edge to edge, with nothing important at the very edges, which are trimmed.")
+        if request.background_type in BACKGROUND_TYPES:
+            rules.append(f"It is {BACKGROUND_TYPES[request.background_type]}.")
+            if request.background_type in ("atmospheric", "abstract", "geometric", "material"):
+                rules.append("No figures, creatures or story scenes in it.")
+        if request.texture in BACKGROUND_TEXTURES:
+            rules.append(f"Its surface is {BACKGROUND_TEXTURES[request.texture]}.")
         for kind in sorted(kinds):
             if kind in DESIGN_KINDS:
                 rules.append(f"It is {DESIGN_KINDS[kind]}.")
@@ -786,7 +835,7 @@ Rewrite the description with this change made, keeping everything else as it was
 THE AUTHOR'S ANSWERS
 {_image_answers(request)}{change}
 
-Write the description an illustrator (an image model) will draw from, in one paragraph of at most 90 words. Where the author let Talari decide, choose what suits the book best.
+Write the description an illustrator (an image model) will draw from, in one paragraph of at most 90 words. Where the author let Talari decide, choose what suits {_fits(request)} best.
 {chr(10).join("- " + r for r in rules)}
 
 Return a JSON object with:
@@ -794,6 +843,22 @@ Return a JSON object with:
 - "caption": a short name for the picture, at most 6 words, for the author's list of pictures.
 - "summary": the picture in one or two plain sentences for the author, beginning "A" or "An", with nothing technical.
 - "shape": "portrait", "square" or "landscape" — the shape that suits the picture best."""
+    return ROLE, user
+
+
+def background_choices(request: BackgroundChoicesRequest) -> tuple[str, str]:
+    types = "\n".join(f"- {c.id}: {c.label}" for c in request.types)
+    textures = "\n".join(f"- {c.id}: {c.label}" for c in request.textures)
+    user = f"""An author described, in their own words, the background they want for a page:
+"{request.words.strip()}"
+
+Which of these types of background fit what they said? One or two, best first:
+{types}
+
+Which of these textures fit? Up to three, best first, or none when what they said needs no texture:
+{textures}
+
+Return a JSON object: {{"types": ["id", …], "textures": ["id", …]}}, using only the ids above."""
     return ROLE, user
 
 

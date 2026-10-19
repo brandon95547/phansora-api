@@ -75,6 +75,8 @@ from .errors import ServiceError
 from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    BackgroundChoicesRequest,
+    BackgroundChoicesResponse,
     BlueprintRequest,
     BlueprintResponse,
     ChapterRequest,
@@ -419,6 +421,12 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def image_guide_next(user_id: str, body: ImageBrief) -> ImageGuideResponse:
         check_user(user_id)
         return await image_guide.guide(body)
+
+    # A background described in the author's own words, matched to its types and textures.
+    @app.post("/users/{user_id}/images/background-choices", response_model=BackgroundChoicesResponse, response_model_by_alias=True)
+    async def image_background_choices(user_id: str, body: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
+        check_user(user_id)
+        return await image_guide.background_choices(body)
 
     @app.post("/users/{user_id}/images/designs", response_model=ImageDesignsResponse, response_model_by_alias=True)
     async def image_designs(user_id: str, body: ImageDesignsRequest) -> ImageDesignsResponse:

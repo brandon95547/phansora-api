@@ -19,6 +19,8 @@ from typing import Any
 from . import llm, prompts
 from .errors import ServiceError
 from .schemas import (
+    BackgroundChoicesRequest,
+    BackgroundChoicesResponse,
     ImageBrief,
     ImageComposeRequest,
     ImageComposeResponse,
@@ -77,6 +79,22 @@ async def guide(request: ImageBrief) -> ImageGuideResponse:
     summary = _text(data.get("summary"), 500)
     question = _question(data.get("question"), request) if remaining > 0 else None
     return ImageGuideResponse(question=question, summary=summary)
+
+
+async def background_choices(request: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
+    """The author's own words for a background matched to its set choices: the types and
+    textures that fit, best first, and only ever ones offered."""
+    system, user = prompts.background_choices(request)
+    data = await llm.ask_json(system, user, max_tokens=120, temperature=0.2)
+
+    def keep(found: Any, offered: list[str], most: int) -> list[str]:
+        picked = [x for x in (found if isinstance(found, list) else []) if isinstance(x, str) and x in offered]
+        return list(dict.fromkeys(picked))[:most]
+
+    return BackgroundChoicesResponse(
+        types=keep(data.get("types"), [c.id for c in request.types], 2),
+        textures=keep(data.get("textures"), [c.id for c in request.textures], 3),
+    )
 
 
 async def designs(request: ImageDesignsRequest) -> ImageDesignsResponse:
