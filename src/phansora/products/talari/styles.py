@@ -113,7 +113,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "organic-abstraction": ("abstract", "organic abstraction, flowing biomorphic shapes, natural curves, soft layered color"),
     "lyrical-abstraction": ("abstract", "lyrical abstraction, loose poetic brushwork, luminous washes, free flowing color"),
     "hard-edge-painting": ("minimalism", "hard-edge minimalism, crisp sharp-edged shapes of flat color, high contrast, clean abrupt transitions"),
-    "vienna-secession": ("art-nouveau", "Vienna Secession style, geometric ornament, gold leaf mosaics, flat stylized figures, decorative patterning"),
     "glasgow-style": ("art-nouveau", "Glasgow style, elongated vertical lines, stylized roses, a restrained palette of mauve and green, delicate geometric ornament"),
     "streamline-moderne": ("art-deco", "streamline moderne, sleek aerodynamic curves, horizontal speed lines, polished chrome, nautical motifs"),
     "egyptian-revival": ("art-deco", "Egyptian revival art deco, lotus and scarab motifs, pyramids, gold, lapis and black, symmetrical stylized figures"),

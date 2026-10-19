@@ -601,10 +601,10 @@ def test_an_enlargement_is_capped_at_twice(client: TestClient, network: Recorder
 def test_a_substyle_is_drawn_in_its_own_words_and_only_with_its_art_style() -> None:
     from phansora.products.talari.styles import look_text
 
-    assert look_text("art-nouveau", "watercolor", "vienna-secession").startswith("Vienna Secession style, geometric ornament")
-    assert "watercolor" in look_text("art-nouveau", "watercolor", "vienna-secession")
+    assert look_text("art-nouveau", "watercolor", "glasgow-style").startswith("Glasgow style, elongated vertical lines")
+    assert "watercolor" in look_text("art-nouveau", "watercolor", "glasgow-style")
     # Another art style's substyle, or none: the art style as it is.
-    assert look_text("art-deco", "auto", "vienna-secession") == look_text("art-deco", "auto")
+    assert look_text("art-deco", "auto", "glasgow-style") == look_text("art-deco", "auto")
     assert look_text("art-nouveau", "auto", None).startswith("art nouveau illustration")
 
 
