@@ -116,7 +116,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "glasgow-style": ("art-nouveau", "Glasgow style, elongated vertical lines, stylized roses, a restrained palette of mauve and green, delicate geometric ornament"),
     "streamline-moderne": ("art-deco", "streamline moderne, sleek aerodynamic curves, horizontal speed lines, polished chrome, nautical motifs"),
     "egyptian-revival": ("art-deco", "Egyptian revival art deco, lotus and scarab motifs, pyramids, gold, lapis and black, symmetrical stylized figures"),
-    "baroque": ("classical", "Baroque painting, dramatic chiaroscuro, rich deep color, dynamic movement, theatrical light"),
     "rococo": ("classical", "Rococo painting, playful pastel colors, light airy brushwork, ornate scrolls, romantic garden scenes"),
     "neoclassicism": ("classical", "Neoclassical painting, clean precise lines, calm restrained composition, classical antiquity, cool even light"),
     "rubber-hose": ("cartoon", "rubber hose cartoon, 1930s animation, noodle limbs, pie-cut eyes, white gloves, muted vintage color"),
