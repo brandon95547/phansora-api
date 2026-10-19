@@ -140,7 +140,6 @@ MEDIUMS: dict[str, str] = {
     "engraving": "copperplate engraving, dense fine parallel lines, etched texture",
     "woodcut": "woodcut print, bold carved lines, high-contrast black and white, rough wood grain",
     "collage": "paper collage, cut and torn paper pieces, layered textures, mixed media",
-    "digital-painting": "digital painting, smooth painterly rendering, rich lighting, polished detail",
 }
 
 
