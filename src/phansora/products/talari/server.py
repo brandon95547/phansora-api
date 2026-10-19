@@ -5,11 +5,14 @@ Illustrations, drawn by ComfyUI:
     GET  /status                                   is ComfyUI ready to draw, and if not, why
     POST /users/{user_id}/illustrations            draw one picture (about 85 s on the A4000)
     GET  /users/{user_id}/images/{name}            a picture drawn earlier
+    POST /users/{user_id}/upscale                  a picture enlarged by an upscaling model, for print
+                                                   (4x-UltraSharp, 4x NMKD-Siax, 4x-AnimeSharp)
 
 The ComfyUI lab, for the styleguide's test page — every workflow input passed through as
 given, open only to the accounts in TALARI_LAB_USERS (and the app's internal key):
 
-    GET  /users/{user_id}/lab/options              the models, samplers, schedulers, style files
+    GET  /users/{user_id}/lab/options              the models, samplers, schedulers, style files,
+                                                   and which upscalers ComfyUI has
     POST /users/{user_id}/lab/illustrations        draw one picture with exactly these settings
 
 Text, written by DeepSeek (writing.py), and imported documents (sources.py):
@@ -45,7 +48,10 @@ which is why the id is also checked for shape before it becomes part of a path.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
+import io
 import logging
 import re
 import shutil
@@ -62,7 +68,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from phansora.shared.auth import enforce_user_scope
 
 from . import enlarge, image_guide, library, material, sources, writing
-from .comfy import ComfyUI
+from .comfy import UPSCALE_MAX_SIDE, ComfyUI
 from .config import Settings, load_settings
 from .downloads import download_message
 from .errors import ServiceError
@@ -93,6 +99,8 @@ from .schemas import (
     LabOptions,
     LabRequest,
     LabResponse,
+    UpscaleRequest,
+    UpscaleResponse,
     RefineRequest,
     RefineResponse,
     ReviseRequest,
@@ -109,6 +117,17 @@ IMAGE_NAME = re.compile(r"^[0-9a-f]{32}\.(png|jpg)$")
 ORIGINAL_NAME = re.compile(r"^[0-9a-f]{64}\.(pdf|epub|docx|txt|md)$")
 # A page of a kept PDF, as a picture: 2× — 144 dpi, enough to read it on screen.
 PAGE_ZOOM = 2
+
+
+def _picture_size(data: bytes) -> tuple[int, int]:
+    """A picture's width and height, or (0, 0) when it is not one PIL can read."""
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(data)) as picture:
+            return picture.width, picture.height
+    except (UnidentifiedImageError, OSError, ValueError):
+        return 0, 0
 
 
 def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
@@ -156,6 +175,35 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
         return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
+
+    # A picture enlarged with an upscaling model on ComfyUI (comfy.UPSCALERS), for print: one
+    # of the user's pictures, by name, or one sent. The result is a new picture of theirs.
+    @app.post("/users/{user_id}/upscale", response_model=UpscaleResponse, response_model_by_alias=True)
+    async def upscale(user_id: str, body: UpscaleRequest, request: Request) -> UpscaleResponse:
+        folder = user_images(user_id)
+        if body.name:
+            path = folder / body.name
+            if not IMAGE_NAME.match(body.name) or not path.is_file():
+                raise HTTPException(status_code=404, detail="That picture is not one of yours.")
+            picture = path.read_bytes()
+        else:
+            try:
+                picture = base64.b64decode(body.image or "", validate=True)
+            except (binascii.Error, ValueError):
+                raise HTTPException(status_code=422, detail="The picture could not be read.") from None
+        width, height = await asyncio.to_thread(_picture_size, picture)
+        if not width:
+            raise HTTPException(status_code=422, detail="That is not a picture this can enlarge (PNG, JPEG or WebP).")
+        if max(width, height) * body.scale > UPSCALE_MAX_SIDE:
+            raise ServiceError(
+                f"{width} × {height} enlarged {body.scale:g}× would be over {UPSCALE_MAX_SIDE} pixels across; enlarge it less.", status=422
+            )
+        image, workflow = await request.app.state.comfy.upscale(picture, body.model, body.scale)
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{uuid.uuid4().hex}.png"
+        (folder / name).write_bytes(image)
+        out_width, out_height = await asyncio.to_thread(_picture_size, image)
+        return UpscaleResponse(src=f"/talari/users/{user_id}/images/{name}", width=out_width, height=out_height, model=body.model, workflow=workflow)
 
     # --- the ComfyUI lab --------------------------------------------------------------
 

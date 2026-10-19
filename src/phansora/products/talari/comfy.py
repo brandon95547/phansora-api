@@ -24,7 +24,7 @@ import httpx
 
 from .config import Settings
 from .errors import NotConfigured, ServiceError
-from .schemas import IllustrationRequest, LabOptions, LabRequest
+from .schemas import IllustrationRequest, LabOptions, LabRequest, Upscaler
 from .styles import build_prompts
 
 POLL_INTERVAL_S = 1.0
@@ -46,6 +46,36 @@ TEXT_TOKENS = ("%prompt%", "%negative%", "%checkpoint%", "%sampler%", "%schedule
 
 # What a reference picture's bytes have to start with: PNG, JPEG, WebP.
 _IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8", "jpg"), (b"RIFF", "webp"))
+
+# The upscaling models, for print: ESRGAN models in ComfyUI's models/upscale_models (the
+# app's docker/comfyui/fetch_models.py fetches them), each enlarging 4× and redrawing fine
+# detail as it goes, where a plain resize only blurs it larger. id → (file, name).
+UPSCALERS: dict[str, tuple[str, str]] = {
+    "ultrasharp": ("4x-UltraSharp.pth", "4x-UltraSharp"),
+    "nmkd-siax": ("4x_NMKD-Siax_200k.pth", "4x NMKD-Siax"),
+    "animesharp": ("4x-AnimeSharp.pth", "4x-AnimeSharp"),
+}
+UPSCALE_FACTOR = 4
+# The longest side a picture may be enlarged to: a large cover with its bleed at 300 dpi is
+# about 3400 pixels; this leaves room, and keeps one picture within the GPU's reach.
+UPSCALE_MAX_SIDE = 8192
+
+
+def upscale_workflow(image: str, model_file: str, scale: float) -> dict[str, Any]:
+    """Enlarge an uploaded picture with an upscaling model (UpscaleModelLoader,
+    ImageUpscaleWithModel, which works in tiles), then — for less than the model's 4× —
+    scale it back down with Lanczos (ImageScaleBy)."""
+    workflow: dict[str, Any] = {
+        "1": {"class_type": "LoadImage", "inputs": {"image": image}},
+        "2": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": model_file}},
+        "3": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["2", 0], "image": ["1", 0]}},
+    }
+    out = ["3", 0]
+    if scale < UPSCALE_FACTOR:
+        workflow["4"] = {"class_type": "ImageScaleBy", "inputs": {"image": ["3", 0], "upscale_method": "lanczos", "scale_by": scale / UPSCALE_FACTOR}}
+        out = ["4", 0]
+    workflow["9"] = {"class_type": "SaveImage", "inputs": {"images": out, "filename_prefix": "talari-upscale"}}
+    return workflow
 
 
 def dimensions(aspect: float, base: int) -> tuple[int, int]:
@@ -481,6 +511,7 @@ class ComfyUI:
             schedulers=await self._choices("KSampler", "scheduler") or [],
             style_ready=not missing,
             style_missing=missing,
+            upscalers=await self.upscalers(),
             defaults={
                 "steps": settings.comfyui_steps,
                 "cfg": 1.0 if settings.comfyui_pipeline == "flux" else settings.comfyui_cfg,
@@ -528,6 +559,23 @@ class ComfyUI:
             style_image=style,
         )
         return await self.run(workflow), seed, width, height, workflow
+
+    # --- upscaling ----------------------------------------------------------------------
+
+    async def upscalers(self) -> list[Upscaler]:
+        """The upscaling models, and which of them this ComfyUI has."""
+        have = await self._choices("UpscaleModelLoader", "model_name") or []
+        return [Upscaler(id=key, label=label, file=file, installed=file in have) for key, (file, label) in UPSCALERS.items()]
+
+    async def upscale(self, picture: bytes, model: str, scale: float) -> tuple[bytes, dict[str, Any]]:
+        """Enlarge a picture with an upscaling model. Returns the PNG and the workflow."""
+        file, label = UPSCALERS[model]
+        have = await self._choices("UpscaleModelLoader", "model_name")
+        if have is not None and file not in have:
+            raise NotConfigured(f"ComfyUI does not have {label} ({file}) yet: it goes in its models/upscale_models folder.")
+        name = await self._upload_picture(base64.b64encode(picture).decode("ascii"), "picture", "upscale")
+        workflow = upscale_workflow(name, file, scale)
+        return await self.run(workflow), workflow
 
     async def _uso_missing(self) -> list[str]:
         """What a style picture needs and ComfyUI does not have: the files below, in the folders

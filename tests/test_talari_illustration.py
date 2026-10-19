@@ -614,3 +614,70 @@ def test_a_picture_is_drawn_in_its_substyle(client: TestClient, network: Recorde
     assert response.status_code == 200, response.text
     text = network.bodies("/prompt")[0]["prompt"]["2"]["inputs"]["text"]
     assert "golden age comic book art" in text and "bold inked outlines" not in text
+
+
+# --- upscaling, for print -------------------------------------------------------------
+
+UPSCALE_INFO = {"UpscaleModelLoader": {"input": {"required": {"model_name": [["4x_NMKD-Siax_200k.pth", "4x-UltraSharp.pth"], {}]}}}}
+
+
+def a_picture_of_theirs(tmp_path: Path, width: int = 64, height: int = 48) -> str:
+    name = "ab" * 16 + ".png"
+    folder = tmp_path / "talari" / "images" / "7"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_bytes(real_png(width, height))
+    return name
+
+
+def test_a_picture_is_enlarged_by_its_model_and_scaled_to_what_was_asked(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    name = a_picture_of_theirs(tmp_path)
+    enlarged = real_png(128, 96)
+    base = comfy(object_info=UPSCALE_INFO)
+    network.handler = lambda r: httpx.Response(200, content=enlarged) if r.url.path == "/view" else base(r)
+    response = client.post("/users/7/upscale", json={"model": "nmkd-siax", "scale": 2, "name": name})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["src"].startswith("/talari/users/7/images/") and (body["width"], body["height"]) == (128, 96) and body["model"] == "nmkd-siax"
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert workflow["2"]["inputs"]["model_name"] == "4x_NMKD-Siax_200k.pth"
+    assert workflow["3"]["class_type"] == "ImageUpscaleWithModel"
+    assert workflow["4"]["inputs"] == {"image": ["3", 0], "upscale_method": "lanczos", "scale_by": 0.5}
+    assert workflow["9"]["inputs"]["images"] == ["4", 0]
+    # The picture went to ComfyUI as an upload of its own.
+    assert any(b'filename="upscale-' in r.content for r in network.requests if r.url.path == "/upload/image")
+    assert saved_picture(tmp_path, body["src"]).size == (128, 96)
+
+
+def test_at_four_times_the_model_alone_enlarges_it_and_a_picture_can_be_sent(client: TestClient, network: Recorder) -> None:
+    import base64
+
+    network.handler = comfy(object_info=UPSCALE_INFO)
+    sent = base64.b64encode(real_png(32, 32)).decode()
+    response = client.post("/users/7/upscale", json={"model": "ultrasharp", "image": sent})
+    assert response.status_code == 200, response.text
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    assert "4" not in workflow and workflow["9"]["inputs"]["images"] == ["3", 0]
+
+
+def test_an_upscaler_comfyui_lacks_says_so(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    network.handler = comfy(object_info=UPSCALE_INFO)
+    response = client.post("/users/7/upscale", json={"model": "animesharp", "name": a_picture_of_theirs(tmp_path)})
+    assert response.status_code == 503 and "4x-AnimeSharp.pth" in response.json()["detail"]
+
+
+def test_upscaling_refuses_what_it_cannot_do(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    network.handler = comfy(object_info=UPSCALE_INFO)
+    assert client.post("/users/7/upscale", json={"model": "nmkd-siax", "name": "../../etc/passwd"}).status_code == 404
+    assert client.post("/users/7/upscale", json={"model": "nmkd-siax", "name": "cd" * 16 + ".png"}).status_code == 404
+    assert client.post("/users/7/upscale", json={"model": "nmkd-siax"}).status_code == 422
+    assert client.post("/users/7/upscale", json={"model": "waifu", "name": a_picture_of_theirs(tmp_path)}).status_code == 422
+    big = a_picture_of_theirs(tmp_path, 2100, 100)
+    response = client.post("/users/7/upscale", json={"model": "nmkd-siax", "scale": 4, "name": big})
+    assert response.status_code == 422 and "enlarge it less" in response.json()["detail"]
+    assert network.bodies("/prompt") == []
+
+
+def test_the_lab_says_which_upscalers_comfyui_has(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info={**LAB_INFO, **UPSCALE_INFO})
+    upscalers = lab_client(make_client).get("/users/7/lab/options").json()["upscalers"]
+    assert [(u["id"], u["installed"]) for u in upscalers] == [("ultrasharp", True), ("nmkd-siax", True), ("animesharp", False)]

@@ -596,6 +596,41 @@ class LabResponse(Model):
     workflow: dict[str, Any]
 
 
+class Upscaler(Model):
+    """An upscaling model (comfy.UPSCALERS): its id, its name, its file, and whether this ComfyUI has it."""
+
+    id: str
+    label: str
+    file: str
+    installed: bool
+
+
+class UpscaleRequest(Model):
+    """Enlarge a picture with an upscaling model on ComfyUI (POST /users/{id}/upscale)."""
+
+    model: Literal["ultrasharp", "nmkd-siax", "animesharp"]
+    # How much larger: the models enlarge 4×; less is that, scaled back down (Lanczos).
+    scale: float = Field(default=4.0, gt=1.0, le=4.0)
+    # The picture: one of the user's, by its file name, or one sent with the request (base64 of
+    # a PNG, JPEG or WebP).
+    name: str | None = Field(default=None, max_length=80)
+    image: str | None = Field(default=None, max_length=40_000_000)
+
+    @model_validator(mode="after")
+    def _one_picture(self) -> "UpscaleRequest":
+        if bool(self.name) == bool(self.image):
+            raise ValueError("Give the picture to enlarge: the name of one of yours, or the picture itself.")
+        return self
+
+
+class UpscaleResponse(Model):
+    src: str
+    width: int
+    height: int
+    model: str
+    workflow: dict[str, Any]
+
+
 class LabOptions(Model):
     """What this ComfyUI has to choose from, and what the lab starts with."""
 
@@ -608,3 +643,5 @@ class LabOptions(Model):
     style_ready: bool
     style_missing: list[str]
     defaults: dict[str, Any]
+    # The upscaling models, and which of them this ComfyUI has.
+    upscalers: list[Upscaler] = Field(default_factory=list)
