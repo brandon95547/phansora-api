@@ -637,6 +637,10 @@ class UpscaleRequest(Model):
     # a PNG, JPEG or WebP).
     name: str | None = Field(default=None, max_length=80)
     image: str | None = Field(default=None, max_length=40_000_000)
+    # How the enlargement is kept: "png" as ComfyUI makes it; "auto" a JPEG unless the picture
+    # has transparency — the app's print copies, a fraction of the PNG's size in a PDF. Either
+    # way a transparent picture keeps its transparency.
+    format: Literal["png", "auto"] = "png"
 
     @model_validator(mode="after")
     def _one_picture(self) -> "UpscaleRequest":

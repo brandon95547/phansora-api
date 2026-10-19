@@ -77,7 +77,10 @@ def load_settings() -> Settings:
         comfyui_url=(os.getenv("COMFYUI_URL", "").strip() or "http://127.0.0.1:8188").rstrip("/"),
         comfyui_checkpoint=os.getenv("COMFYUI_CHECKPOINT", "").strip(),
         comfyui_workflow=os.getenv("COMFYUI_WORKFLOW", "").strip(),
-        comfyui_base_size=_int("FLUX_SIZE", 1024),
+        # FLUX draws at about this size squared, in the picture's shape: 768 (0.6 megapixels)
+        # draws in about half the time of 1024 and still well; the app enlarges a picture for
+        # print when it is exported (up to 4×, 4x-UltraSharp), which covers any page at 200 DPI.
+        comfyui_base_size=_int("FLUX_SIZE", 768 if flux else 1024),
         # 20 is ComfyUI's own FLUX templates', and draws as well as 24 a sixth faster.
         comfyui_steps=_int("FLUX_STEPS", 20 if flux else 28),
         comfyui_cfg=_float("COMFYUI_CFG", 6.5),

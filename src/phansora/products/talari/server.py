@@ -132,6 +132,33 @@ def _picture_size(data: bytes) -> tuple[int, int]:
         return 0, 0
 
 
+def _kept_enlargement(original: bytes, enlarged: bytes, fmt: str) -> tuple[bytes, str]:
+    """An enlarged picture as it is kept, and its extension.
+
+    ComfyUI enlarges only a picture's colors, so a transparent picture's transparency is
+    enlarged here (Lanczos) and put back, as a PNG. With `auto` any other is kept as a JPEG
+    (quality 90, full color resolution): a fraction of the PNG's size, and a PDF carries it
+    as it is.
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(original)) as source:
+        has_alpha = source.mode in ("RGBA", "LA", "PA") or "transparency" in source.info
+        alpha = source.convert("RGBA").getchannel("A") if has_alpha else None
+    clear = alpha is not None and alpha.getextrema()[0] < 255
+    if not clear and fmt == "png":
+        return enlarged, "png"
+    out = io.BytesIO()
+    with Image.open(io.BytesIO(enlarged)) as big:
+        colors = big.convert("RGB")
+    if clear:
+        colors.putalpha(alpha.resize(colors.size, Image.Resampling.LANCZOS))
+        colors.save(out, "PNG")
+        return out.getvalue(), "png"
+    colors.save(out, "JPEG", quality=90, subsampling=0, optimize=True)
+    return out.getvalue(), "jpg"
+
+
 def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
     """Build the app. Tests pass their own settings and a fake HTTP transport."""
     settings = settings or load_settings()
@@ -179,7 +206,8 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
 
     # A picture enlarged with an upscaling model on ComfyUI (comfy.UPSCALERS), for print: one
-    # of the user's pictures, by name, or one sent. The result is a new picture of theirs.
+    # of the user's pictures, by name, or one sent. The result is a new picture of theirs,
+    # with the original's transparency, a JPEG when asked for `auto` and it has none.
     @app.post("/users/{user_id}/upscale", response_model=UpscaleResponse, response_model_by_alias=True)
     async def upscale(user_id: str, body: UpscaleRequest, request: Request) -> UpscaleResponse:
         folder = user_images(user_id)
@@ -201,8 +229,9 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
                 f"{width} × {height} enlarged {body.scale:g}× would be over {UPSCALE_MAX_SIDE} pixels across; enlarge it less.", status=422
             )
         image, workflow = await request.app.state.comfy.upscale(picture, body.model, body.scale)
+        image, ext = await asyncio.to_thread(_kept_enlargement, picture, image, body.format)
         folder.mkdir(parents=True, exist_ok=True)
-        name = f"{uuid.uuid4().hex}.png"
+        name = f"{uuid.uuid4().hex}.{ext}"
         (folder / name).write_bytes(image)
         out_width, out_height = await asyncio.to_thread(_picture_size, image)
         return UpscaleResponse(src=f"/talari/users/{user_id}/images/{name}", width=out_width, height=out_height, model=body.model, workflow=workflow)

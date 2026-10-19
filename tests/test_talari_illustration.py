@@ -659,6 +659,45 @@ def test_at_four_times_the_model_alone_enlarges_it_and_a_picture_can_be_sent(cli
     assert "4" not in workflow and workflow["9"]["inputs"]["images"] == ["3", 0]
 
 
+def test_a_print_copy_is_a_jpeg_and_a_transparent_picture_keeps_its_transparency(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    enlarged = real_png(128, 96)
+    base = comfy(object_info=UPSCALE_INFO)
+    network.handler = lambda r: httpx.Response(200, content=enlarged) if r.url.path == "/view" else base(r)
+    response = client.post("/users/7/upscale", json={"model": "ultrasharp", "scale": 2, "name": a_picture_of_theirs(tmp_path), "format": "auto"})
+    assert response.status_code == 200, response.text
+    src = response.json()["src"]
+    assert src.endswith(".jpg") and saved_picture(tmp_path, src).format == "JPEG"
+    assert client.get(src.removeprefix("/talari")).headers["content-type"] == "image/jpeg"
+
+    # ComfyUI hands back colors only: a cut-out's clear part is enlarged and put back.
+    cutout = Image.new("RGBA", (64, 48), (200, 120, 40, 255))
+    cutout.paste((0, 0, 0, 0), (0, 0, 32, 48))
+    sent = BytesIO()
+    cutout.save(sent, format="PNG")
+    name = "ef" * 16 + ".png"
+    (tmp_path / "talari" / "images" / "7" / name).write_bytes(sent.getvalue())
+    response = client.post("/users/7/upscale", json={"model": "ultrasharp", "scale": 2, "name": name, "format": "auto"})
+    assert response.status_code == 200, response.text
+    kept = saved_picture(tmp_path, response.json()["src"])
+    assert kept.format == "PNG" and kept.mode == "RGBA" and kept.size == (128, 96)
+    assert kept.getpixel((10, 50))[3] == 0 and kept.getpixel((110, 50))[3] == 255
+
+
+def test_pictures_are_drawn_at_768_unless_set_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+    from phansora.products.talari.config import load_settings
+
+    monkeypatch.delenv("FLUX_SIZE", raising=False)
+    monkeypatch.delenv("COMFYUI_PIPELINE", raising=False)
+    assert load_settings().comfyui_base_size == 768
+    assert dimensions(6.25 / 9.25, 768) == (640, 960)
+    monkeypatch.setenv("FLUX_SIZE", "1024")
+    assert load_settings().comfyui_base_size == 1024
+
+
 def test_an_upscaler_comfyui_lacks_says_so(client: TestClient, network: Recorder, tmp_path: Path) -> None:
     network.handler = comfy(object_info=UPSCALE_INFO)
     response = client.post("/users/7/upscale", json={"model": "animesharp", "name": a_picture_of_theirs(tmp_path)})
