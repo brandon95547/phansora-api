@@ -110,8 +110,6 @@ SUBSTYLES: dict[str, tuple[str, str]] = {
     "fauvism": ("expressionism", "fauvist painting, wild unnatural pure color, flat bold areas, loose expressive brushwork"),
     "neo-expressionism": ("expressionism", "neo-expressionist painting, crude raw figures, thick violent brushwork, vivid clashing color"),
     "color-field": ("abstract-expressionism", "color field painting, broad expanses of flat soaked color, soft edges, meditative calm"),
-    "metaphysical-art": ("surrealism", "metaphysical surrealist painting, empty arcaded squares, long dramatic shadows, mannequins, enigmatic stillness"),
-    "pop-surrealism": ("surrealism", "pop surrealism, glossy cartoonish figures in uncanny dreamlike scenes, saturated candy colors"),
     "organic-abstraction": ("abstract", "organic abstraction, flowing biomorphic shapes, natural curves, soft layered color"),
     "lyrical-abstraction": ("abstract", "lyrical abstraction, loose poetic brushwork, luminous washes, free flowing color"),
     "monochromatic-minimalism": ("minimalism", "monochromatic minimalism, one color in subtle tonal variations, a quiet near-empty composition"),
