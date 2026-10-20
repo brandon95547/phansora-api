@@ -1253,7 +1253,7 @@ def test_a_remix_prompt_says_what_changes_and_what_is_kept_with_what_the_author_
     assert response.status_code == 200, response.text
     user = deepseek.calls[0]["user"]
     assert "WHAT THE PICTURE SHOWS (as it was described)\nA green dragon curled on a rock." in user
-    assert "Transform this image into" in user and "preserve the original's subject, pose, anatomy, proportions" in user
+    assert "Transform this image into" in user and "Say to preserve the original's subject, pose." in user
     assert "- How realistic should the dragon be?\n  Detailed and lifelike" in user
     assert "- Should the light change too?\n  (Let Talari decide.)" in user
     assert "Make the change within Fantasy Art, watercolor" in user and "never a photograph" in user

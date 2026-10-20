@@ -828,7 +828,7 @@ THE AUTHOR'S CHANGE
 
 Write the prompt for that image model, in one paragraph of at most 90 words. It already has the picture, so write the change, not the picture:
 - Begin with what the picture becomes: "Transform this image into …" or "Make …".
-- Say to preserve the original's subject, pose, anatomy, proportions, composition, colors and distinctive features, except what the change alters.
+- Say to preserve the original's subject, pose.
 - Then what the change needs, concretely: surfaces, textures, materials, light, detail.
 - Name the subject only as the description above names it; never guess it.
 - Make the change within {look}: "more real" means more lifelike forms, textures and light as that look can show them — never a photograph, a 3D render or another art style. Leave out art style, medium and artist names: the look's own words are added after the prompt.
