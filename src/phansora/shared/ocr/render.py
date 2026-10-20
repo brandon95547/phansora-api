@@ -1,4 +1,4 @@
-# services/pdf_render.py
+# phansora/shared/ocr/render.py — a PDF's pages as pictures, for OCR (shared.ocr.pdf).
 
 from __future__ import annotations
 

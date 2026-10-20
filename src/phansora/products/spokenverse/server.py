@@ -10,7 +10,7 @@
 #
 # Notes:
 # - This file intentionally contains NO frontend code.
-# - PdfConverter loads .env from project root automatically (see pdf_pipeline.py).
+# - PdfConverter loads .env from project root automatically (see shared/ocr/pdf.py).
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from phansora.products.spokenverse.txt_to_voice.adapters.backend import (
     get_synthesizer,
     unavailable_reason,
 )
-from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
+from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig
 from phansora.products.spokenverse.txt_to_voice.pipeline import BatchConverter, TTSConfig
 from phansora.products.spokenverse import voices as voice_store
 

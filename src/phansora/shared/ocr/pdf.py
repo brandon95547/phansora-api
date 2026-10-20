@@ -1,15 +1,11 @@
-# src/txt_to_voice/pdf_pipeline.py
+# phansora/shared/ocr/pdf.py — a scanned PDF read into text, for every product.
 #
-# New flow (Option A):
 #   PDF -> render pages to images (PyMuPDF) -> OCR each page (Tesseract) ->
 #   batch OCR text -> DeepSeek Chat cleans/merges -> write final .txt
 #
-# System deps (Pop!_OS/Ubuntu):
-#   sudo apt update
-#   sudo apt install -y tesseract-ocr
-#
-# Python deps (venv):
-#   python -m pip install pymupdf pillow pytesseract aiohttp python-dotenv
+# SpokenVerse's /pdf-to-txt, Book Alchemy's scanned books and Talari's scanned imports all
+# read through here. System dependency: the tesseract binary (sudo apt install -y
+# tesseract-ocr); Python: pymupdf pillow pytesseract aiohttp.
 
 from __future__ import annotations
 
@@ -21,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
-from phansora.products.spokenverse.services.pdf_render import PdfRenderConfig, render_pdf_to_images_bytes
-from phansora.products.spokenverse.services.ocr_tesseract import TesseractOCRConfig, ocr_image_bytes
+from phansora.shared.ocr.render import PdfRenderConfig, render_pdf_to_images_bytes
+from phansora.shared.ocr.tesseract import TesseractOCRConfig, ocr_image_bytes
 from phansora.shared.ai.deepseek import DeepSeekChatConfig, clean_ocr_text
 from phansora.shared.utils.naming import sanitize_stem
 
@@ -66,11 +62,15 @@ class PdfToTxtConfig:
     # OCR speed
     ocr_concurrency: int = 4          # parallel OCR worker count
 
+    # Whose DeepSeek model cleans the text (shared.ai.models): the product reading the PDF,
+    # falling back to DEEPSEEK_MODEL.
+    model_var: str = "SPOKENVERSE_OCR_MODEL"
+
 
 class PdfConverter:
     def __init__(self, cfg: PdfToTxtConfig | None = None) -> None:
         self.cfg = cfg or PdfToTxtConfig()
-        self.chat_cfg = DeepSeekChatConfig.from_env(product_var="SPOKENVERSE_OCR_MODEL")
+        self.chat_cfg = DeepSeekChatConfig.from_env(product_var=self.cfg.model_var)
 
         self.ocr_cfg = TesseractOCRConfig(
             lang=self.cfg.tesseract_lang,
@@ -342,9 +342,10 @@ class PdfConverter:
                     max_output_tokens=self.cfg.max_output_tokens,
                 )
                 cleaned = (cleaned or "").strip()
-                cleaned_by_idx[i] = cleaned
                 # An empty answer is a failed call, not a result: leave it uncached
-                # so a resumed run asks again instead of inheriting the hole.
+                # so a resumed run asks again instead of inheriting the hole — and keep
+                # the pages as recognized, uncleaned, rather than lose them.
+                cleaned_by_idx[i] = cleaned or batch.strip()
                 if cleaned:
                     self._cache_write(path, cleaned)
             await _tick()
@@ -500,8 +501,9 @@ class PdfConverter:
             cache_dir.mkdir(parents=True, exist_ok=True)
         pdf_bytes = pdf_path.read_bytes()
 
-        # 1) Render PDF pages -> images
-        pages = render_pdf_to_images_bytes(pdf_bytes, cfg=self.render_cfg)
+        # 1) Render PDF pages -> images, in a thread: rendering a long scan is seconds of CPU
+        # that would otherwise stop the server's event loop (and its other requests).
+        pages = await asyncio.to_thread(render_pdf_to_images_bytes, pdf_bytes, cfg=self.render_cfg)
         if not pages:
             raise RuntimeError("No pages rendered from PDF.")
 
@@ -567,3 +569,29 @@ class PdfConverter:
             return 1
 
         return 0
+
+
+def explain_failure(exc: Exception) -> str:
+    """Turn an OCR failure into something the reader can act on.
+
+    Tesseract is a SYSTEM dependency (the `pytesseract` wheel is only a wrapper), so a host
+    that skipped it fails at the first scanned PDF with an internal message — "tesseract is
+    not installed or it's not in your PATH. See README file" — which tells the reader
+    nothing. Name the two setup faults explicitly instead; anything else keeps the original
+    text, which is usually a genuine per-document problem.
+    """
+    detail = str(exc).strip()
+    name = type(exc).__name__
+
+    if name == "TesseractNotFoundError" or "not installed or it's not in your PATH" in detail:
+        return (
+            "This PDF is scanned, and text recognition isn't available on the server right "
+            "now. Please contact support — the Tesseract OCR engine needs to be installed."
+        )
+    # Engine present but no language data: tessdata ships empty on some distros.
+    if "traineddata" in detail or "Error opening data file" in detail:
+        return (
+            "This PDF is scanned, and the server is missing the OCR language data needed to "
+            "read it. Please contact support — the Tesseract English language pack is missing."
+        )
+    return f"OCR failed for scanned PDF: {detail}"

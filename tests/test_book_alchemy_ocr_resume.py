@@ -14,8 +14,8 @@ import asyncio
 import pytest
 
 from phansora.products.book_alchemy import pipeline
-from phansora.products.spokenverse.txt_to_voice import pdf_pipeline
-from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig
+from phansora.shared.ocr import pdf as pdf_pipeline
+from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig
 
 
 def make_converter(**overrides) -> PdfConverter:
@@ -175,8 +175,10 @@ def test_empty_clean_result_is_not_cached(tmp_path, monkeypatch):
         return "   "
 
     monkeypatch.setattr(pdf_pipeline, "clean_ocr_text", empty)
-    asyncio.run(conv._clean_batches(["a"], "book.pdf", cache_dir=tmp_path))
+    kept = asyncio.run(conv._clean_batches(["a"], "book.pdf", cache_dir=tmp_path))
     assert list(tmp_path.glob("clean_*.txt")) == []
+    # The pages are kept as recognized, uncleaned, rather than lost.
+    assert kept == ["a"]
 
 
 # ------------------------------------------------- interrupted, not failed
@@ -224,7 +226,7 @@ def test_shutdown_turns_an_ocr_failure_into_a_resume(tmp_path, monkeypatch):
             raise RuntimeError("Tesseract died")
 
     monkeypatch.setattr(
-        "phansora.products.spokenverse.txt_to_voice.pdf_pipeline.PdfConverter", Boom
+        "phansora.shared.ocr.pdf.PdfConverter", Boom
     )
 
     with pytest.raises(pipeline.RetryableError):
@@ -249,7 +251,7 @@ def test_a_genuine_ocr_failure_still_fails_the_book(tmp_path, monkeypatch):
             raise RuntimeError("tesseract is not installed or it's not in your PATH")
 
     monkeypatch.setattr(
-        "phansora.products.spokenverse.txt_to_voice.pdf_pipeline.PdfConverter", Boom
+        "phansora.shared.ocr.pdf.PdfConverter", Boom
     )
 
     with pytest.raises(pipeline.TerminalError) as err:

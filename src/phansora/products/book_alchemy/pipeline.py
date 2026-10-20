@@ -46,6 +46,7 @@ from .parsers import ParsedDoc, ScannedPdfError, UnsupportedSourceError, parse_s
 from .sentences import complete_ending
 from .storage import session_audio_path
 from .validation import scrub_apparatus, validate_script
+from phansora.shared.ocr.pdf import explain_failure
 
 log = logging.getLogger("book_alchemy.pipeline")
 
@@ -505,16 +506,16 @@ def ocr_cache_dir(pdf_path: Path) -> Path:
 
 
 async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
-    """Run the existing SpokenVerse OCR pipeline on a scanned PDF and return a
-    ParsedDoc of the recovered text. Requires Tesseract (a SpokenVerse system
-    dependency) and DeepSeek; failures surface as a clear TerminalError."""
+    """Run the shared OCR (phansora.shared.ocr) on a scanned PDF and return a ParsedDoc of
+    the recovered text. Requires Tesseract (a system dependency) and DeepSeek; failures
+    surface as a clear TerminalError."""
     pid = int(project["id"])
     if not source_path:
         raise TerminalError("Scanned PDF but no source file is available for OCR.")
 
     await db.set_project(pid, stage="Reading scanned pages", progress=OCR_PROGRESS_FLOOR)
     try:
-        from phansora.products.spokenverse.txt_to_voice.pdf_pipeline import PdfConverter, PdfToTxtConfig  # lazy
+        from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig  # lazy
 
         pdf_path = Path(source_path)
         out_txt = pdf_path.with_suffix(".ocr.txt")
@@ -544,30 +545,8 @@ async def _ocr_pdf_to_doc(project: dict, source_path: Optional[str]):
         raise TerminalError(_ocr_error_message(exc)) from exc
 
 
-def _ocr_error_message(exc: Exception) -> str:
-    """Turn an OCR failure into something the reader can act on.
-
-    Tesseract is a SYSTEM dependency (the `pytesseract` wheel is only a wrapper), so a host
-    that skipped it fails at the first scanned PDF with an internal message — "tesseract is
-    not installed or it's not in your PATH. See README file" — which tells the reader of a
-    book nothing. Name the two setup faults explicitly instead; anything else keeps the
-    original text, which is usually a genuine per-document problem.
-    """
-    detail = str(exc).strip()
-    name = type(exc).__name__
-
-    if name == "TesseractNotFoundError" or "not installed or it's not in your PATH" in detail:
-        return (
-            "This PDF is scanned, and text recognition isn't available on the server right "
-            "now. Please contact support — the Tesseract OCR engine needs to be installed."
-        )
-    # Engine present but no language data: tessdata ships empty on some distros.
-    if "traineddata" in detail or "Error opening data file" in detail:
-        return (
-            "This PDF is scanned, and the server is missing the OCR language data needed to "
-            "read it. Please contact support — the Tesseract English language pack is missing."
-        )
-    return f"OCR failed for scanned PDF: {detail}"
+# What a reader is told when OCR fails (shared with the other products that read scans).
+_ocr_error_message = explain_failure
 
 
 # --------------------------------------------------------------- phase: analyze

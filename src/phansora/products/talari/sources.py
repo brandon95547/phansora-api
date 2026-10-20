@@ -10,6 +10,8 @@ the grouping into chapters:
   * Otherwise, in a PDF or a plain text file, a line such as "Chapter 3" or "Prologue"
     at the start of a block opens a chapter.
 
+A scanned PDF (no text to select) is read first by the shared OCR (phansora.shared.ocr).
+
 When none of that finds at least two chapters, a DOCX is read again by its top heading
 level, and a PDF by its larger type (material.py); only when that finds nothing either is
 the text cut into parts of about PART_WORDS words, at paragraph boundaries, titled
@@ -21,8 +23,12 @@ pictures, drawings and tables, kept as they are.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,7 +59,14 @@ UNTITLED_OPENING = "Opening"
 # Untitled text before the first chapter shorter than this is front matter, and dropped.
 FRONT_MATTER_WORDS = 40
 
-SCANNED_PDF = "This PDF has no selectable text — it looks scanned, and scanned PDFs aren't supported yet."
+# A scanned PDF (no text to select) is read by the shared OCR (phansora.shared.ocr): its pages
+# recognized by Tesseract, OCR_WORKERS at a time, and tidied by DeepSeek, OCR_CLEAN batches
+# at a time, the model TALARI_MODEL's. Minutes for a long book; the import job waits.
+OCR_WORKERS = max(1, int(os.getenv("TALARI_OCR_WORKERS", "6")))
+OCR_CLEAN = max(1, int(os.getenv("TALARI_OCR_CLEAN_CONCURRENCY", "4")))
+# The page markers in OCR'd text ("--- PAGE 3 ---", or "PAGE 3" once they are plain): taken
+# out, so a "Chapter 3" at the top of a page opens its block and is found as a chapter.
+PAGE_MARK = re.compile(r"^[ \t]*(?:-{2,}[ \t]*)?PAGE[ \t]+\d+(?:[ \t]*-{2,})?[ \t]*$", re.MULTILINE | re.IGNORECASE)
 UNSUPPORTED = "Talari can read PDF, EPUB, DOCX, TXT and Markdown (.md) files."
 
 _NUMBER = (
@@ -249,6 +262,31 @@ def _parts(chapters: list[_Chapter]) -> list[_Chapter]:
     return parts
 
 
+def _read_scanned(path: Path, filename: str | None) -> ParsedDoc:
+    """A scanned PDF's text, by the shared OCR, parsed as plain text (its chapters then come
+    from its headings, or its parts). Blocking — extract already runs in a thread, with no
+    event loop of its own. Its pages are kept, as they are read, in a folder named after the
+    file, so a reading that is cut short and asked again picks up where it stopped."""
+    from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig, explain_failure  # lazy: Tesseract is a system dependency
+
+    work = Path(tempfile.gettempdir()) / "talari-ocr" / path.stem
+    out = work / "text.txt"
+    cfg = PdfToTxtConfig(keep_page_breaks=False, to_chapters=False, ocr_concurrency=OCR_WORKERS, clean_concurrency=OCR_CLEAN, model_var="TALARI_MODEL")
+    try:
+        asyncio.run(PdfConverter(cfg).convert_pdf_to_txt_async(path, out, cache_dir=work / "pages"))
+        text = PAGE_MARK.sub("\n", out.read_text(encoding="utf-8", errors="ignore")).strip()
+        if not text:
+            raise ServiceError("This PDF looks scanned, and no text could be read from its pages.", status=422)
+        doc = parse_source(source_format="text", text=text, title_hint=_title_from_filename(filename))
+    except ServiceError:
+        raise
+    except Exception as error:  # noqa: BLE001 — Tesseract, DeepSeek or the file itself
+        logger.exception("Talari: could not read a scanned PDF")
+        raise ServiceError(explain_failure(error), status=422) from None
+    shutil.rmtree(work, ignore_errors=True)
+    return doc
+
+
 def extract(
     path: Path, fmt: str, *, filename: str | None, title: str | None, pictures: material.Pictures | None = None,
     assets: bool = True, budget: float = material.ASSET_SECONDS,
@@ -266,7 +304,7 @@ def extract(
         else:
             doc = parse_source(source_format=fmt, path=str(path), title_hint=_title_from_filename(filename))
     except ScannedPdfError:
-        raise ServiceError(SCANNED_PDF, status=422) from None
+        doc = _read_scanned(path, filename)
     except UnsupportedSourceError as error:
         logger.info("Talari: could not read a %s upload: %s", fmt, error)
         raise ServiceError(f"This {fmt.upper()} file could not be read.", status=422) from None

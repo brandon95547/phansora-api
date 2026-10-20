@@ -1,20 +1,14 @@
-# src/services/ocr_tesseract.py
+# phansora/shared/ocr/tesseract.py — a page picture's text, by the local Tesseract engine.
 #
-# OCR page images (bytes) -> raw text using local Tesseract
-#
-# System dependency (Pop!_OS/Ubuntu):
-#   sudo apt update
-#   sudo apt install -y tesseract-ocr
-#
-# Python deps (venv):
-#   python -m pip install pytesseract pillow
+# System dependency (Pop!_OS/Ubuntu): sudo apt install -y tesseract-ocr
+# Python: pytesseract, pillow. pytesseract is imported when a page is read, not with this
+# module, so a product that imports the shared OCR still loads on a host without it.
 
 from __future__ import annotations
 
 import io
 from dataclasses import dataclass
 
-import pytesseract
 from PIL import Image
 
 
@@ -43,6 +37,7 @@ def ocr_image_bytes(
     """
     if not image_bytes:
         return ""
+    import pytesseract
 
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     text = pytesseract.image_to_string(

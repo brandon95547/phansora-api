@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from .pipeline import BatchConverter, TTSConfig
-from .pdf_pipeline import PdfConverter, PdfToTxtConfig
+from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig
 from .adapters.backend import list_voices, resolve_engine
 
 LOG = logging.getLogger("txt_to_voice")

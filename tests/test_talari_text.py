@@ -24,7 +24,6 @@ from phansora.products.talari.comfy import ComfyUI
 from phansora.products.talari.config import Settings
 from phansora.products.talari.schemas import IllustrationRequest
 from phansora.products.talari.server import create_app
-from phansora.products.talari.sources import SCANNED_PDF
 from phansora.products.talari.styles import build_prompts
 
 Reply = str | dict | Exception | Callable[[str, str], Any]
@@ -226,15 +225,52 @@ def test_a_pdf_is_read_by_its_outline_with_pages(client: TestClient) -> None:
     assert "page3" in body["chapters"][1]["text"] and "page3" not in body["chapters"][0]["text"]
 
 
-def test_a_scanned_pdf_is_refused_plainly(client: TestClient) -> None:
+def a_scan(pages: int = 3, mark: float = 50) -> bytes:
+    """A PDF with no text to select: shapes only, as a scanner's pages are pictures."""
     import fitz
 
     pdf = fitz.open()
-    for _ in range(3):
-        pdf.new_page().draw_rect(fitz.Rect(50, 50, 200, 200))
-    response = upload(client, "scan.pdf", pdf.tobytes())
+    for _ in range(pages):
+        pdf.new_page().draw_rect(fitz.Rect(mark, 50, 200, 200))
+    return pdf.tobytes()
+
+
+def test_a_scanned_pdf_is_read_by_the_shared_ocr_with_talaris_model(client: TestClient, monkeypatch) -> None:
+    from phansora.shared.ocr import pdf as ocr
+
+    pages = iter(["Chapter One\n\nThe gate stood in the fog all morning, and no one came to open it.",
+                  "Chapter Two\n\nShe found the key under the third stone from the wall, cold and green.",
+                  "The lock turned at last, and the gate swung open onto the river path."])
+    models: list[str] = []
+    monkeypatch.setattr(ocr, "ocr_image_bytes", lambda image, *, cfg=None: next(pages))
+    monkeypatch.setattr(ocr.DeepSeekChatConfig, "from_env", classmethod(lambda cls, product_var: models.append(product_var) or None))
+
+    async def tidy(batch, *, cfg=None, max_output_tokens=None):
+        return batch
+
+    monkeypatch.setattr(ocr, "clean_ocr_text", tidy)
+    response = upload(client, "scan.pdf", a_scan(mark=51))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [c["title"] for c in body["chapters"]] == ["Chapter One", "Chapter Two"]
+    assert "swung open" in body["chapters"][1]["text"]
+    assert models == ["TALARI_MODEL"]
+
+
+def test_a_scanned_pdf_that_cannot_be_read_says_why(client: TestClient, monkeypatch) -> None:
+    from phansora.shared.ocr import pdf as ocr
+
+    class TesseractNotFoundError(OSError):
+        pass
+
+    def missing(image, *, cfg=None):
+        raise TesseractNotFoundError("tesseract is not installed or it's not in your PATH. See README file for more information.")
+
+    monkeypatch.setattr(ocr, "ocr_image_bytes", missing)
+    monkeypatch.setattr(ocr.DeepSeekChatConfig, "from_env", classmethod(lambda cls, product_var: None))
+    response = upload(client, "scan.pdf", a_scan(mark=52))
     assert response.status_code == 422
-    assert response.json()["detail"] == SCANNED_PDF
+    assert "text recognition isn't available" in response.json()["detail"]
 
 
 def test_unsupported_damaged_and_empty_files(client: TestClient) -> None:
@@ -882,15 +918,20 @@ def test_a_kept_document_of_any_kind_can_be_read(client: TestClient) -> None:
     assert [c["title"] for c in body["chapters"]] == ["Soil", "Water"] and body["format"] == "docx"
 
 
-def test_a_kept_scan_without_text_says_so_when_it_is_read(client: TestClient) -> None:
-    import fitz
+def test_a_kept_scan_is_read_by_ocr_when_it_is_read(client: TestClient, monkeypatch) -> None:
+    from phansora.shared.ocr import pdf as ocr
 
-    pdf = fitz.open()
-    for _ in range(3):
-        pdf.new_page().draw_rect(fitz.Rect(50, 50, 200, 200))
-    kept = client.post("/users/7/sources/keep", files={"file": ("scan.pdf", pdf.tobytes())}).json()
+    monkeypatch.setattr(ocr, "ocr_image_bytes", lambda image, *, cfg=None: "The river ran high that spring, and the mill wheel turned day and night without rest.")
+    monkeypatch.setattr(ocr.DeepSeekChatConfig, "from_env", classmethod(lambda cls, product_var: None))
+
+    async def tidy(batch, *, cfg=None, max_output_tokens=None):
+        return batch
+
+    monkeypatch.setattr(ocr, "clean_ocr_text", tidy)
+    kept = client.post("/users/7/sources/keep", files={"file": ("scan.pdf", a_scan(mark=53))}).json()
     response = client.post(f"/users/7/sources/{kept['original']}/read", json={"assets": False})
-    assert response.status_code == 422 and response.json()["detail"] == SCANNED_PDF
+    assert response.status_code == 200, response.text
+    assert "mill wheel" in response.json()["chapters"][0]["text"]
 
 
 def test_files_no_longer_used_are_forgotten_and_nothing_else(client: TestClient, tmp_path: Path) -> None:
