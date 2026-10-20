@@ -1104,6 +1104,36 @@ def test_pictures_are_looked_at_by_the_vision_model_when_there_is_a_key(client: 
     assert sent[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
+def test_a_picture_without_a_description_is_described_by_the_vision_model(client: TestClient, monkeypatch, tmp_path: Path) -> None:
+    import base64
+
+    from phansora.products.talari import library
+
+    folder = tmp_path / "talari" / "images" / "7"
+    folder.mkdir(parents=True)
+    (folder / ("b" * 32 + ".png")).write_bytes(png())
+    # No key: nothing to look with, and nothing made up.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert client.post("/users/7/images/describe", json={"name": "b" * 32 + ".png"}).json() == {"description": ""}
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    sent: list[dict] = []
+
+    class Completions:
+        async def create(self, **kwargs):
+            sent.append(kwargs)
+            message = type("M", (), {"content": json.dumps({"description": "A green dragon  curled on a rock at dusk."})})
+            return type("R", (), {"choices": [type("C", (), {"message": message})]})
+
+    monkeypatch.setattr(library, "_vision_client", lambda: type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})})())
+    by_name = client.post("/users/7/images/describe", json={"name": "b" * 32 + ".png"})
+    assert by_name.json() == {"description": "A green dragon curled on a rock at dusk."}
+    assert "redraw it" in sent[0]["messages"][0]["content"][0]["text"]
+    sent_picture = client.post("/users/7/images/describe", json={"image": base64.b64encode(png()).decode()})
+    assert sent_picture.json()["description"].startswith("A green dragon")
+    assert client.post("/users/7/images/describe", json={"name": "c" * 32 + ".png"}).status_code == 404
+    assert client.post("/users/7/images/describe", json={}).status_code == 422
+
+
 # --- a picture made by a conversation ---------------------------------------------------
 
 BRIEF = {"book": {"title": "Gate Keeper", "description": "A girl finds a gate in the fog."}, "purpose": "cover", "mode": "background", "look": "Art Nouveau, watercolor"}

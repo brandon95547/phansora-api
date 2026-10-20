@@ -105,6 +105,8 @@ from .schemas import (
     UpscaleResponse,
     RefineRequest,
     RefineResponse,
+    DescribeRequest,
+    DescribeResponse,
     RemixQuestionsRequest,
     RemixQuestionsResponse,
     ReviseRequest,
@@ -458,6 +460,23 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def image_background_choices(user_id: str, body: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
         check_user(user_id)
         return await image_guide.background_choices(body)
+
+    # What a picture shows, in words (library.describe), for one kept without a description:
+    # what a remix knows it is changing. One of the user's pictures by name, or one sent.
+    @app.post("/users/{user_id}/images/describe", response_model=DescribeResponse, response_model_by_alias=True)
+    async def image_describe(user_id: str, body: DescribeRequest) -> DescribeResponse:
+        check_user(user_id)
+        if body.name:
+            path = user_images(user_id) / body.name
+            if not IMAGE_NAME.match(body.name) or not path.is_file():
+                raise HTTPException(status_code=404, detail="That picture is not one of yours.")
+            picture = path.read_bytes()
+        else:
+            try:
+                picture = base64.b64decode(body.image or "", validate=True)
+            except (binascii.Error, ValueError):
+                raise HTTPException(status_code=422, detail="The picture could not be read.") from None
+        return DescribeResponse(description=await library.describe(picture))
 
     # What an author's change to a picture leaves open, asked before it is remixed.
     @app.post("/users/{user_id}/images/remix-questions", response_model=RemixQuestionsResponse, response_model_by_alias=True)

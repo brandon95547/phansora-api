@@ -663,6 +663,25 @@ class UpscaleRequest(Model):
         return self
 
 
+class DescribeRequest(Model):
+    """What a picture shows (POST /users/{id}/images/describe): one of the user's, by its file
+    name, or one sent (base64 of a PNG, JPEG or WebP)."""
+
+    name: str | None = Field(default=None, max_length=80)
+    image: str | None = Field(default=None, max_length=40_000_000)
+
+    @model_validator(mode="after")
+    def _one_picture(self) -> "DescribeRequest":
+        if bool(self.name) == bool(self.image):
+            raise ValueError("Give the picture to describe: the name of one of yours, or the picture itself.")
+        return self
+
+
+class DescribeResponse(Lenient):
+    # Empty when there is no vision model, or it could not look.
+    description: str = ""
+
+
 class UpscaleResponse(Model):
     src: str
     width: int
