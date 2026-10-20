@@ -795,7 +795,57 @@ Return a JSON object: {{"designs": [{{"title": "the design in 3 to 7 words", "de
     return ROLE, user
 
 
+# A remix's picture, as far as anyone has said: its description, or nothing — and then it is
+# never guessed: the image model starts from the picture itself. A guess pulls the drawing
+# away from it (an undescribed photo of a dragon was remixed as "a figure in a field").
+def _remix_subject(request: ImageComposeRequest | RemixQuestionsRequest) -> str:
+    known = request.previous.strip()
+    if known:
+        return f"WHAT THE PICTURE SHOWS (as it was described)\n{known}"
+    return "WHAT THE PICTURE SHOWS\nNot described. Never name or guess what it shows: the image model starts from the picture itself."
+
+
+def _clarified(request: ImageComposeRequest) -> str:
+    asked = "".join(
+        f"\n- {a.question}\n  {a.answer if a.answer and not a.decide else '(Let Talari decide.)'}"
+        for a in request.clarifications if a.question
+    )
+    return f"\n\nWHAT THEY SAID WHEN ASKED ABOUT IT{asked}" if asked else ""
+
+
+def _remix_compose(request: ImageComposeRequest) -> tuple[str, str]:
+    """A remix's prompt: the change, not the picture. The image model already has the
+    picture, so the prompt says what it becomes, what of it is kept, and what the change needs,
+    in the remix's look."""
+    look = request.look or "the book's own art style"
+    user = f"""THE PICTURE
+It is redrawn from itself: the image model starts from the picture (image to image) and changes it as the author asks. It will be drawn as {look}.
+
+{_remix_subject(request)}
+
+THE AUTHOR'S CHANGE
+{request.instruction.strip() or "Redraw it in its look, otherwise unchanged."}{_clarified(request)}
+
+Write the prompt for that image model, in one paragraph of at most 90 words. It already has the picture, so write the change, not the picture:
+- Begin with what the picture becomes: "Transform this image into …" or "Make …".
+- Say to preserve the original's subject, pose, anatomy, proportions, composition, colors and distinctive features, except what the change alters.
+- Then what the change needs, concretely: surfaces, textures, materials, light, detail.
+- Name the subject only as the description above names it; never guess it.
+- Make the change within {look}: "more real" means more lifelike forms, textures and light as that look can show them — never a photograph, a 3D render or another art style. Leave out art style, medium and artist names: the look's own words are added after the prompt.
+- Where the author let Talari decide, choose what suits the change best.
+- Never include words, letters, titles, signs or typography in the picture.
+
+Return a JSON object with:
+- "prompt": that prompt.
+- "caption": a short name for the remix, at most 6 words, for the author's list of pictures: its subject where the description names it, else the change ("More lifelike").
+- "summary": the change in one or two plain sentences for the author, with nothing technical.
+- "shape": "square" (a remix keeps the picture's own shape)."""
+    return ROLE, user
+
+
 def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
+    if request.remix:
+        return _remix_compose(request)
     cover = request.purpose in ("cover", "back-cover") and request.mode == "background"
     rules = [
         "Describe what is seen, concretely: the subject, what it is doing, the setting, the light, the mood, the viewpoint and the colors.",
@@ -822,18 +872,13 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
             rules.append("No figures, creatures or scenery beyond the decoration itself.")
     change = ""
     if request.previous.strip():
-        asked = "".join(
-            f"\n- {a.question}\n  {a.answer if a.answer and not a.decide else '(Let Talari decide.)'}"
-            for a in request.clarifications if a.question
-        )
-        said = f"\n\nWHAT THEY SAID WHEN ASKED ABOUT IT{asked}" if asked else ""
         change = f"""
 
 THE PICTURE AS IT WAS DESCRIBED
 {request.previous.strip()}
 
 THE AUTHOR'S CHANGE
-{request.instruction.strip() or "Draw it again, the same picture."}{said}
+{request.instruction.strip() or "Draw it again, the same picture."}{_clarified(request)}
 
 Rewrite the description with this change made, keeping everything else as it was."""
         if request.look:
@@ -862,8 +907,7 @@ def remix_questions(request: RemixQuestionsRequest, most: int) -> tuple[str, str
     look = request.look or "the book's own art style"
     user = f"""{_image_card(request)}
 
-THE PICTURE AS IT WAS DESCRIBED
-{request.previous.strip() or "A picture of the book; no description of it was kept."}
+{_remix_subject(request)}
 
 THE AUTHOR'S CHANGE
 {request.instruction.strip()}
@@ -873,6 +917,7 @@ The author is changing this picture. Ask only what their words leave open that w
 - Each with three or four answers to pick, at most 6 words each, from the smallest change to the largest.
 - The picture stays drawn as {look}: the answers are degrees and kinds of the change within that look — never a photograph, a 3D render or another art style.
 - Never ask about the art style, medium, size or shape, or about anything the change already says. Nothing technical.
+- Name what the picture shows only as the description above names it; otherwise ask in general terms ("How realistic should it look?").
 
 Return a JSON object: {{"questions": [{{"id": "a-short-name", "text": "…", "suggestions": ["…", "…", "…"]}}]}}, with an empty list when nothing needs asking."""
     return ROLE, user

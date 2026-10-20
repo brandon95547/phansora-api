@@ -548,6 +548,9 @@ class ImageComposeRequest(ImageBrief):
     # A remix's questions about the change and what the author picked (remix_questions); an
     # unanswered one is left to the model (`decide`).
     clarifications: list[ImageAnswer] = Field(default_factory=list, max_length=3)
+    # A remix: the image model starts from the picture itself, so the prompt says what changes
+    # and what is kept, never what the picture shows unless `previous` says so.
+    remix: bool = False
 
 
 # What an author's change to a picture leaves open (image_guide.remix_questions): "make the
@@ -661,25 +664,6 @@ class UpscaleRequest(Model):
         if bool(self.name) == bool(self.image):
             raise ValueError("Give the picture to enlarge: the name of one of yours, or the picture itself.")
         return self
-
-
-class DescribeRequest(Model):
-    """What a picture shows (POST /users/{id}/images/describe): one of the user's, by its file
-    name, or one sent (base64 of a PNG, JPEG or WebP)."""
-
-    name: str | None = Field(default=None, max_length=80)
-    image: str | None = Field(default=None, max_length=40_000_000)
-
-    @model_validator(mode="after")
-    def _one_picture(self) -> "DescribeRequest":
-        if bool(self.name) == bool(self.image):
-            raise ValueError("Give the picture to describe: the name of one of yours, or the picture itself.")
-        return self
-
-
-class DescribeResponse(Lenient):
-    # Empty when there is no vision model, or it could not look.
-    description: str = ""
 
 
 class UpscaleResponse(Model):

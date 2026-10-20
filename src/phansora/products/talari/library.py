@@ -60,14 +60,6 @@ VISION_PROMPT = (
     'Reply with JSON only: {"kind": "...", "description": "one plain sentence saying what it shows"}.'
 )
 
-# What a picture kept without a description shows (describe): what a remix starts from.
-DESCRIBE_PROMPT = (
-    "Describe what this picture shows, for an illustrator who will redraw it: the subject and what it is doing, "
-    "the setting, the light, the main colors and the viewpoint. One paragraph of at most 60 words, in plain words. "
-    "Say nothing about art style, medium, technique or artist.\n"
-    'Reply with JSON only: {"description": "..."}'
-)
-
 SECTIONS_SYSTEM = (
     "You sort the sections of an imported book or document for an author's reference library. "
     "For each section, decide whether it is explanation (\"text\") or an exercise or activity for the reader — "
@@ -99,45 +91,30 @@ def _vision_model() -> str | None:
     return VISION_DEFAULT
 
 
-def _data_url(path: Path | bytes) -> str:
+def _data_url(path: Path) -> str:
     from PIL import Image
 
-    image = Image.open(path if isinstance(path, Path) else io.BytesIO(path))
+    image = Image.open(path)
     image.thumbnail((VISION_PX, VISION_PX))
     out = io.BytesIO()
     image.convert("RGB").save(out, "JPEG", quality=85)
     return "data:image/jpeg;base64," + base64.b64encode(out.getvalue()).decode("ascii")
 
 
-async def _look(client: Any, model: str, path: Path | bytes, prompt: str = VISION_PROMPT, tokens: int = 400) -> dict[str, Any]:
-    """One picture, looked at: {kind, description}, or what `prompt` asks of it."""
+async def _look(client: Any, model: str, path: Path) -> dict[str, Any]:
+    """One picture, looked at: {kind, description}."""
     url = await asyncio.to_thread(_data_url, path)
     reply = await asyncio.wait_for(
         client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": url}}]}],
+            messages=[{"role": "user", "content": [{"type": "text", "text": VISION_PROMPT}, {"type": "image_url", "image_url": {"url": url}}]}],
             response_format={"type": "json_object"},
             reasoning_effort="minimal",
-            max_completion_tokens=tokens,
+            max_completion_tokens=400,
         ),
         VISION_TIMEOUT_S,
     )
     return llm.parse_json_loose(reply.choices[0].message.content or "{}")
-
-
-async def describe(picture: bytes) -> str:
-    """What a picture shows, in words, for one kept without a description (an upload, a library
-    piece made a picture), so a remix knows what it is changing. Empty without a vision model,
-    or when the picture cannot be looked at."""
-    model = _vision_model()
-    if not model:
-        return ""
-    try:
-        seen = await _look(_vision_client(), model, picture, DESCRIBE_PROMPT, tokens=600)
-    except Exception as error:  # noqa: BLE001 — the remix goes on from the picture's caption
-        logger.warning("Talari: could not describe a picture: %s", error)
-        return ""
-    return " ".join(str(seen.get("description") or "").split())[:600]
 
 
 def _vision_client():

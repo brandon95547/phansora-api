@@ -1104,36 +1104,6 @@ def test_pictures_are_looked_at_by_the_vision_model_when_there_is_a_key(client: 
     assert sent[0]["messages"][0]["content"][1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
 
-def test_a_picture_without_a_description_is_described_by_the_vision_model(client: TestClient, monkeypatch, tmp_path: Path) -> None:
-    import base64
-
-    from phansora.products.talari import library
-
-    folder = tmp_path / "talari" / "images" / "7"
-    folder.mkdir(parents=True)
-    (folder / ("b" * 32 + ".png")).write_bytes(png())
-    # No key: nothing to look with, and nothing made up.
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    assert client.post("/users/7/images/describe", json={"name": "b" * 32 + ".png"}).json() == {"description": ""}
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    sent: list[dict] = []
-
-    class Completions:
-        async def create(self, **kwargs):
-            sent.append(kwargs)
-            message = type("M", (), {"content": json.dumps({"description": "A green dragon  curled on a rock at dusk."})})
-            return type("R", (), {"choices": [type("C", (), {"message": message})]})
-
-    monkeypatch.setattr(library, "_vision_client", lambda: type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})})())
-    by_name = client.post("/users/7/images/describe", json={"name": "b" * 32 + ".png"})
-    assert by_name.json() == {"description": "A green dragon curled on a rock at dusk."}
-    assert "redraw it" in sent[0]["messages"][0]["content"][0]["text"]
-    sent_picture = client.post("/users/7/images/describe", json={"image": base64.b64encode(png()).decode()})
-    assert sent_picture.json()["description"].startswith("A green dragon")
-    assert client.post("/users/7/images/describe", json={"name": "c" * 32 + ".png"}).status_code == 404
-    assert client.post("/users/7/images/describe", json={}).status_code == 422
-
-
 # --- a picture made by a conversation ---------------------------------------------------
 
 BRIEF = {"book": {"title": "Gate Keeper", "description": "A girl finds a gate in the fog."}, "purpose": "cover", "mode": "background", "look": "Art Nouveau, watercolor"}
@@ -1273,19 +1243,32 @@ def test_a_remix_asks_a_couple_of_questions_within_the_pictures_look(client: Tes
     assert client.post("/users/7/images/remix-questions", json={**REMIX, "instruction": ""}).status_code == 422
 
 
-def test_a_remix_is_described_with_what_the_author_said_and_in_its_look(client: TestClient, deepseek: FakeDeepSeek) -> None:
-    deepseek.replies = [{"prompt": "A green dragon with lifelike scales.", "caption": "Dragon", "summary": "A dragon.", "shape": "square"}]
+def test_a_remix_prompt_says_what_changes_and_what_is_kept_with_what_the_author_said(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"prompt": "Transform this image into a lifelike dragon.", "caption": "Dragon", "summary": "More lifelike.", "shape": "square"}]
     clarifications = [
         {"question": "How realistic should the dragon be?", "answer": "Detailed and lifelike"},
         {"question": "Should the light change too?", "decide": True},
     ]
-    response = client.post("/users/7/images/compose", json={**REMIX, "clarifications": clarifications})
+    response = client.post("/users/7/images/compose", json={**REMIX, "remix": True, "clarifications": clarifications})
     assert response.status_code == 200, response.text
     user = deepseek.calls[0]["user"]
-    assert "WHAT THEY SAID WHEN ASKED ABOUT IT" in user
+    assert "WHAT THE PICTURE SHOWS (as it was described)\nA green dragon curled on a rock." in user
+    assert "Transform this image into" in user and "preserve the original's subject, pose, anatomy, proportions" in user
     assert "- How realistic should the dragon be?\n  Detailed and lifelike" in user
     assert "- Should the light change too?\n  (Let Talari decide.)" in user
-    assert "The picture stays drawn as Fantasy Art, watercolor: make the change within that look." in user
+    assert "Make the change within Fantasy Art, watercolor" in user and "never a photograph" in user
+    # The book is not what is changed: nothing of it goes in.
+    assert "Gate Keeper" not in user
+
+
+def test_a_remix_of_a_picture_nobody_described_never_guesses_what_it_shows(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"prompt": "Transform this image into a lifelike version of itself.", "caption": "More lifelike"},
+                        {"questions": [{"id": "realism", "text": "How realistic should it look?", "suggestions": ["A little", "Fully lifelike"]}]}]
+    undescribed = {**REMIX, "previous": "", "book": {}}
+    assert client.post("/users/7/images/compose", json={**undescribed, "remix": True}).status_code == 200
+    assert client.post("/users/7/images/remix-questions", json=undescribed).status_code == 200
+    for call in deepseek.calls:
+        assert "Not described. Never name or guess what it shows" in call["user"]
 
 
 def test_with_no_design_yet_a_background_asks_what_kind_it_is(client: TestClient, deepseek: FakeDeepSeek) -> None:
