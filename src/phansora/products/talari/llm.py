@@ -11,14 +11,14 @@ The model is ``TALARI_MODEL``, falling back to ``DEEPSEEK_MODEL`` (see shared.ai
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 import re
 from typing import Any
 
-from phansora.shared.ai.deepseek import DeepSeekChatConfig, _chat_completion
+from phansora.shared.ai.deepseek import JSON_ONLY, KEY_VAR, DeepSeekChatConfig, chat
 from phansora.shared.ai.json_repair import parse_json_loose, repair_truncated_json
 from phansora.shared.ai.models import MissingModelConfig
+from phansora.shared.ai.retries import refusal_message
 
 from .errors import NotConfigured, ServiceError
 
@@ -38,31 +38,25 @@ LONG_RETRIES = 1
 # nothing; one set too low ends a chapter mid-sentence.
 MAX_OUTPUT_TOKENS = 16000
 
-JSON_INSTRUCTION = "\n\nRespond with valid JSON only. No prose, no markdown fences."
-
-# What an account-level refusal means, in terms of what to go and do about it.
-REFUSALS = {
-    401: "DeepSeek rejected the API key. Check DEEPSEEK_API_KEY.",
-    402: "The DeepSeek account is out of credit.",
-    403: "DeepSeek refused access to the configured model. Check TALARI_MODEL / DEEPSEEK_MODEL.",
-    429: "DeepSeek is over its rate limit. Try again in a minute.",
-}
+JSON_INSTRUCTION = JSON_ONLY
 
 
-def config(*, long: bool = False) -> DeepSeekChatConfig:
+def config() -> DeepSeekChatConfig:
     """DeepSeek's settings for Talari, or a 503 that names what is missing."""
     try:
-        cfg = DeepSeekChatConfig.from_env(product_var=MODEL_VAR)
+        return DeepSeekChatConfig.from_env(product_var=MODEL_VAR)
     except MissingModelConfig:
         raise NotConfigured(
             f"Writing is not available: no DeepSeek model is configured. Set {MODEL_VAR} or DEEPSEEK_MODEL."
         ) from None
     except RuntimeError:
         # from_env's only other failure is the missing key.
-        raise NotConfigured("Writing is not available: DEEPSEEK_API_KEY is not set.") from None
-    if long:
-        return dataclasses.replace(cfg, timeout_s=max(cfg.timeout_s, LONG_TIMEOUT_S), max_retries=LONG_RETRIES)
-    return dataclasses.replace(cfg, max_retries=min(cfg.max_retries, RETRIES))
+        raise NotConfigured(f"Writing is not available: {KEY_VAR} is not set.") from None
+
+
+def refusal(status: int | None) -> str | None:
+    """What an account-level refusal means, in terms of what to go and do about it."""
+    return refusal_message(status, provider="DeepSeek", key_var=KEY_VAR, model_vars=f"{MODEL_VAR} / DEEPSEEK_MODEL")
 
 
 def _failure(error: Exception) -> ServiceError:
@@ -75,8 +69,8 @@ def _failure(error: Exception) -> ServiceError:
     if status is None:
         found = re.search(r"HTTP (\d{3})", str(error))
         status = int(found.group(1)) if found else None
-    if status in REFUSALS:
-        return ServiceError(REFUSALS[status])
+    if refusal(status):
+        return ServiceError(refusal(status))
     cause = error.__cause__
     # asyncio's TimeoutError is its own class before Python 3.11, which prod runs.
     if isinstance(cause, (TimeoutError, asyncio.TimeoutError)) or "Timeout" in type(cause).__name__:
@@ -98,17 +92,25 @@ async def ask(
 
     ``long`` (the long timeout) follows from ``max_tokens`` unless it is given.
     """
-    cfg = config(long=max_tokens > LONG_REPLY_TOKENS if long is None else long)
+    cfg = config()
+    if long is None:
+        long = max_tokens > LONG_REPLY_TOKENS
+    if long:
+        timeout_s, retries = max(cfg.timeout_s, LONG_TIMEOUT_S), LONG_RETRIES
+    else:
+        timeout_s, retries = cfg.timeout_s, min(cfg.max_retries, RETRIES)
     try:
-        reply = await _chat_completion(
+        # Budgets here are sized for the answer, so the thinking stays off (chat's
+        # default): the v4 models reason by default and bill that against max_tokens,
+        # which leaves a long answer empty or cut off.
+        reply, _finish = await chat(
             cfg=cfg,
-            system_prompt=system,
-            user_text=user,
-            max_output_tokens=min(max_tokens, MAX_OUTPUT_TOKENS),
-            # Budgets here are sized for the answer. The v4 models reason by default and
-            # bill that against max_tokens, which leaves a long answer empty or cut off.
-            disable_thinking=True,
+            system=system,
+            user=user,
+            max_tokens=min(max_tokens, MAX_OUTPUT_TOKENS),
             temperature=temperature,
+            timeout_s=timeout_s,
+            max_retries=retries,
         )
     except RuntimeError as error:
         raise _failure(error) from None

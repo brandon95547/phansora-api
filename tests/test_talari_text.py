@@ -1,6 +1,6 @@
 """Talari's writing side, against a fake DeepSeek — no network.
 
-DeepSeek is replaced where Talari calls it (``talari.llm._chat_completion``), so these
+DeepSeek is replaced where Talari calls it (``talari.llm.chat``), so these
 tests see exactly the prompts that would be sent and decide what comes back. Documents
 for the import tests are made here, with python-docx and PyMuPDF.
 """
@@ -56,16 +56,16 @@ class FakeDeepSeek:
         self.calls: list[dict[str, Any]] = []
         self.replies: list[Reply] = []
 
-    async def __call__(self, *, cfg, system_prompt, user_text, max_output_tokens, disable_thinking=False, temperature=0):
+    async def __call__(self, *, cfg, system, user, max_tokens, temperature=0, **options):
         self.calls.append(
-            {"system": system_prompt, "user": user_text, "max_tokens": max_output_tokens, "temperature": temperature, "model": cfg.model}
+            {"system": system, "user": user, "max_tokens": max_tokens, "temperature": temperature, "model": cfg.model, **options}
         )
         reply: Any = self.replies.pop(0) if self.replies else ""
         if callable(reply):
-            reply = reply(system_prompt, user_text)
+            reply = reply(system, user)
         if isinstance(reply, Exception):
             raise reply
-        return reply if isinstance(reply, str) else json.dumps(reply)
+        return (reply if isinstance(reply, str) else json.dumps(reply)), "stop"
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def deepseek(monkeypatch) -> FakeDeepSeek:
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-test")
     monkeypatch.delenv("TALARI_MODEL", raising=False)
     fake = FakeDeepSeek()
-    monkeypatch.setattr(llm_module, "_chat_completion", fake)
+    monkeypatch.setattr(llm_module, "chat", fake)
     return fake
 
 
@@ -729,6 +729,15 @@ def test_upstream_failures_are_502s_without_the_providers_body(client: TestClien
     response = client.post("/users/7/blueprints", json={"mode": "idea", "brief": {"idea": "x"}})
     assert response.status_code == 502 and "could not be read" in response.json()["detail"]
     assert len(deepseek.calls) == 3  # the unreadable reply was asked for once more
+
+
+def test_a_long_reply_gets_a_long_timeout_and_fewer_retries(deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = ["Short.", "Long."]
+    asyncio.run(llm_module.ask("s", "u", max_tokens=500, temperature=0.5))
+    asyncio.run(llm_module.ask("s", "u", max_tokens=8000, temperature=0.5))
+    short, long = deepseek.calls
+    assert short["max_retries"] == llm_module.RETRIES and short["timeout_s"] < llm_module.LONG_TIMEOUT_S
+    assert long["max_retries"] == llm_module.LONG_RETRIES and long["timeout_s"] == llm_module.LONG_TIMEOUT_S
 
 
 def test_a_truncated_json_reply_keeps_its_complete_part(client: TestClient, deepseek: FakeDeepSeek) -> None:
