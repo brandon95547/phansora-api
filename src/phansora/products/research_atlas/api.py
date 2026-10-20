@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from phansora.shared.auth import enforce_user_scope
 from pydantic import BaseModel, Field, model_validator
 
 from phansora.shared.errors import fail
+from phansora.shared.ocr import pdf as ocr
 from phansora.shared.paths import runtime_root
+from phansora.shared.utils.uploads import save_upload
 from .pipeline import run_pipeline
 
 logger = logging.getLogger("research_atlas")
@@ -55,6 +60,24 @@ MAX_SOURCES = 50
 MAX_TEXT_CHARS = 20_000_000
 MAX_TOTAL_CHARS = 40_000_000
 MAX_LABEL_CHARS = 1_000
+
+# A scanned PDF (no text to select) is read by the shared OCR (phansora.shared.ocr), the one
+# SpokenVerse, Book Alchemy and Talari use: its pages recognized by Tesseract, OCR_WORKERS at a
+# time, and tidied by DeepSeek, OCR_CLEAN batches at a time, with RESEARCH_ATLAS_MODEL. Every
+# page is read, however many. A long scan takes the better part of an hour, so /ocr answers at
+# once with a job, as /run does, and the Node worker polls /jobs/{id} for its pages.
+OCR_DIR = TMP_DIR / "ocr"
+OCR_WORKERS = max(1, int(os.getenv("RESEARCH_ATLAS_OCR_WORKERS", "4")))
+OCR_CLEAN = max(1, int(os.getenv("RESEARCH_ATLAS_OCR_CLEAN_CONCURRENCY", "4")))
+# Scans read at once. Each already keeps OCR_WORKERS Tesseract processes busy; more wait as
+# "queued".
+_OCR_SLOTS = asyncio.Semaphore(max(1, int(os.getenv("RESEARCH_ATLAS_MAX_CONCURRENT_OCR", "1"))))
+# The page markers in OCR'd text ("--- PAGE 3 ---", or "PAGE 3" once they are plain): taken
+# out, so the pipeline reads the scan as the running text it is.
+PAGE_MARK = re.compile(r"^[ \t]*(?:-{2,}[ \t]*)?PAGE[ \t]+\d+(?:[ \t]*-{2,})?[ \t]*$", re.MULTILINE | re.IGNORECASE)
+# What explain_failure says of any failure but the two setup faults it names: the exception's
+# own text, which can carry a provider's response body or a path on this server.
+_UNEXPLAINED = "OCR failed for scanned PDF:"
 
 
 class SourceItem(BaseModel):
@@ -203,21 +226,62 @@ async def _run_pipeline_job_now(job_id: str, payload: RunPipelineRequest) -> Non
         await _prune_finished_jobs()
 
 
-@app.get("/health")
-async def health() -> dict:
-    async with _JOBS_LOCK:
-        active_jobs = sum(1 for data in _JOBS.values() if data.get("status") in {"queued", "processing"})
-    return {"ok": True, "active_jobs": active_jobs}
+async def _read_scan_job(job_id: str, pdf_path: Path) -> None:
+    async with _OCR_SLOTS:
+        await _read_scan_job_now(job_id, pdf_path)
 
 
-@app.post("/run")
-async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
-    if not payload.text and not payload.sources:
-        raise HTTPException(status_code=400, detail="Provide `text` or `sources`.")
+async def _read_scan_job_now(job_id: str, pdf_path: Path) -> None:
+    """Read one uploaded scan into text. Its pages are kept, as they are read, in a folder
+    named after the file's content, so a reading cut short (a restart, a deploy) and asked
+    again picks up where it stopped; the folder goes once the text is out."""
+    await _set_job_state(job_id, status="processing", started_at=_utc_now_iso(), error=None)
 
-    job_id = uuid.uuid4().hex
+    async def on_progress(step: str, done: int, total: int) -> None:
+        await _set_job_state(job_id, progress={"step": step, "done": done, "total": total})
+
+    try:
+        digest = await asyncio.to_thread(_file_digest, pdf_path)
+        work = OCR_DIR / digest
+        out = work / "text.txt"
+        cfg = ocr.PdfToTxtConfig(
+            keep_page_breaks=False, to_chapters=False,
+            ocr_concurrency=OCR_WORKERS, clean_concurrency=OCR_CLEAN, model_var="RESEARCH_ATLAS_MODEL",
+        )
+        await ocr.PdfConverter(cfg).convert_pdf_to_txt_async(pdf_path, out, cache_dir=work / "pages", on_progress=on_progress)
+        text = PAGE_MARK.sub("\n", out.read_text(encoding="utf-8", errors="ignore"))
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        shutil.rmtree(work, ignore_errors=True)
+        if not text:
+            await _set_job_state(job_id, status="failed", finished_at=_utc_now_iso(),
+                                 error="No text could be read from this scanned PDF's pages.")
+        else:
+            await _set_job_state(job_id, status="completed", finished_at=_utc_now_iso(),
+                                 result={"ok": True, "text": text})
+    except Exception as e:  # noqa: BLE001 — Tesseract, DeepSeek or the file itself
+        error = ocr.explain_failure(e)
+        if error.startswith(_UNEXPLAINED):
+            error = fail(500, "This scanned PDF could not be read.", e, logger=logger,
+                         context=f"Research Atlas OCR job {job_id} failed").detail
+        else:
+            logger.exception("Research Atlas OCR job %s failed", job_id)
+        await _set_job_state(job_id, status="failed", finished_at=_utc_now_iso(), error=error)
+    finally:
+        pdf_path.unlink(missing_ok=True)
+        await _prune_finished_jobs()
+
+
+def _file_digest(path: Path) -> str:
+    sha = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            sha.update(chunk)
+    return sha.hexdigest()[:32]
+
+
+async def _admit(job_id: str) -> None:
+    """Record a new job as queued, or refuse it (503) when too many are already waiting."""
     now = _utc_now_iso()
-
     async with _JOBS_LOCK:
         outstanding = sum(1 for data in _JOBS.values() if data.get("status") in {"queued", "processing"})
         if outstanding >= _MAX_OUTSTANDING:
@@ -235,11 +299,56 @@ async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
             "finished_at": None,
             "error": None,
             "result": None,
+            "progress": None,
         }
 
-    task = asyncio.create_task(_run_pipeline_job(job_id, payload))
+
+def _start(job) -> None:
+    """Run a job's coroutine in the background, held in _TASKS until it ends."""
+    task = asyncio.create_task(job)
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
+
+
+@app.get("/health")
+async def health() -> dict:
+    async with _JOBS_LOCK:
+        active_jobs = sum(1 for data in _JOBS.values() if data.get("status") in {"queued", "processing"})
+    return {"ok": True, "active_jobs": active_jobs}
+
+
+@app.post("/run")
+async def run_pipeline_endpoint(payload: RunPipelineRequest) -> dict:
+    if not payload.text and not payload.sources:
+        raise HTTPException(status_code=400, detail="Provide `text` or `sources`.")
+
+    job_id = uuid.uuid4().hex
+    await _admit(job_id)
+    _start(_run_pipeline_job(job_id, payload))
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "status": "queued",
+    }
+
+
+@app.post("/ocr")
+async def ocr_endpoint(file: UploadFile = File(...)) -> dict:
+    """A scanned PDF read into text, as a job: poll /jobs/{id} (its `progress` says which
+    page), then take the text from /jobs/{id}/result as `result.text`."""
+    job_id = uuid.uuid4().hex
+    pdf_path = OCR_DIR / f"{job_id}.pdf"
+    await save_upload(file, pdf_path)
+    try:
+        with pdf_path.open("rb") as f:
+            # The header may sit anywhere in the first kilobyte.
+            if b"%PDF-" not in f.read(1024):
+                raise HTTPException(status_code=400, detail="That file is not a PDF.")
+        await _admit(job_id)
+    except BaseException:
+        pdf_path.unlink(missing_ok=True)
+        raise
+    _start(_read_scan_job(job_id, pdf_path))
     return {
         "ok": True,
         "job_id": job_id,
@@ -263,6 +372,8 @@ async def get_job_status(job_id: str) -> dict:
             "started_at": job["started_at"],
             "finished_at": job["finished_at"],
             "error": job["error"],
+            # A scan's reading: {"step": "ocr" | "clean", "done", "total"}. None for a pipeline.
+            "progress": job.get("progress"),
         }
 
 
