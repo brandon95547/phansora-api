@@ -40,6 +40,10 @@ class IllustrationRequest(Model):
     strength: float = Field(default=0.6, ge=0.05, le=1.0)
     # Enlarged after drawing (Lanczos, enlarge.py), for a picture that fills a printed page.
     upscale: float = Field(default=1.0, ge=1.0, le=2.0)
+    # Its subject cut out of its background after drawing (ComfyUI's BiRefNet, comfy.cutout),
+    # kept as a PNG with transparency. One that cannot be cut out is kept as drawn, and `sent`
+    # says why.
+    cutout: bool = False
 
     @model_validator(mode="after")
     def _something_to_draw(self) -> "IllustrationRequest":

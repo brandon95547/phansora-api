@@ -635,6 +635,50 @@ def test_a_picture_is_drawn_in_its_substyle(client: TestClient, network: Recorde
     assert "golden age comic book art" in text and "bold inked outlines" not in text
 
 
+# --- background removal --------------------------------------------------------------
+
+BG_INFO = {"LoadBackgroundRemovalModel": {"input": {"required": {"bg_removal_name": [["birefnet.safetensors"], {}]}}}}
+
+
+def a_mask(width: int = 64, height: int = 48) -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    mask = Image.new("L", (width, height), 0)
+    mask.paste(255, (width // 2, 0, width, height))
+    out = BytesIO()
+    mask.save(out, format="PNG")
+    return out.getvalue()
+
+
+def test_a_picture_asked_without_its_background_is_cut_out_by_birefnet(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    views = iter([real_png(64, 48), a_mask()])
+    base = comfy(object_info=BG_INFO)
+    network.handler = lambda r: httpx.Response(200, content=next(views)) if r.url.path == "/view" else base(r)
+    response = client.post("/users/7/illustrations", json={**REQUEST, "cutout": True})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sent"]["cutout"] is True
+    # The drawing, then its mask: ComfyUI's own nodes, the drawn picture sent back in.
+    draw, cut = (b["prompt"] for b in network.bodies("/prompt"))
+    assert cut["2"]["inputs"] == {"bg_removal_name": "birefnet.safetensors"}
+    assert cut["3"]["class_type"] == "RemoveBackground" and cut["4"]["class_type"] == "MaskToImage"
+    assert any(b'filename="talari-cutout-' in r.content for r in network.requests if r.url.path == "/upload/image")
+    kept = saved_picture(tmp_path, body["src"])
+    assert kept.mode == "RGBA" and kept.size == (64, 48)
+    assert kept.getpixel((5, 20))[3] == 0 and kept.getpixel((60, 20))[3] == 255
+
+
+def test_a_picture_that_cannot_be_cut_out_is_kept_as_drawn_and_says_why(client: TestClient, network: Recorder, tmp_path: Path) -> None:
+    network.handler = comfy(object_info={"LoadBackgroundRemovalModel": {"input": {"required": {"bg_removal_name": [[], {}]}}}})
+    response = client.post("/users/7/illustrations", json={**REQUEST, "cutout": True})
+    assert response.status_code == 200, response.text
+    sent = response.json()["sent"]
+    assert sent["cutout"] is False and "models/background_removal" in sent["cutout_error"]
+    assert len(network.bodies("/prompt")) == 1
+
+
 # --- upscaling, for print -------------------------------------------------------------
 
 UPSCALE_INFO = {"UpscaleModelLoader": {"input": {"required": {"model_name": [["4x_NMKD-Siax_200k.pth", "4x-UltraSharp.pth"], {}]}}}}

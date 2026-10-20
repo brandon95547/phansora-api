@@ -200,6 +200,13 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def illustrate(user_id: str, body: IllustrationRequest, request: Request) -> IllustrationResponse:
         folder = user_images(user_id)
         image, seed, given = await request.app.state.comfy.generate(body)
+        if body.cutout:
+            try:
+                image = await request.app.state.comfy.cutout(image)
+                given = {**given, "cutout": True}
+            except ServiceError as error:
+                logger.warning("Talari: a background could not be removed: %s", error.message)
+                given = {**given, "cutout": False, "cutout_error": error.message}
         if body.upscale > 1:
             image = await asyncio.to_thread(enlarge.upscale, image, body.upscale)
         folder.mkdir(parents=True, exist_ok=True)

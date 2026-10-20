@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import io
 import json
 import math
 import random
@@ -59,6 +60,38 @@ UPSCALE_FACTOR = 4
 # The longest side a picture may be enlarged to: a large cover with its bleed at 300 dpi is
 # about 3400 pixels; this leaves room, and keeps one picture within the GPU's reach.
 UPSCALE_MAX_SIDE = 8192
+
+
+# Background removal: ComfyUI's own BiRefNet (its comfy/bg_removal_model.py, the
+# LoadBackgroundRemovalModel and RemoveBackground nodes), its weights in models/background_removal
+# (the app's docker/comfyui/fetch_models.py fetches them). MIT.
+BG_REMOVAL_FILE = "birefnet.safetensors"
+
+
+def cutout_workflow(image: str, model_file: str) -> dict[str, Any]:
+    """The mask of an uploaded picture's subject, saved as a grey picture: white the subject,
+    black what is cut away."""
+    return {
+        "1": {"class_type": "LoadImage", "inputs": {"image": image}},
+        "2": {"class_type": "LoadBackgroundRemovalModel", "inputs": {"bg_removal_name": model_file}},
+        "3": {"class_type": "RemoveBackground", "inputs": {"bg_removal_model": ["2", 0], "image": ["1", 0]}},
+        "4": {"class_type": "MaskToImage", "inputs": {"mask": ["3", 0]}},
+        "9": {"class_type": "SaveImage", "inputs": {"images": ["4", 0], "filename_prefix": "talari-cutout"}},
+    }
+
+
+def with_alpha(picture: bytes, mask: bytes) -> bytes:
+    """The picture with its background cut away: the mask (white kept) as its transparency, as
+    a PNG."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(picture)) as source, Image.open(io.BytesIO(mask)) as cut:
+        out = source.convert("RGB")
+        alpha = cut.convert("L").resize(out.size, Image.Resampling.LANCZOS)
+    out.putalpha(alpha)
+    buffer = io.BytesIO()
+    out.save(buffer, "PNG")
+    return buffer.getvalue()
 
 
 def upscale_workflow(image: str, model_file: str, scale: float) -> dict[str, Any]:
@@ -580,6 +613,19 @@ class ComfyUI:
         return await self.run(workflow), seed, width, height, workflow
 
     # --- upscaling ----------------------------------------------------------------------
+
+    async def cutout(self, picture: bytes) -> bytes:
+        """The picture with its background removed by ComfyUI's BiRefNet, as a PNG with
+        transparency."""
+        have = await self._choices("LoadBackgroundRemovalModel", "bg_removal_name")
+        if have is None:
+            raise NotConfigured("This ComfyUI cannot remove backgrounds: it has no Remove Background node.")
+        file = BG_REMOVAL_FILE if BG_REMOVAL_FILE in have else (have[0] if have else None)
+        if not file:
+            raise NotConfigured(f"ComfyUI does not have the background removal model ({BG_REMOVAL_FILE}) yet: it goes in its models/background_removal folder.")
+        name = await self._upload_picture(base64.b64encode(picture).decode("ascii"), "picture", "talari-cutout")
+        mask = await self.run(cutout_workflow(name, file))
+        return await asyncio.to_thread(with_alpha, picture, mask)
 
     async def upscalers(self) -> list[Upscaler]:
         """The upscaling models, and which of them this ComfyUI has."""
