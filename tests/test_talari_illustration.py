@@ -292,6 +292,16 @@ def test_flux_redraws_with_its_own_vae(make_client, network: Recorder) -> None:
     assert workflow["8"]["inputs"]["cfg"] == 1.0
 
 
+def test_flux_draws_from_nothing_at_its_denoise_and_a_remix_at_its_strength_both_in_its_steps(make_client, network: Recorder) -> None:
+    client = make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf", comfyui_steps=16, comfyui_denoise=0.85)
+    network.handler = comfy()
+    assert client.post("/users/7/illustrations", json=REQUEST).status_code == 200
+    assert client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE, "strength": 0.35}).status_code == 200
+    fresh, remix = (b["prompt"]["8"]["inputs"] for b in network.bodies("/prompt"))
+    assert (fresh["denoise"], fresh["steps"]) == (0.85, 16)
+    assert (remix["denoise"], remix["steps"]) == (0.35, 16)
+
+
 def test_without_a_reference_nothing_is_uploaded_and_it_draws_from_noise(client: TestClient, network: Recorder) -> None:
     network.handler = comfy()
     assert client.post("/users/7/illustrations", json=REQUEST).status_code == 200
@@ -687,12 +697,13 @@ def test_a_print_copy_is_a_jpeg_and_a_transparent_picture_keeps_its_transparency
     assert kept.getpixel((10, 50))[3] == 0 and kept.getpixel((110, 50))[3] == 255
 
 
-def test_pictures_are_drawn_at_768_unless_set_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pictures_are_drawn_at_768_in_16_steps_at_0_85_unless_set_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
     from phansora.products.talari.config import load_settings
 
-    monkeypatch.delenv("FLUX_SIZE", raising=False)
-    monkeypatch.delenv("COMFYUI_PIPELINE", raising=False)
-    assert load_settings().comfyui_base_size == 768
+    for name in ("FLUX_SIZE", "COMFYUI_PIPELINE", "FLUX_STEPS", "FLUX_DENOISE"):
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings()
+    assert (settings.comfyui_base_size, settings.comfyui_steps, settings.comfyui_denoise) == (768, 16, 0.85)
     assert dimensions(6.25 / 9.25, 768) == (640, 960)
     monkeypatch.setenv("FLUX_SIZE", "1024")
     assert load_settings().comfyui_base_size == 1024

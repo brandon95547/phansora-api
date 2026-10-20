@@ -51,6 +51,9 @@ class Settings:
     flux_t5: str = "t5xxl_fp8_e4m3fn.safetensors"
     flux_vae: str = "ae.safetensors"
     flux_guidance: float = 3.5
+    # How far the sampler goes when a picture is drawn from nothing (no reference): its
+    # denoise. A redraw from a reference uses the strength it is asked for instead.
+    comfyui_denoise: float = 1.0
     # EasyCache (built into ComfyUI): skips sampling steps that would barely change the picture.
     # Its reuse threshold — higher skips more; 0 switches it off. 0.2 is ComfyUI's default:
     # about 40% faster at 1024px on the A4000, with slightly grainier flat areas.
@@ -81,8 +84,9 @@ def load_settings() -> Settings:
         # draws in about half the time of 1024 and still well; the app enlarges a picture for
         # print when it is exported (up to 4×, 4x-UltraSharp), which covers any page at 200 DPI.
         comfyui_base_size=_int("FLUX_SIZE", 768 if flux else 1024),
-        # 20 is ComfyUI's own FLUX templates', and draws as well as 24 a sixth faster.
-        comfyui_steps=_int("FLUX_STEPS", 20 if flux else 28),
+        # 16 for every picture, redraws included (the user's choice, 2026-10-19): a fifth
+        # faster than ComfyUI's own FLUX templates' 20.
+        comfyui_steps=_int("FLUX_STEPS", 16 if flux else 28),
         comfyui_cfg=_float("COMFYUI_CFG", 6.5),
         comfyui_sampler=os.getenv("COMFYUI_SAMPLER", "").strip() or ("euler" if flux else "dpmpp_2m"),
         comfyui_scheduler=os.getenv("COMFYUI_SCHEDULER", "").strip() or ("simple" if flux else "karras"),
@@ -94,6 +98,9 @@ def load_settings() -> Settings:
         flux_t5=os.getenv("FLUX_T5_FILE", "").strip() or "t5xxl_fp8_e4m3fn.safetensors",
         flux_vae=os.getenv("FLUX_VAE_FILE", "").strip() or "ae.safetensors",
         flux_guidance=_float("FLUX_GUIDANCE", 3.5),
+        # 0.85 for a picture drawn from nothing (the user's choice, 2026-10-19); 1.0 draws from
+        # pure noise. A remix keeps its own strength.
+        comfyui_denoise=min(1.0, max(0.05, _float("FLUX_DENOISE", 0.85 if flux else 1.0))),
         flux_easycache=_float("FLUX_EASYCACHE", 0.2),
         model_status_file=_path("COMFYUI_MODEL_STATUS_FILE"),
         lab_users=frozenset(u.strip() for u in os.getenv("TALARI_LAB_USERS", "").split(",") if u.strip()),

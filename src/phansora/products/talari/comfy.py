@@ -40,7 +40,7 @@ MIN_SIZE = 256
 # Values a custom workflow file may ask for. A string that is exactly one of
 # the numeric tokens becomes a number; the text tokens are replaced in place.
 # %image% is the uploaded reference picture's name (empty without one) and %denoise% how
-# far to move from it (1.0 without one), for a custom workflow that redraws.
+# far to move from it (without one, the setting for a picture drawn from nothing).
 NUMERIC_TOKENS = ("%seed%", "%width%", "%height%", "%steps%", "%cfg%", "%denoise%")
 TEXT_TOKENS = ("%prompt%", "%negative%", "%checkpoint%", "%sampler%", "%scheduler%", "%image%")
 
@@ -111,7 +111,7 @@ def checkpoint_workflow(values: dict[str, Any]) -> dict[str, Any]:
                 "cfg": values["%cfg%"],
                 "sampler_name": values["%sampler%"],
                 "scheduler": values["%scheduler%"],
-                "denoise": 1.0,
+                "denoise": values["%denoise%"],
             },
         },
         "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["1", 2]}},
@@ -210,7 +210,7 @@ def flux_workflow(values: dict[str, Any]) -> dict[str, Any]:
                 "cfg": 1.0,
                 "sampler_name": values["%sampler%"],
                 "scheduler": values["%scheduler%"],
-                "denoise": 1.0,
+                "denoise": values["%denoise%"],
             },
         },
         "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["3", 0]}},
@@ -382,7 +382,7 @@ class ComfyUI:
             # A custom workflow names its own models, so only look one up when it asks.
             "%checkpoint%": settings.comfyui_checkpoint,
             "%image%": reference or "",
-            "%denoise%": request.strength if reference else 1.0,
+            "%denoise%": request.strength if reference else settings.comfyui_denoise,
         }
         redraw = (
             {"image": reference, "width": width, "height": height, "denoise": request.strength}
@@ -520,7 +520,7 @@ class ComfyUI:
                 "scheduler": settings.comfyui_scheduler,
                 "width": 1024,
                 "height": 1024,
-                "denoise": 1.0,
+                "denoise": settings.comfyui_denoise,
                 "style_image_weight": 1.0,
                 "easycache": settings.flux_easycache,
             },
