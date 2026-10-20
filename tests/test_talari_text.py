@@ -1222,6 +1222,42 @@ def test_a_background_in_the_authors_own_words_is_matched_to_the_set_choices(cli
     assert client.post("/users/7/images/background-choices", json={"words": "", "types": types}).status_code == 422
 
 
+REMIX = {**BRIEF, "mode": "media", "purpose": "interior", "look": "Fantasy Art, watercolor", "previous": "A green dragon curled on a rock.", "instruction": "Make this dragon look more real"}
+
+
+def test_a_remix_asks_a_couple_of_questions_within_the_pictures_look(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"questions": [
+        {"id": "Realism", "text": "How realistic should the dragon be?", "suggestions": ["A touch more lifelike", "Detailed and lifelike", "As real as watercolor allows"]},
+        {"id": "render", "text": "Which render engine should it use?", "suggestions": ["Octane"]},
+        {"id": "scales", "text": "Which parts should look most real?", "suggestions": []},
+        {"id": "light", "text": "Should the light change too?", "suggestions": ["Keep it", "Warmer", "Dramatic"]},
+        {"id": "more", "text": "Anything else?", "suggestions": ["No"]},
+    ]}]
+    response = client.post("/users/7/images/remix-questions", json=REMIX)
+    assert response.status_code == 200, response.text
+    # Two at most; none with machinery words or without answers to pick.
+    assert [q["id"] for q in response.json()["questions"]] == ["realism", "light"]
+    user = deepseek.calls[0]["user"]
+    assert "Make this dragon look more real" in user and "A green dragon curled on a rock." in user
+    assert "stays drawn as Fantasy Art, watercolor" in user and "never a photograph" in user
+    assert client.post("/users/7/images/remix-questions", json={**REMIX, "instruction": ""}).status_code == 422
+
+
+def test_a_remix_is_described_with_what_the_author_said_and_in_its_look(client: TestClient, deepseek: FakeDeepSeek) -> None:
+    deepseek.replies = [{"prompt": "A green dragon with lifelike scales.", "caption": "Dragon", "summary": "A dragon.", "shape": "square"}]
+    clarifications = [
+        {"question": "How realistic should the dragon be?", "answer": "Detailed and lifelike"},
+        {"question": "Should the light change too?", "decide": True},
+    ]
+    response = client.post("/users/7/images/compose", json={**REMIX, "clarifications": clarifications})
+    assert response.status_code == 200, response.text
+    user = deepseek.calls[0]["user"]
+    assert "WHAT THEY SAID WHEN ASKED ABOUT IT" in user
+    assert "- How realistic should the dragon be?\n  Detailed and lifelike" in user
+    assert "- Should the light change too?\n  (Let Talari decide.)" in user
+    assert "The picture stays drawn as Fantasy Art, watercolor: make the change within that look." in user
+
+
 def test_with_no_design_yet_a_background_asks_what_kind_it_is(client: TestClient, deepseek: FakeDeepSeek) -> None:
     deepseek.replies = [{"question": {"id": "kind", "text": "What kind of background?", "suggestions": ["A border"]}, "summary": ""}]
     client.post("/users/7/images/guide", json=BRIEF)

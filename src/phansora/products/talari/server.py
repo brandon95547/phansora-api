@@ -105,6 +105,8 @@ from .schemas import (
     UpscaleResponse,
     RefineRequest,
     RefineResponse,
+    RemixQuestionsRequest,
+    RemixQuestionsResponse,
     ReviseRequest,
     ReviseResponse,
     ServiceState,
@@ -456,6 +458,12 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     async def image_background_choices(user_id: str, body: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
         check_user(user_id)
         return await image_guide.background_choices(body)
+
+    # What an author's change to a picture leaves open, asked before it is remixed.
+    @app.post("/users/{user_id}/images/remix-questions", response_model=RemixQuestionsResponse, response_model_by_alias=True)
+    async def image_remix_questions(user_id: str, body: RemixQuestionsRequest) -> RemixQuestionsResponse:
+        check_user(user_id)
+        return await image_guide.remix_questions(body)
 
     @app.post("/users/{user_id}/images/designs", response_model=ImageDesignsResponse, response_model_by_alias=True)
     async def image_designs(user_id: str, body: ImageDesignsRequest) -> ImageDesignsResponse:

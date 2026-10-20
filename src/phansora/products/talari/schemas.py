@@ -545,6 +545,20 @@ class ImageComposeRequest(ImageBrief):
     # A change to a picture already made: its description, and the change in the author's words.
     previous: str = Field(default="", max_length=4000)
     instruction: str = Field(default="", max_length=300)
+    # A remix's questions about the change and what the author picked (remix_questions); an
+    # unanswered one is left to the model (`decide`).
+    clarifications: list[ImageAnswer] = Field(default_factory=list, max_length=3)
+
+
+# What an author's change to a picture leaves open (image_guide.remix_questions): "make the
+# dragon look more real" — how real. At most two questions, none when the change is clear.
+class RemixQuestionsRequest(ImageBrief):
+    previous: str = Field(default="", max_length=4000)
+    instruction: str = Field(min_length=1, max_length=300)
+
+
+class RemixQuestionsResponse(Lenient):
+    questions: list[ImageQuestion] = Field(default_factory=list)
 
 
 class ImageComposeResponse(Lenient):

@@ -5,10 +5,11 @@ look — borders, corner ornaments, textures, patterns, emblems, minimal grounds
 the author to pick from or combine; the questions after it are about what that design needs.
 
 ``guide`` asks the author the next question worth asking about one picture — with answers to
-pick — and says, in plain words, what the picture is so far. ``compose`` turns the answers
-(and, for a change to a picture already made, its description and the change asked for) into
-the description the image model draws from. That description is for the model only: the
-author is shown the summary.
+pick — and says, in plain words, what the picture is so far. ``remix_questions`` asks what a
+change to a picture leaves open, before it is remixed. ``compose`` turns the answers (and, for
+a change to a picture already made, its description, the change asked for and what the author
+said about it) into the description the image model draws from, always within the picture's
+look. That description is for the model only: the author is shown the summary.
 """
 
 from __future__ import annotations
@@ -29,12 +30,16 @@ from .schemas import (
     ImageDesignsResponse,
     ImageGuideResponse,
     ImageQuestion,
+    RemixQuestionsRequest,
+    RemixQuestionsResponse,
 )
 
 # Questions in one conversation, at most; most pictures need fewer.
 MAX_QUESTIONS = 6
+# Before a remix: a couple, at most.
+REMIX_QUESTIONS = 2
 SUGGESTIONS = 4
-TEMPERATURE = {"guide": 0.8, "compose": 0.7, "designs": 0.95}
+TEMPERATURE = {"guide": 0.8, "compose": 0.7, "designs": 0.95, "remix": 0.5}
 KINDS = set(prompts.DESIGN_KINDS)
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 # Words that give the machinery away, never put to an author.
@@ -79,6 +84,20 @@ async def guide(request: ImageBrief) -> ImageGuideResponse:
     summary = _text(data.get("summary"), 500)
     question = _question(data.get("question"), request) if remaining > 0 else None
     return ImageGuideResponse(question=question, summary=summary)
+
+
+async def remix_questions(request: RemixQuestionsRequest) -> RemixQuestionsResponse:
+    """What an author's change to a picture leaves open, asked before it is remixed: at most
+    two questions, each with answers to pick within the picture's look; none when the change
+    is clear."""
+    system, user = prompts.remix_questions(request, REMIX_QUESTIONS)
+    data = await llm.ask_json(system, user, max_tokens=400, temperature=TEMPERATURE["remix"])
+    out: list[ImageQuestion] = []
+    for item in data.get("questions") if isinstance(data.get("questions"), list) else []:
+        question = _question(item, request)
+        if question and question.suggestions and all(question.id != q.id for q in out):
+            out.append(question)
+    return RemixQuestionsResponse(questions=out[:REMIX_QUESTIONS])
 
 
 async def background_choices(request: BackgroundChoicesRequest) -> BackgroundChoicesResponse:

@@ -23,6 +23,7 @@ from .schemas import (
     ImageBrief,
     ImageComposeRequest,
     ImageDesignsRequest,
+    RemixQuestionsRequest,
     Rewrite,
     SourceChapterText,
 )
@@ -821,15 +822,26 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
             rules.append("No figures, creatures or scenery beyond the decoration itself.")
     change = ""
     if request.previous.strip():
+        asked = "".join(
+            f"\n- {a.question}\n  {a.answer if a.answer and not a.decide else '(Let Talari decide.)'}"
+            for a in request.clarifications if a.question
+        )
+        said = f"\n\nWHAT THEY SAID WHEN ASKED ABOUT IT{asked}" if asked else ""
         change = f"""
 
 THE PICTURE AS IT WAS DESCRIBED
 {request.previous.strip()}
 
 THE AUTHOR'S CHANGE
-{request.instruction.strip() or "Draw it again, the same picture."}
+{request.instruction.strip() or "Draw it again, the same picture."}{said}
 
 Rewrite the description with this change made, keeping everything else as it was."""
+        if request.look:
+            rules.append(
+                f"The picture stays drawn as {request.look}: make the change within that look. \"More real\" means more "
+                "lifelike forms, anatomy, light and texture as that look can show them — never a photograph, a 3D render "
+                "or another art style."
+            )
     user = f"""{_image_card(request)}
 
 THE AUTHOR'S ANSWERS
@@ -843,6 +855,26 @@ Return a JSON object with:
 - "caption": a short name for the picture, at most 6 words, for the author's list of pictures.
 - "summary": the picture in one or two plain sentences for the author, beginning "A" or "An", with nothing technical.
 - "shape": "portrait", "square" or "landscape" — the shape that suits the picture best."""
+    return ROLE, user
+
+
+def remix_questions(request: RemixQuestionsRequest, most: int) -> tuple[str, str]:
+    look = request.look or "the book's own art style"
+    user = f"""{_image_card(request)}
+
+THE PICTURE AS IT WAS DESCRIBED
+{request.previous.strip() or "A picture of the book; no description of it was kept."}
+
+THE AUTHOR'S CHANGE
+{request.instruction.strip()}
+
+The author is changing this picture. Ask only what their words leave open that would change the result a lot — how far to go, which part, what kind. For "make the dragon look more real": how realistic. At most {most} questions, the most important first; none when the change is already clear.
+- Each question in plain words, at most 12 words.
+- Each with three or four answers to pick, at most 6 words each, from the smallest change to the largest.
+- The picture stays drawn as {look}: the answers are degrees and kinds of the change within that look — never a photograph, a 3D render or another art style.
+- Never ask about the art style, medium, size or shape, or about anything the change already says. Nothing technical.
+
+Return a JSON object: {{"questions": [{{"id": "a-short-name", "text": "…", "suggestions": ["…", "…", "…"]}}]}}, with an empty list when nothing needs asking."""
     return ROLE, user
 
 
