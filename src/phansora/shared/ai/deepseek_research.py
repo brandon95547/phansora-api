@@ -13,6 +13,8 @@ mirroring what a hosted web_search tool does internally:
 
 ``reason_json`` is a plain DeepSeek chat call in JSON mode, parsed with the same
 salvage logic the other research clients use.
+
+Every call goes through the shared helper in ``shared.ai.deepseek``.
 """
 from __future__ import annotations
 
@@ -23,19 +25,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-import httpx
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
-
-from . import usage
+from .deepseek import DeepSeekChatConfig, api_key, chat_json_sync, chat_sync
 from .json_repair import parse_json_loose
 from .research import GroundedAnswer
-from .retries import ProviderError, worth_retrying
 from .search import SearchConfig, SearchResult, web_search
-
-
-def _worth_retrying(exc: BaseException) -> bool:
-    """A timeout, a dropped connection or a 408/429/5xx; never a 4xx refusal."""
-    return worth_retrying(exc, (httpx.TransportError,))
 
 
 # The ceiling the truncation retry may escalate to. Past this a prompt is not merely
@@ -110,7 +103,7 @@ class DeepSeekConfig:
         from .models import resolve_model, resolve_reasoning_model
         model = resolve_model("CHRONO_MODEL", provider="deepseek")
         return cls(
-            api_key=(os.getenv("DEEPSEEK_API_KEY") or "").strip(),
+            api_key=api_key(),
             base_url=base,
             model=model,
             reasoning_model=resolve_reasoning_model("CHRONO_MODEL", provider="deepseek"),
@@ -127,14 +120,21 @@ class DeepSeekResearchClient:
         self._search_cfg = SearchConfig.from_env()
 
     # ------------------------------------------------------------- chat plumbing
-    # reraise: when the attempts run out, the caller gets DeepSeek's own error rather
-    # than tenacity's RetryError wrapped around it.
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(min=1, max=8),
-        retry=retry_if_exception(_worth_retrying),
-        reraise=True,
-    )
+    def _chat_cfg(self, model: str) -> DeepSeekChatConfig:
+        # Three attempts, with 1s and then 2s of backoff between them: what every research
+        # client allows itself, and what the request budget is measured against (see
+        # chrono_request_timeout_s). The shared helper retries only what a second attempt
+        # might change, and gives up with DeepSeek's own error and status.
+        return DeepSeekChatConfig(
+            base_url=self._cfg.base_url,
+            api_key=self._cfg.api_key,
+            model=model,
+            timeout_s=self._cfg.timeout_s,
+            max_retries=2,
+            min_retry_sleep_s=1.0,
+            max_retry_sleep_s=8.0,
+        )
+
     def _chat(
         self,
         *,
@@ -144,42 +144,15 @@ class DeepSeekResearchClient:
         max_tokens: int,
         json_mode: bool = False,
     ) -> tuple[str, Optional[str]]:
-        payload: Dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "max_tokens": max_tokens,
-            "temperature": 0,
-            "stream": False,
-        }
-        if json_mode:
-            payload["response_format"] = {"type": "json_object"}
-        resp = httpx.post(
-            f"{self._cfg.base_url}/v1/chat/completions",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {self._cfg.api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=self._cfg.timeout_s,
-        )
-        if resp.status_code >= 400:
-            raise ProviderError(
-                f"DeepSeek HTTP {resp.status_code}: {resp.text[:500]}", status=resp.status_code
-            )
-        body = resp.json()
-        usage.record_response(body)
-        choices = body.get("choices") or []
-        if not choices:
-            return "", None
-        # finish_reason comes back too. Without it a truncated answer is
-        # indistinguishable from a complete one, which is exactly how a trace that ran
-        # out of budget mid-JSON came back looking like a successful empty result.
-        return (
-            (choices[0].get("message") or {}).get("content") or "",
-            choices[0].get("finish_reason"),
+        # The thinking is left on, as this client has always run it, unlike the other
+        # DeepSeek callers: reason_json's budgets are sized with the reasoning in them.
+        return chat_sync(
+            cfg=self._chat_cfg(model),
+            system=system,
+            user=user,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+            disable_thinking=False,
         )
 
     # --------------------------------------------------------------- reasoning
@@ -192,8 +165,8 @@ class DeepSeekResearchClient:
     ) -> Dict[str, Any]:
         model = self._cfg.reasoning_model if use_reasoning_model else self._cfg.model
 
-        # Retry on TRUNCATION, doubling the budget — the same thing the Book Alchemy
-        # client learned to do.
+        # Retry on TRUNCATION, doubling the budget — the shared chat_json does it, as it
+        # does for Book Alchemy.
         #
         # This is a REASONING model, and its reasoning tokens are billed against
         # max_tokens (see shared/ai/deepseek.py). A synthesize prompt carrying a trace's
@@ -201,34 +174,23 @@ class DeepSeekResearchClient:
         # mid-JSON. Nothing here used to notice: the cut-off text went to a parser that
         # salvaged some inner object from it, and the caller got a dict with none of the
         # keys it wanted — an empty origin and an empty timeline, reported as success.
-        budget = self._cfg.reason_max_tokens
-        last_raw = ""
-        for _ in range(3):
-            raw, finish = self._chat(
-                system=_JSON_SYSTEM,
-                user=prompt,
-                model=model,
-                max_tokens=budget,
-                json_mode=True,
+        reply = chat_json_sync(
+            cfg=self._chat_cfg(model),
+            system=_JSON_SYSTEM,
+            user=prompt,
+            max_tokens=self._cfg.reason_max_tokens,
+            max_tokens_ceiling=MAX_REASON_TOKENS,
+            disable_thinking=False,  # see _chat
+        )
+        if reply.finish_reason == "length":
+            # Out of headroom and still cut off. Failing is the honest outcome: a partial
+            # answer here becomes a trace with no origin and no timeline, and the user has
+            # already paid for it.
+            raise RuntimeError(
+                f"The model's answer was cut off at {max(self._cfg.reason_max_tokens, MAX_REASON_TOKENS)} "
+                "tokens and could not be completed."
             )
-            last_raw = raw or ""
-            if finish == "length" and budget < MAX_REASON_TOKENS:
-                logger.warning(
-                    "Reasoning response truncated at %d tokens; retrying with %d",
-                    budget, min(MAX_REASON_TOKENS, budget * 2),
-                )
-                budget = min(MAX_REASON_TOKENS, budget * 2)
-                continue
-            if finish == "length":
-                # Out of headroom and still cut off. Failing is the honest outcome: a
-                # partial answer here becomes a trace with no origin and no timeline,
-                # and the user has already paid for it.
-                raise RuntimeError(
-                    f"The model's answer was cut off at {budget} tokens and could not be completed."
-                )
-            return _parse_json(last_raw or "{}")
-
-        raise RuntimeError("The model's answer could not be completed within the token budget.")
+        return _parse_json(reply.text or "{}")
 
     # ------------------------------------------------------------------ search
     def grounded_search(self, prompt: str, *, temperature: float = 0.1) -> GroundedAnswer:

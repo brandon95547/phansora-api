@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 
+from phansora.shared.ai import deepseek as ds
 from phansora.shared.ai import deepseek_research as dr
 
 
@@ -51,37 +53,49 @@ def test_empty_input_is_still_an_empty_object():
 
 # ── the truncation retry ────────────────────────────────────────────────────
 
-class _FakeClient(dr.DeepSeekResearchClient):
-    """Drives reason_json without a network, recording the budgets it asked for."""
+@pytest.fixture
+def scripted(monkeypatch):
+    """A client whose model replies are a fixed list of (content, finish_reason), served
+    over the shared helper's HTTP, recording the budget each request asked for."""
 
-    def __init__(self, script):
-        self._script = list(script)      # [(content, finish_reason), ...]
-        self.budgets = []
-        self._cfg = dr.DeepSeekConfig(api_key="k", model="m", reasoning_model="r")
+    def build(script):
+        script = list(script)
+        client = dr.DeepSeekResearchClient.__new__(dr.DeepSeekResearchClient)
+        client._cfg = dr.DeepSeekConfig(api_key="k", model="m", reasoning_model="r")
+        client.budgets = []
 
-    def _chat(self, *, system, user, model, max_tokens, json_mode=False):
-        self.budgets.append(max_tokens)
-        return self._script.pop(0)
+        def answer(request: httpx.Request) -> httpx.Response:
+            sent = json.loads(request.content)
+            client.budgets.append(sent["max_tokens"])
+            assert sent["model"] == "r" and "thinking" not in sent
+            content, finish = script.pop(0)
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}, "finish_reason": finish}]})
+
+        real_client = httpx.Client
+        monkeypatch.setattr(ds.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(answer), **kw))
+        return client
+
+    return build
 
 
-def test_a_truncated_answer_is_retried_with_double_the_budget():
+def test_a_truncated_answer_is_retried_with_double_the_budget(scripted):
     good = '{"origin": {"year": -1200}}'
-    client = _FakeClient([("{\"origin\": {\"year\": -12", "length"), (good, "stop")])
+    client = scripted([("{\"origin\": {\"year\": -12", "length"), (good, "stop")])
     assert client.reason_json("prompt") == {"origin": {"year": -1200}}
     assert client.budgets[1] == client.budgets[0] * 2
 
 
-def test_it_gives_up_loudly_rather_than_returning_an_empty_trace():
+def test_it_gives_up_loudly_rather_than_returning_an_empty_trace(scripted):
     # Cut off every time: the honest outcome is an error the job can refund on, not a
     # result with nothing in it.
     cut = ("{\"origin\": {\"year\": -12", "length")
-    client = _FakeClient([cut, cut, cut])
+    client = scripted([cut, cut, cut])
     with pytest.raises(RuntimeError, match="cut off"):
         client.reason_json("prompt")
 
 
-def test_a_complete_answer_costs_no_extra_calls():
-    client = _FakeClient([('{"ok": true}', "stop")])
+def test_a_complete_answer_costs_no_extra_calls(scripted):
+    client = scripted([('{"ok": true}', "stop")])
     assert client.reason_json("prompt") == {"ok": True}
     assert len(client.budgets) == 1
 

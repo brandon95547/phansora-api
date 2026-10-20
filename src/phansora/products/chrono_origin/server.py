@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
+from phansora.shared.ai.deepseek import key_configured
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 
@@ -63,7 +64,7 @@ def _provider() -> str:
 def _provider_configured() -> bool:
     """Is the *active* LLM provider configured? (OpenAI/GPT-5 Nano by default.)"""
     if _provider() == "deepseek":
-        return bool(os.getenv("DEEPSEEK_API_KEY"))
+        return key_configured()
     return bool(os.getenv("OPENAI_API_KEY"))
 
 
