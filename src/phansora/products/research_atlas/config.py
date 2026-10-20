@@ -1,7 +1,7 @@
 import os
+from typing import Dict, List
 
-import openai
-
+from phansora.shared.ai.deepseek import DeepSeekChatConfig, chat_sync
 from phansora.shared.paths import runtime_root
 
 # The default report path lives under the runtime root (CWD / PHANSORA_DATA_DIR), not
@@ -29,17 +29,48 @@ def _get_float_env(name: str, default: float) -> float:
         return default
 
 
+class DeepSeekClient:
+    """Research Atlas's calls to DeepSeek, through the shared helper in shared.ai.deepseek.
+
+    What is fixed here is what every call in a run shares: how long one may take, how
+    often it is tried, and how much it may write. The model is read on each call
+    (RESEARCH_ATLAS_MODEL, then DEEPSEEK_MODEL), so a missing one fails that call, which
+    the stages already survive, rather than the whole run.
+    """
+
+    def __init__(self, *, timeout_s: float, max_retries: int, max_tokens: int) -> None:
+        self.timeout_s = timeout_s
+        self.max_retries = max_retries
+        self.max_tokens = max_tokens
+
+    def ask(self, messages: List[Dict[str, str]], *, temperature: float) -> str:
+        """The reply to ``messages``, as text. Raises on any failure."""
+        cfg = DeepSeekChatConfig.from_env(product_var="RESEARCH_ATLAS_MODEL")
+        text, _finish = chat_sync(
+            cfg=cfg,
+            messages=messages,
+            max_tokens=self.max_tokens,
+            temperature=temperature,
+            timeout_s=self.timeout_s,
+            max_retries=self.max_retries,
+        )
+        return text
+
+
 class Config:
     def __init__(self):
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        # Bound every LLM call. Without these the OpenAI SDK defaults to a 600s
-        # (10-minute) timeout with 2 retries, so a single slow/hung DeepSeek call
-        # can stall a whole generation for ten minutes. Fail fast and retry once.
-        self.deepseek_client = openai.OpenAI(
-            api_key=api_key,
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            timeout=_get_float_env("DEEPSEEK_TIMEOUT_SECONDS", 90.0),
+        # Bound every LLM call. Left to its defaults, a single slow/hung DeepSeek call
+        # could stall a whole generation for ten minutes. Fail fast and retry once.
+        #
+        # The thinking is off (the helper's default) and every reply is capped, like the
+        # rest of the DeepSeek callers: the v4 models reason by default and bill it against
+        # the output, which is spent before an extraction record is written. Tokens are
+        # billed as used, so a generous cap costs nothing; 8000 is within what every
+        # DeepSeek chat model accepts.
+        self.deepseek_client = DeepSeekClient(
+            timeout_s=_get_float_env("DEEPSEEK_TIMEOUT_SECONDS", 90.0),
             max_retries=_get_int_env("DEEPSEEK_MAX_RETRIES", 1),
+            max_tokens=_get_int_env("RESEARCH_ATLAS_MAX_TOKENS", 8000),
         )
         self.toc_full_path = os.getenv("TOC_FULL_PATH", str(BASE_DIR / "toc" / "full.md"))
         self.max_chunk_chars = _get_int_env("MAX_CHUNK_CHARS", 20000)

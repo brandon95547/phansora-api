@@ -20,7 +20,6 @@ import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-from phansora.shared.ai.deepseek import chat_model
 
 logger = logging.getLogger("research_atlas.text_cleaner")
 
@@ -131,7 +130,7 @@ def clean_extracted_text(
     text : str
         The raw extracted text.
     client : Any
-        An OpenAI-compatible client (``openai.OpenAI`` instance).
+        The DeepSeek client (``Config.deepseek_client``).
     chunk_size : int
         Maximum characters per cleanup chunk.  Larger values give the LLM
         more context but use more tokens.
@@ -205,9 +204,8 @@ def _clean_chunk(chunk: str, client: Any) -> str | None:
     suspiciously short result (which would indicate truncation / refusal).
     """
     try:
-        response = client.chat.completions.create(
-            model=chat_model("RESEARCH_ATLAS_MODEL"),
-            messages=[
+        result = client.ask(
+            [
                 {"role": "system", "content": _CLEANUP_SYSTEM_PROMPT},
                 {
                     "role": "user",
@@ -220,8 +218,6 @@ def _clean_chunk(chunk: str, client: Any) -> str | None:
             ],
             temperature=0.1,
         )
-
-        result = (response.choices[0].message.content or "").strip()
 
         # Safety: if the model returned significantly less text, it
         # probably hallucinated or truncated — keep the original.

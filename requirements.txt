@@ -83,7 +83,7 @@ tenacity==9.1.4
 # anthropic in particular: animation.py calls the version-sensitive
 # client.messages.stream(output_config=…, thinking=…), which a floating major can break
 # on a deploy that changed nothing else.
-openai==2.45.0           # chrono_origin (GPT-5 Nano — Responses API + web_search); research_atlas (DeepSeek via OpenAI-compatible API)
+openai==2.45.0           # chrono_origin (GPT-5 Nano — Responses API + web_search)
 anthropic==0.116.0       # narrava_studio (Claude Sonnet 4.6 — AI media animation generation)
 pydantic==2.13.4         # chrono_origin models — >=2.9 also required by vLLM 0.9.0
 pydantic-settings==2.14.2  # chrono_origin settings

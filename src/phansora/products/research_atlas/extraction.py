@@ -29,7 +29,6 @@ import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from phansora.shared.ai.deepseek import chat_model
 from phansora.shared.ai.json_repair import parse_json_loose
 
 from . import neutrality
@@ -171,7 +170,6 @@ def call_neutral(
     user: str,
     source_labels: Sequence[str] = (),
     temperature: float = 0.1,
-    model_var: str = "RESEARCH_ATLAS_MODEL",
 ) -> Tuple[Optional[Dict], List[neutrality.Violation]]:
     """One model call, with the neutrality rule enforced rather than merely requested.
 
@@ -186,10 +184,7 @@ def call_neutral(
     """
     def _ask(messages) -> Optional[Dict]:
         try:
-            resp = client.chat.completions.create(
-                model=chat_model(model_var), messages=messages, temperature=temperature,
-            )
-            return _extract_json((resp.choices[0].message.content or "").strip())
+            return _extract_json(client.ask(messages, temperature=temperature))
         except Exception as e:  # noqa: BLE001 -- a failed call must not kill the run
             logger.warning("Extraction call failed: %s", e, exc_info=True)
             return None

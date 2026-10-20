@@ -19,7 +19,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from phansora.shared.ai.deepseek import chat_model
 from phansora.shared.ai.json_repair import parse_json_loose
 
 logger = logging.getLogger("research_atlas.source_profiler")
@@ -91,7 +90,7 @@ def profile_sources(
 
     Args:
         sources: List of dicts with keys 'label' and 'text'.
-        client: OpenAI-compatible API client.
+        client: The DeepSeek client (``Config.deepseek_client``).
         sample_chars: How many chars from the start of each source to send.
 
     Returns:
@@ -116,15 +115,13 @@ def profile_sources(
         )
 
         try:
-            response = client.chat.completions.create(
-                model=chat_model("RESEARCH_ATLAS_MODEL"),
-                messages=[
+            raw = client.ask(
+                [
                     {"role": "system", "content": _PROFILE_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
             )
-            raw = (response.choices[0].message.content or "").strip()
             data = _extract_json(raw)
             if data:
                 return SourceProfile(
