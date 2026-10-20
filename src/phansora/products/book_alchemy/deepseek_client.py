@@ -1,9 +1,9 @@
-"""DeepSeek chat client for Book Alchemy.
+"""DeepSeek chat client for Book Alchemy, over the shared helper in ``shared.ai.deepseek``.
 
-Reuses the config + env vars from the existing OCR cleaner
-(``services.deepseek_cleaner.DeepSeekChatConfig``) and adds:
-  - ``chat()``      free-form completion
-  - ``chat_json()`` structured completion that returns parsed JSON
+The helper does the HTTP, the retries and the ``thinking`` fallback; this adds:
+  - ``chat()``        free-form completion
+  - ``chat_to_end()`` a completion that is carried on from where it was cut off
+  - ``chat_json()``   structured completion that returns parsed JSON
 
 All calls default to temperature 0 and instruct the model to stay grounded in
 the supplied source text — Book Alchemy is a knowledge-transformation system,
@@ -11,14 +11,10 @@ not a generator of new content.
 """
 from __future__ import annotations
 
-import asyncio
-import random
 from typing import Any, Optional
 
-import aiohttp
-
-from phansora.shared.ai.deepseek import DeepSeekChatConfig  # reuse existing config/env
-from phansora.shared.ai.retries import ProviderError, worth_retrying
+from phansora.shared.ai import deepseek
+from phansora.shared.ai.deepseek import JSON_ONLY, DeepSeekChatConfig
 # The shared JSON salvage, aliased to its historical private names so call sites below
 # read unchanged.
 from phansora.shared.ai.json_repair import (
@@ -63,7 +59,6 @@ class DeepSeekClient:
         content, _ = await self._completion(
             system=system, user=user,
             max_output_tokens=max_output_tokens, temperature=temperature,
-            json_mode=False,
         )
         return content
 
@@ -91,7 +86,7 @@ class DeepSeekClient:
         text, finish = await self._completion(
             system=system, user=user,
             max_output_tokens=max_output_tokens, temperature=temperature,
-            json_mode=False, timeout_s=timeout_s,
+            timeout_s=timeout_s,
         )
         for _ in range(MAX_CONTINUATIONS):
             if finish != "length":
@@ -103,7 +98,7 @@ class DeepSeekClient:
             more, finish = await self._completion(
                 system=system, user=user,
                 max_output_tokens=max_output_tokens, temperature=temperature,
-                json_mode=False, continue_from=said, timeout_s=timeout_s,
+                continue_from=said, timeout_s=timeout_s,
             )
             if not more:
                 finish = "length"
@@ -123,49 +118,38 @@ class DeepSeekClient:
     ) -> Any:
         """Completion that must return JSON.
 
-        If the model reports it was cut off (``finish_reason == "length"``) and
-        the JSON won't parse, retry with a larger token budget (up to the model
-        cap) before giving up — large books can produce long structured output
+        If the model reports it was cut off (``finish_reason == "length"``), it is
+        asked again with a larger token budget (up to the model cap) before the
+        complete part is salvaged — large books can produce long structured output
         that would otherwise truncate into invalid JSON."""
-        budget = max_output_tokens
-        last_err: Optional[Exception] = None
-        sys_prompt = system + "\n\nRespond with valid JSON only. No prose, no markdown fences."
-        for _ in range(3):
-            raw, finish = await self._completion(
-                system=sys_prompt, user=user,
-                max_output_tokens=budget, temperature=temperature,
-                json_mode=True,
-            )
-            try:
-                return _parse_json_loose(raw)
-            except Exception as exc:  # noqa: BLE001
-                last_err = exc
-                if finish == "length" and budget < MAX_JSON_TOKENS:
-                    budget = min(MAX_JSON_TOKENS, budget * 2)
-                    continue
-                # Budget exhausted (or a non-length failure): salvage the complete
-                # portion of a (possibly truncated) response rather than failing the
-                # whole chunk over a trailing, cut-off item. Repair returns None when
-                # nothing complete came through, so this is safe for any failure.
-                repaired = _repair_truncated_json(raw)
-                if repaired is not None:
-                    try:
-                        # Back through the loose parser, not json.loads: a response can
-                        # be both cut off AND carry a literal backslash copied out of the
-                        # source, and only the loose parser fixes the second.
-                        return _parse_json_loose(repaired)
-                    except Exception:  # noqa: BLE001, S110 — the original error is raised next
-                        pass
-                raise
-        raise last_err  # pragma: no cover
+        raw, _finish = await deepseek.chat_json(
+            cfg=self.cfg, system=system + JSON_ONLY, user=user,
+            max_tokens=max_output_tokens, max_tokens_ceiling=MAX_JSON_TOKENS,
+            temperature=temperature,
+        )
+        try:
+            return _parse_json_loose(raw)
+        except Exception:  # noqa: BLE001
+            # Budget exhausted (or a non-length failure): salvage the complete portion
+            # of a (possibly truncated) response rather than failing the whole chunk over
+            # a trailing, cut-off item. Repair returns None when nothing complete came
+            # through, so this is safe for any failure.
+            repaired = _repair_truncated_json(raw)
+            if repaired is not None:
+                try:
+                    # Back through the loose parser, not json.loads: a response can be
+                    # both cut off AND carry a literal backslash copied out of the
+                    # source, and only the loose parser fixes the second.
+                    return _parse_json_loose(repaired)
+                except Exception:  # noqa: BLE001, S110 — the original error is raised next
+                    pass
+            raise
 
     async def _completion(
         self, *, system: str, user: str, max_output_tokens: int,
-        temperature: float, json_mode: bool, continue_from: Optional[str] = None,
+        temperature: float, continue_from: Optional[str] = None,
         timeout_s: Optional[float] = None,
     ) -> tuple[str, Optional[str]]:
-        cfg = self.cfg
-        url = f"{cfg.base_url}/v1/chat/completions"
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -177,67 +161,13 @@ class DeepSeekClient:
                 {"role": "assistant", "content": continue_from},
                 {"role": "user", "content": CONTINUE_USER},
             ]
-        payload: dict[str, Any] = {
-            "model": cfg.model,
-            "temperature": temperature,
-            "messages": messages,
-            "max_tokens": max_output_tokens,
-            "stream": False,
-            # The v4 models reason by default and bill those tokens against max_tokens.
-            # Every budget here is sized for the ANSWER only — a session script is
-            # `words * 1.7 + 400`, about 1000 tokens — so reasoning consumed the whole
-            # allowance and the content came back EMPTY. An empty script is not an error
-            # anywhere downstream: the session is simply written blank and the audio phase
-            # skips it, which is how a course completed with no MP3s and no failure.
-            "thinking": {"type": "disabled"},
-        }
-        if json_mode:
-            # DeepSeek supports OpenAI-style JSON mode; harmless if ignored.
-            payload["response_format"] = {"type": "json_object"}
-
-        headers = {
-            "Authorization": f"Bearer {cfg.api_key}",
-            "Content-Type": "application/json",
-        }
-        timeout = aiohttp.ClientTimeout(total=timeout_s or cfg.timeout_s)
-        last_err: Optional[Exception] = None
-
-        for attempt in range(cfg.max_retries + 1):
-            try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload, headers=headers) as resp:
-                        if resp.status >= 400:
-                            body = await resp.text()
-                            # `thinking` is a v4-era parameter; if the configured model
-                            # rejects it, drop it and retry rather than failing the job.
-                            if resp.status == 400 and "thinking" in body and "thinking" in payload:
-                                payload.pop("thinking", None)
-                                continue
-                            raise ProviderError(
-                                f"DeepSeek HTTP {resp.status}: {body[:800]}", status=resp.status
-                            )
-                        data = await resp.json()
-                choices = data.get("choices") or []
-                if not choices:
-                    return "", None
-                content = ((choices[0].get("message") or {}).get("content") or "").strip()
-                finish_reason = choices[0].get("finish_reason")
-                return content, finish_reason
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-                # Only what a second attempt might change: a timeout, a dropped
-                # connection, a 429 or a 5xx. A 401 or 402 fails the same way every time.
-                if attempt >= cfg.max_retries or not worth_retrying(
-                    e, (aiohttp.ClientError, asyncio.TimeoutError)
-                ):
-                    break
-                sleep_s = min(
-                    cfg.max_retry_sleep_s,
-                    cfg.min_retry_sleep_s * (2 ** attempt) + random.random() * 0.25,
-                )
-                await asyncio.sleep(sleep_s)
-
-        raise ProviderError(
-            f"DeepSeek call failed after {attempt + 1} attempt(s): {last_err}",
-            status=getattr(last_err, "status", None),
-        ) from last_err
+        # The thinking stays off (the helper's default). Every budget here is sized for
+        # the ANSWER only — a session script is `words * 1.7 + 400`, about 1000 tokens —
+        # and the v4 models bill their reasoning against max_tokens, so it consumed the
+        # whole allowance and the content came back EMPTY. An empty script is not an
+        # error anywhere downstream: the session is simply written blank and the audio
+        # phase skips it, which is how a course completed with no MP3s and no failure.
+        return await deepseek.chat(
+            cfg=self.cfg, messages=messages, max_tokens=max_output_tokens,
+            temperature=temperature, timeout_s=timeout_s,
+        )

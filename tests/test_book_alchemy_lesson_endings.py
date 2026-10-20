@@ -184,7 +184,7 @@ def test_the_continuation_turn_reaches_the_model_after_its_own_words():
         async def __aexit__(self, *exc):
             return False
 
-        async def json(self):
+        async def json(self, content_type=None):
             return {"choices": [{"message": {"content": "More."}, "finish_reason": "stop"}]}
 
     class Session:
@@ -201,7 +201,7 @@ def test_the_continuation_turn_reaches_the_model_after_its_own_words():
             seen.update(json)
             return Recorder()
 
-    import phansora.products.book_alchemy.deepseek_client as mod
+    import phansora.shared.ai.deepseek as mod
 
     client = DeepSeekClient(SimpleNamespace(
         base_url="http://x", api_key="k", model="m", timeout_s=5,
@@ -212,7 +212,7 @@ def test_the_continuation_turn_reaches_the_model_after_its_own_words():
     try:
         asyncio.run(client._completion(
             system="sys", user="usr", max_output_tokens=10, temperature=0.0,
-            json_mode=False, continue_from="Said so far.",
+            continue_from="Said so far.",
         ))
     finally:
         mod.aiohttp.ClientSession = real
@@ -220,6 +220,23 @@ def test_the_continuation_turn_reaches_the_model_after_its_own_words():
     assert [m["role"] for m in seen["messages"]] == ["system", "user", "assistant", "user"]
     assert seen["messages"][2]["content"] == "Said so far."
     assert seen["messages"][3]["content"] == prompts.CONTINUE_USER
+
+
+def test_a_cut_off_json_answer_gets_more_room_then_keeps_its_complete_part(monkeypatch):
+    import phansora.shared.ai.deepseek as shared
+
+    budgets: list[int] = []
+
+    async def cut_off(*, max_tokens, json_mode, **kwargs):
+        budgets.append(max_tokens)
+        assert json_mode and kwargs["system"].endswith(shared.JSON_ONLY)
+        return shared.ChatReply('{"items": [{"a": 1}, {"a": 2}, {"a"', "length")
+
+    monkeypatch.setattr(shared, "chat", cut_off)
+    client = DeepSeekClient(SimpleNamespace(timeout_s=5))
+    data = asyncio.run(client.chat_json(system="s", user="u", max_output_tokens=2000))
+    assert data["items"][:2] == [{"a": 1}, {"a": 2}]
+    assert budgets == [2000, 4000, 8000]
 
 
 # ── How long a lesson is planned to run ──────────────────────────────────────
