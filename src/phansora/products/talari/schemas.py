@@ -53,6 +53,9 @@ class IllustrationResponse(Model):
     # cannot send a header with an <img> adds ?pt=<token>, which the auth gate accepts.
     src: str
     seed: int
+    # What ComfyUI was given (comfy.sent): the prompt as it went, and the settings — kept by
+    # the app with the picture, for its admin to see.
+    sent: dict[str, Any] = Field(default_factory=dict)
 
 
 class ServiceState(Model):

@@ -199,13 +199,13 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     @app.post("/users/{user_id}/illustrations", response_model=IllustrationResponse, response_model_by_alias=True)
     async def illustrate(user_id: str, body: IllustrationRequest, request: Request) -> IllustrationResponse:
         folder = user_images(user_id)
-        image, seed = await request.app.state.comfy.generate(body)
+        image, seed, given = await request.app.state.comfy.generate(body)
         if body.upscale > 1:
             image = await asyncio.to_thread(enlarge.upscale, image, body.upscale)
         folder.mkdir(parents=True, exist_ok=True)
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
-        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed)
+        return IllustrationResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed, sent=given)
 
     # A picture enlarged with an upscaling model on ComfyUI (comfy.UPSCALERS), for print: one
     # of the user's pictures, by name, or one sent. The result is a new picture of theirs,

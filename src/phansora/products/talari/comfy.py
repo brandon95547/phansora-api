@@ -149,6 +149,25 @@ def with_reference(
     return out
 
 
+def sent(workflow: dict[str, Any]) -> dict[str, Any]:
+    """What a workflow gives ComfyUI, read back from it: the prompt (the first text encoded)
+    and the negative (the second), the size drawn, and the sampler's settings — for the
+    record kept with a picture."""
+    nodes = [workflow[k] for k in sorted(workflow, key=lambda k: (not str(k).isdigit(), int(k) if str(k).isdigit() else 0, str(k)))]
+    texts = [n["inputs"].get("text") for n in nodes if n.get("class_type") in ("CLIPTextEncode", "CLIPTextEncodeFlux") and isinstance(n["inputs"].get("text"), str)]
+    sampler = next((n["inputs"] for n in nodes if n.get("class_type") == "KSampler"), {})
+    size = next((n["inputs"] for n in nodes if n.get("class_type") in ("EmptySD3LatentImage", "EmptyLatentImage", "ImageScale")), {})
+    guidance = next((n["inputs"].get("guidance") for n in nodes if n.get("class_type") == "FluxGuidance"), None)
+    return {
+        "prompt": texts[0] if texts else "",
+        "negative": texts[1] if len(texts) > 1 else "",
+        "width": size.get("width"), "height": size.get("height"),
+        "steps": sampler.get("steps"), "cfg": sampler.get("cfg"), "guidance": guidance, "denoise": sampler.get("denoise"),
+        "sampler": sampler.get("sampler_name"), "scheduler": sampler.get("scheduler"), "seed": sampler.get("seed"),
+        "reference": any(n.get("class_type") == "VAEEncode" for n in nodes),
+    }
+
+
 def with_easycache(workflow: dict[str, Any], *, sampler: str, threshold: float) -> dict[str, Any]:
     """The sampler's model through EasyCache, which skips steps that would barely change the
     picture (built into ComfyUI). `threshold` is its reuse threshold; 0 leaves it out."""
@@ -413,12 +432,12 @@ class ComfyUI:
             values["%checkpoint%"] = await self._checkpoint()
         return fill_workflow(template, values)
 
-    async def generate(self, request: IllustrationRequest) -> tuple[bytes, int]:
-        """Draw one picture. Returns the image bytes and the seed used."""
+    async def generate(self, request: IllustrationRequest) -> tuple[bytes, int, dict[str, Any]]:
+        """Draw one picture. Returns the image bytes, the seed used and what ComfyUI was given."""
         seed = request.seed if request.seed is not None else random.randrange(2**32)
         reference = await self._upload_reference(request.reference) if request.reference else None
         workflow = await self._workflow(request, seed, reference)
-        return await self.run(workflow), seed
+        return await self.run(workflow), seed, sent(workflow)
 
     async def run(self, workflow: dict[str, Any]) -> bytes:
         """Queue a workflow, wait for it, and return the first picture it saved. Whatever

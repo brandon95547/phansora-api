@@ -295,11 +295,20 @@ def test_flux_redraws_with_its_own_vae(make_client, network: Recorder) -> None:
 def test_flux_draws_from_nothing_at_its_denoise_and_a_remix_at_its_strength_both_in_its_steps(make_client, network: Recorder) -> None:
     client = make_client(comfyui_pipeline="flux", flux_unet="flux1-dev-Q4_K_S.gguf", comfyui_steps=16, comfyui_denoise=0.85)
     network.handler = comfy()
-    assert client.post("/users/7/illustrations", json=REQUEST).status_code == 200
-    assert client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE, "strength": 0.35}).status_code == 200
+    first = client.post("/users/7/illustrations", json=REQUEST)
+    second = client.post("/users/7/illustrations", json={**REQUEST, "reference": REFERENCE, "strength": 0.35})
+    assert first.status_code == 200 and second.status_code == 200
     fresh, remix = (b["prompt"]["8"]["inputs"] for b in network.bodies("/prompt"))
     assert (fresh["denoise"], fresh["steps"]) == (0.85, 16)
     assert (remix["denoise"], remix["steps"]) == (0.35, 16)
+    # What ComfyUI was given comes back with the picture, as it went.
+    workflow = network.bodies("/prompt")[0]["prompt"]
+    sent = first.json()["sent"]
+    assert sent["prompt"] == workflow["4"]["inputs"]["text"] and sent["prompt"].startswith("A lighthouse at dusk, pen and ink")
+    assert sent["negative"] == "" and sent["guidance"] == 3.5 and sent["seed"] == 42
+    assert (sent["steps"], sent["denoise"], sent["reference"]) == (16, 0.85, False)
+    assert (sent["width"], sent["height"]) == (workflow["7"]["inputs"]["width"], workflow["7"]["inputs"]["height"])
+    assert second.json()["sent"]["reference"] is True and second.json()["sent"]["denoise"] == 0.35
 
 
 def test_without_a_reference_nothing_is_uploaded_and_it_draws_from_noise(client: TestClient, network: Recorder) -> None:
