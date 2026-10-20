@@ -15,6 +15,7 @@ import os
 from typing import Any, Dict
 
 from phansora.shared.ai.json_repair import parse_json_loose
+from phansora.shared.ai.retries import REFUSAL_STATUSES, ProviderError, refusal_message
 
 from .. import config
 
@@ -38,21 +39,16 @@ class ProviderRejected(RuntimeError):
         self.provider = provider
 
 
-# Each refusal in the only terms that help: what to go and do about it. A message that
-# says "the request failed" sends the reader to the code; these send them to the account.
-_REFUSALS = {
-    401: "rejected the API key — check the key in the environment",
-    402: "refused the request because the account is out of credit — top it up",
-    403: "refused access to the configured model — check the account's permissions",
-    429: "is over its rate limit or quota — wait, or raise the limit on the account",
-}
-
-
 def _rejected(status: int, provider: str) -> ProviderRejected:
-    reason = _REFUSALS.get(status, f"refused the request ({status})")
-    return ProviderRejected(
-        f"The {provider} API {reason}.", status=status, provider=provider
+    """Each refusal in the only terms that help: what to go and do about it (see
+    shared.ai.retries.refusal_message), naming the variables this product reads."""
+    key_var, model_var = (
+        ("DEEPSEEK_API_KEY", "DEEPSEEK_MODEL") if provider == "DeepSeek" else ("OPENAI_API_KEY", "OPENAI_MODEL")
     )
+    message = refusal_message(
+        status, provider=provider, key_var=key_var, model_vars=f"NARRAVA_MODEL / {model_var}"
+    ) or f"The {provider} API refused the request ({status})."
+    return ProviderRejected(message, status=status, provider=provider)
 
 
 def _provider() -> str:
@@ -62,12 +58,14 @@ def _provider() -> str:
 def provider_configured() -> bool:
     """Is the active provider's API key present?"""
     if _provider() == "deepseek":
-        return bool(os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY"))
+        return deepseek_configured()
     return bool(os.getenv("OPENAI_API_KEY"))
 
 
 def required_key_name() -> str:
-    return "DEEPSEEK_API_KEY" if _provider() == "deepseek" else "OPENAI_API_KEY"
+    from phansora.shared.ai.deepseek import KEY_VAR
+
+    return KEY_VAR if _provider() == "deepseek" else "OPENAI_API_KEY"
 
 
 # ── OpenAI (GPT-5 Nano) ──────────────────────────────────────────────────────
@@ -100,7 +98,7 @@ def _openai_text(system: str, user: str, *, max_output_tokens: int, json_mode: b
         # Every openai error class carries the HTTP status; matching on that rather than on
         # class names keeps this working across SDK versions.
         status = getattr(exc, "status_code", None)
-        if status in _REFUSALS:
+        if status in REFUSAL_STATUSES:
             raise _rejected(status, "OpenAI") from exc
         raise
     return (getattr(resp, "output_text", "") or "").strip()
@@ -108,55 +106,41 @@ def _openai_text(system: str, user: str, *, max_output_tokens: int, json_mode: b
 
 # ── DeepSeek ─────────────────────────────────────────────────────────────────
 def _deepseek_text(system: str, user: str, *, max_output_tokens: int, json_mode: bool) -> str:
-    import httpx
-
-    from phansora.shared.ai.deepseek import DeepSeekChatConfig
+    from phansora.shared.ai.deepseek import DeepSeekChatConfig, chat_sync
 
     cfg = DeepSeekChatConfig.from_env(product_var="NARRAVA_MODEL")
-    payload: Dict[str, Any] = {
-        "model": cfg.model,
-        "temperature": 0.7 if not json_mode else 0,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": max_output_tokens,
-        "stream": False,
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    # The v4 models think by default and those tokens are billed against `max_tokens` —
-    # our budgets here are sized for the answer alone (2500 for a script, ~1500+ for a
-    # storyboard), so leaving it on returns empty or truncated JSON. Same failure, and the
-    # same fix, as the OCR cleaner in shared.ai.deepseek. The openai path keeps effort low
-    # for the same reason.
-    payload["thinking"] = {"type": "disabled"}
-
-    url = f"{cfg.base_url}/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"}
-    resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout_s)
-    # `thinking` is a v4-era parameter. A model that predates it 400s rather than ignoring
-    # it, so drop it and retry instead of failing the call — the model name comes from .env
-    # and can be pointed anywhere.
-    if resp.status_code == 400 and "thinking" in resp.text:
-        payload.pop("thinking", None)
-        resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.timeout_s)
-    # Before raise_for_status, which would flatten this into an HTTPStatusError that every
-    # caller treats as "the model misbehaved". A 402 here is not a model problem at all.
-    if resp.status_code in _REFUSALS:
-        raise _rejected(resp.status_code, "DeepSeek")
-    resp.raise_for_status()
-    data = resp.json()
-    choices = data.get("choices") or []
-    if not choices:
-        return ""
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    try:
+        # The thinking stays off (the helper's default). The v4 models think by default
+        # and those tokens are billed against `max_tokens` — our budgets here are sized
+        # for the answer alone (2500 for a script, ~1500+ for a storyboard), so leaving it
+        # on returns empty or truncated JSON. The openai path keeps effort low for the
+        # same reason.
+        text, _finish = chat_sync(
+            cfg=cfg,
+            system=system,
+            user=user,
+            max_tokens=max_output_tokens,
+            temperature=0.7 if not json_mode else 0,
+            json_mode=json_mode,
+            # One attempt, as this has always made: someone in the editor is waiting on
+            # it, and the callers that can do without an answer already degrade.
+            max_retries=0,
+        )
+    except ProviderError as exc:
+        # A refusal is not a model problem at all, and must not reach the callers as one:
+        # every caller treats any other failure as "the model misbehaved".
+        if exc.status in REFUSAL_STATUSES:
+            raise _rejected(exc.status, "DeepSeek") from exc
+        raise
+    return text
 
 
 # ── Public surface ───────────────────────────────────────────────────────────
 def deepseek_configured() -> bool:
     """Is DeepSeek reachable, regardless of which provider the switch points at?"""
-    return bool(os.getenv("DEEPSEEK_API_KEY") or os.getenv("DEEPSEEK_CHAT_API_KEY"))
+    from phansora.shared.ai.deepseek import key_configured
+
+    return key_configured()
 
 
 def deepseek_text(system: str, user: str, *, max_output_tokens: int = 2000) -> str:

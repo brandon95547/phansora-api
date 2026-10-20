@@ -101,11 +101,15 @@ def model_name() -> str:
 def provider_configured() -> bool:
     if _provider() == "anthropic":
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
-    return bool(os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("DEEPSEEK_CHAT_API_KEY"))
+    from phansora.shared.ai.deepseek import key_configured
+
+    return key_configured()
 
 
 def required_key_name() -> str:
-    return "ANTHROPIC_API_KEY" if _provider() == "anthropic" else "DEEPSEEK_API_KEY"
+    from phansora.shared.ai.deepseek import KEY_VAR
+
+    return "ANTHROPIC_API_KEY" if _provider() == "anthropic" else KEY_VAR
 
 
 # How each Animation Style choice is described to the model. The keys are the values the
@@ -368,48 +372,39 @@ def _anthropic_html(user_prompt: str) -> str:
 
 
 def _deepseek_html(user_prompt: str) -> str:
-    import httpx
-
-    from phansora.shared.ai.deepseek import DeepSeekChatConfig
+    from phansora.shared.ai.deepseek import DeepSeekChatConfig, chat_sync
 
     cfg = DeepSeekChatConfig.from_env(product_var="NARRAVA_ANIMATION_MODEL")
-    body = {
-        "model": cfg.model,
+    # Omitted rather than sent empty when disabled: DeepSeek ignores parameters it
+    # does not recognize instead of rejecting them, so a wrong key would look like
+    # it worked. See _reasoning_effort for why the default is off. Off is also said
+    # the way every other DeepSeek call says it (`thinking` disabled); an effort
+    # asked for by name leaves the thinking on to be spent.
+    effort = _reasoning_effort()
+    reply = chat_sync(
+        cfg=cfg,
+        system=_SYSTEM,
+        user=user_prompt,
+        max_tokens=_max_tokens(),
         # Low but non-zero: this is code generation, where a deterministic-ish
         # sample beats a creative one, but 0 makes a failed retry reproduce the
         # same broken document the feedback round is meant to fix.
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": user_prompt},
-        ],
-        "max_tokens": _max_tokens(),
-        "stream": False,
-    }
-    # Omitted rather than sent empty when disabled: DeepSeek ignores parameters it
-    # does not recognize instead of rejecting them, so a wrong key would look like
-    # it worked. See _reasoning_effort for why the default is off.
-    effort = _reasoning_effort()
-    if effort:
-        body["reasoning_effort"] = effort
-    resp = httpx.post(
-        f"{cfg.base_url}/v1/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"},
-        timeout=cfg.timeout_s,
+        temperature=0.2,
+        disable_thinking=effort == "none",
+        reasoning_effort=effort,
+        # One attempt, as this has always made: someone is waiting in the dialog, and
+        # the caller already asks once more with the validator's feedback.
+        max_retries=0,
     )
-    resp.raise_for_status()
-    data = resp.json()
-    choices = data.get("choices") or []
+    choices = reply.body.get("choices") or []
     if not choices:
         raise ValueError("The model returned no animation.")
-    message = choices[0].get("message") or {}
-    text = (message.get("content") or "").strip()
+    text, finish = reply
     # Same distinction the Anthropic branch draws: a truncated document is a retryable
     # generation problem, not a malformed one, and says so rather than failing later
     # on a missing </html> the validator would blame on the prompt.
-    if (choices[0].get("finish_reason") or "") == "length":
-        _log_truncation(data, message, text)
+    if (finish or "") == "length":
+        _log_truncation(reply.body, choices[0].get("message") or {}, text)
         raise ValueError(
             "The generated document was cut off before completion. Write a shorter, "
             "more compact document: fewer helper functions, no long comments, and no "

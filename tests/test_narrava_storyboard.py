@@ -249,14 +249,12 @@ def test_a_model_that_merely_answers_badly_still_degrades(monkeypatch):
 
 
 def test_deepseek_402_becomes_a_refusal(monkeypatch):
-    """The httpx boundary: a 402 must not reach raise_for_status.
+    """The HTTP boundary: a 402 must not reach the callers as just another failure.
 
-    raise_for_status flattens it into an HTTPStatusError, which every caller above treats
-    as "the model misbehaved" — which is how a billing problem came to be reported as a
-    scene with no ideas.
+    Flattened into a generic HTTP error, every caller above treats it as "the model
+    misbehaved" — which is how a billing problem came to be reported as a scene with no
+    ideas.
     """
-    import types
-
     import httpx
     import pytest
 
@@ -267,14 +265,15 @@ def test_deepseek_402_becomes_a_refusal(monkeypatch):
     monkeypatch.setenv("NARRAVA_LLM_PROVIDER", "deepseek")
     monkeypatch.setattr(
         ds.DeepSeekChatConfig, "from_env",
-        classmethod(lambda cls, **k: types.SimpleNamespace(
+        classmethod(lambda cls, **k: ds.DeepSeekChatConfig(
             model="deepseek-chat", base_url="https://api.deepseek.com",
             api_key="test", timeout_s=10,
         )),
     )
+    real_client = httpx.Client
     monkeypatch.setattr(
-        httpx, "post",
-        lambda *a, **k: httpx.Response(402, request=httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")),
+        ds.httpx, "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(lambda request: httpx.Response(402)), **kw),
     )
 
     with pytest.raises(llm.ProviderRejected) as caught:
