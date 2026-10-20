@@ -22,13 +22,14 @@ import uuid
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from threading import Lock
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 
 from . import admission
 from fastapi.responses import FileResponse, PlainTextResponse
+from phansora.shared import gpu
+from phansora.shared.audio import whisper
 from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 from phansora.shared.paths import runtime_root
@@ -61,11 +62,6 @@ TMP_UPLOADS_DIR = PROJECT_ROOT / ".tmp_uploads"
 OUTPUT_TXT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 TMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-_WHISPER_MODEL = None
-_WHISPER_MODEL_NAME = None
-_WHISPER_MODEL_LOCK = Lock()
 
 
 # ----------------------------
@@ -176,59 +172,34 @@ def _append_history_event(user_id: str, event: dict) -> None:
         f.write(json.dumps(event_with_time, ensure_ascii=True) + "\n")
 
 
-def _load_whisper_model(model_name: str):
-    global _WHISPER_MODEL, _WHISPER_MODEL_NAME
-
-    with _WHISPER_MODEL_LOCK:
-        if _WHISPER_MODEL is not None and _WHISPER_MODEL_NAME == model_name:
-            return _WHISPER_MODEL
-
-        try:
-            from faster_whisper import WhisperModel
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "faster-whisper is not installed. Install dependencies in spokenverse "
-                    "to enable local audio transcription."
-                ),
-            ) from e
-
-        device = os.getenv("WHISPER_DEVICE", "cpu")
-        compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-        cpu_threads_raw = os.getenv("WHISPER_CPU_THREADS", "").strip()
-        num_workers_raw = os.getenv("WHISPER_NUM_WORKERS", "").strip()
-
-        kwargs = {
-            "device": device,
-            "compute_type": compute_type,
-        }
-        if cpu_threads_raw.isdigit():
-            kwargs["cpu_threads"] = max(1, int(cpu_threads_raw))
-        if num_workers_raw.isdigit():
-            kwargs["num_workers"] = max(1, int(num_workers_raw))
-
-        _WHISPER_MODEL = WhisperModel(model_name, **kwargs)
-        _WHISPER_MODEL_NAME = model_name
-        return _WHISPER_MODEL
-
-
 def _transcribe_audio_to_text_sync(
     audio_path: Path,
     model: str,
     language: Optional[str],
 ) -> str:
-    whisper_model = _load_whisper_model(model)
-
     beam_size = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
     vad_filter = os.getenv("WHISPER_VAD_FILTER", "true").strip().lower() in {"1", "true", "yes", "on"}
 
-    segments, _ = whisper_model.transcribe(
-        str(audio_path),
-        beam_size=max(1, beam_size),
-        vad_filter=vad_filter,
-        language=(language or None),
-    )
+    try:
+        segments, _ = whisper.transcribe(
+            audio_path,
+            model,
+            beam_size=max(1, beam_size),
+            vad_filter=vad_filter,
+            language=(language or None),
+        )
+    except whisper.WhisperNotInstalled as e:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "faster-whisper is not installed. Install dependencies in spokenverse "
+                "to enable local audio transcription."
+            ),
+        ) from e
+    except gpu.GpuBusy as busy:
+        # The voice engine is still loading, and a decode during its load would break CUDA
+        # for the whole process (shared/gpu.py). Nothing ran, so trying again is safe.
+        raise HTTPException(status_code=503, detail=str(busy), headers={"Retry-After": "60"}) from busy
 
     text_parts = []
     for segment in segments:

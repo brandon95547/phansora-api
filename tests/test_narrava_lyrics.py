@@ -121,6 +121,7 @@ def test_lyric_words_asks_for_wording_and_the_files_own_timeline(monkeypatch):
     """Beam 5 because nothing corrects the wording afterwards; VAD off so times are the
     file's; no cross-window prompt so a chorus cannot cascade into a hallucinated verse."""
     from phansora.products.narrava_studio.services import align
+    from phansora.shared.audio import whisper
 
     seen = {}
 
@@ -129,7 +130,7 @@ def test_lyric_words_asks_for_wording_and_the_files_own_timeline(monkeypatch):
             seen.update(kwargs, path=path)
             return iter([_seg((" Run", 0.5, 0.9), (" away", 1.0, 1.6))]), None
 
-    monkeypatch.setattr(align, "_load_model", lambda: Model())
+    monkeypatch.setattr(whisper, "load", lambda name: Model())
     out = align.lyric_words("song.m4a", language="en", total_duration_sec=4.0)
 
     assert out["text"] == "Run away"
@@ -144,12 +145,13 @@ def test_lyric_words_asks_for_wording_and_the_files_own_timeline(monkeypatch):
 
 def test_a_file_whisper_cannot_read_is_a_user_error_not_a_crash(monkeypatch):
     from phansora.products.narrava_studio.services import align
+    from phansora.shared.audio import whisper
 
     class Model:
         def transcribe(self, path, **kwargs):
             raise RuntimeError("Invalid data found when processing input")
 
-    monkeypatch.setattr(align, "_load_model", lambda: Model())
+    monkeypatch.setattr(whisper, "load", lambda name: Model())
     with pytest.raises(align.AlignmentFailed, match="could not be read"):
         align.lyric_words("broken.mp3")
 

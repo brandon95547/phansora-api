@@ -27,10 +27,10 @@ import logging
 import os
 import re
 from difflib import SequenceMatcher
-from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 
 from phansora.shared import gpu
+from phansora.shared.audio import whisper
 
 logger = logging.getLogger("narrava-studio.align")
 
@@ -316,10 +316,6 @@ def _stand_ins(
     return out
 
 
-_MODEL = None
-_MODEL_NAME: Optional[str] = None
-_MODEL_LOCK = Lock()
-
 # Below this share of the script found in the transcript, the two are not the same
 # recording — a stale upload, the wrong clip, a synthesis that dropped half its input.
 # Inventing timings from that would be worse than the estimate it would replace.
@@ -338,73 +334,37 @@ class AlignmentFailed(ValueError):
     """The audio and the script don't correspond, so no honest timing can come out of it."""
 
 
-def _load_model():
-    """faster-whisper, loaded once per process — for narration and for songs alike.
+def _model_name() -> str:
+    """Which whisper model Narrava decodes with — for narration and for songs alike.
 
     Reads the same environment as SpokenVerse's transcriber but through its own name first
     (``NARRAVA_ALIGN_MODEL``), because the two want different things: transcription wants
     the best wording it can get, alignment only wants to know where each word sits and can
     take a smaller, faster model to get it.
     """
-    global _MODEL, _MODEL_NAME
-    name = (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
-    with _MODEL_LOCK:
-        if _MODEL is not None and _MODEL_NAME == name:
-            return _MODEL
-        try:
-            from faster_whisper import WhisperModel  # lazy — the API still boots without it
-        except Exception as exc:  # noqa: BLE001
-            raise AlignmentUnavailable(
-                "faster-whisper is not installed on the API host, so audio cannot be "
-                "transcribed. Install the API requirements and restart it."
-            ) from exc
-
-        kwargs = {
-            "device": os.getenv("WHISPER_DEVICE", "cpu"),
-            "compute_type": os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
-        }
-        threads = os.getenv("WHISPER_CPU_THREADS", "").strip()
-        if threads.isdigit():
-            kwargs["cpu_threads"] = max(1, int(threads))
-        try:
-            _MODEL = WhisperModel(name, **kwargs)
-        except Exception as exc:  # noqa: BLE001 — a bad model name or no download
-            # The message reaches the editor as written, so the cause (cache paths, a
-            # library's own error) goes to the log rather than into it.
-            logger.error("Speech model %r failed to load", name, exc_info=True)
-            raise AlignmentUnavailable(
-                f"The speech model '{name}' could not be loaded on the API host. "
-                "The API log has the cause."
-            ) from exc
-        _MODEL_NAME = name
-        return _MODEL
+    return (os.getenv("NARRAVA_ALIGN_MODEL") or os.getenv("WHISPER_MODEL") or "base").strip()
 
 
-def _on_whisper_gpu():
-    """Hold the shared GPU for a transcription, if this host puts whisper on one.
+def _transcribe(audio_path: str, **options) -> list:
+    """Whisper's segments for ``audio_path``, decoded with ``options``.
 
-    The voice engine captures CUDA graphs when it loads, and a decode landing inside that
-    capture breaks the whole process's CUDA context — see shared/gpu.py. Transcription is
-    the guest here: it waits for the load, which takes about ninety seconds, rather than
-    walking into it. On a CPU host this is a no-op.
+    The model is the process's shared one (shared/audio/whisper.py), and the decode runs as
+    a guest of the GPU when whisper is on one: the voice engine captures CUDA graphs when it
+    loads, and a decode landing inside that capture breaks the whole process's CUDA context
+    — see shared/gpu.py. Transcription waits for the load rather than walking into it.
     """
-    device = os.getenv("WHISPER_DEVICE", "cpu").strip().lower()
-    on_gpu = device.startswith("cuda") or (device == "auto" and gpu.cuda_available())
-    return gpu.guest("transcription", active=on_gpu)
+    try:
+        segments, _ = whisper.transcribe(audio_path, _model_name(), **options)
+    except gpu.GpuBusy as busy:
+        raise AlignmentUnavailable(str(busy)) from busy
+    except whisper.WhisperUnavailable as exc:
+        raise AlignmentUnavailable(str(exc)) from exc
+    return segments
 
 
 def _heard(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
     """``(word, start, end)`` for everything the model hears, in order."""
-    try:
-        with _on_whisper_gpu():
-            return _heard_on_device(audio_path, language)
-    except gpu.GpuBusy as busy:
-        raise AlignmentUnavailable(str(busy)) from busy
-
-
-def _heard_on_device(audio_path: str, language: Optional[str]) -> List[Tuple[str, float, float]]:
-    model = _load_model()
-    segments, _ = model.transcribe(
+    segments = _transcribe(
         audio_path,
         word_timestamps=True,
         # VAD cuts silence out and maps the timestamps back afterwards. We want the
@@ -777,15 +737,10 @@ def lyric_words(
     true where the model was unsure of it. Raises rather than returning nothing: a track
     with no voice on it is the user's to fix, and saying so beats an empty caption track.
     """
-    # Guest on the shared GPU, for the reason in _on_whisper_gpu: a decode landing inside
-    # the voice engine's graph capture breaks CUDA for the whole process.
     try:
-        with _on_whisper_gpu():
-            pieces = _sung_pieces(_sung_decode(audio_path, language))
+        pieces = _sung_pieces(_sung_decode(audio_path, language))
     except AlignmentUnavailable:
         raise
-    except gpu.GpuBusy as busy:
-        raise AlignmentUnavailable(str(busy)) from busy
     except Exception as exc:  # noqa: BLE001 — an unreadable or undecodable file
         logger.warning("Music track could not be decoded", exc_info=True)
         raise AlignmentFailed("The music track could not be read for transcription.") from exc
@@ -796,14 +751,13 @@ def lyric_words(
     return result
 
 
-def _sung_decode(audio_path: str, language: Optional[str]):
-    """Whisper's segment generator for a music track. Consuming it IS the decode.
+def _sung_decode(audio_path: str, language: Optional[str]) -> list:
+    """Whisper's segments for a music track.
 
     The same model narration is aligned with. A larger one would hear singing better, but
     this is the one the box already runs; a word it is unsure of is flagged instead.
     """
-    model = _load_model()
-    segments, _ = model.transcribe(
+    return _transcribe(
         audio_path,
         word_timestamps=True,
         # Off, as in the aligner: captions and scenes are laid on the file's own timeline,
@@ -819,7 +773,6 @@ def _sung_decode(audio_path: str, language: Optional[str]):
         # the recording for a verse. Each window is decoded cold.
         condition_on_previous_text=False,
     )
-    return segments
 
 
 def _sung_pieces(segments) -> List[Tuple[str, float, float, float, bool]]:
