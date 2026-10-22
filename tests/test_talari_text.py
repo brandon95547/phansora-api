@@ -273,6 +273,48 @@ def test_a_scanned_pdf_that_cannot_be_read_says_why(client: TestClient, monkeypa
     assert "text recognition isn't available" in response.json()["detail"]
 
 
+def test_a_scanned_pdf_asked_for_several_times_at_once_is_read_once(tmp_path: Path, monkeypatch) -> None:
+    """The import's own retry, a job requeued by a restart and the pictures' pass all asked
+    for the same scan at once on prod: they shared one folder, and the first to finish took it
+    away from the others. Now the first reads it, and the rest wait and take its text."""
+    import tempfile
+    import threading
+
+    from phansora.products.talari import sources
+    from phansora.shared.ocr import pdf as ocr
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    reads: list[Path] = []
+
+    async def convert(self, pdf_path, out_txt_path, *, cache_dir=None, on_progress=None):
+        reads.append(pdf_path)
+        await asyncio.sleep(0.3)
+        out_txt_path.parent.mkdir(parents=True, exist_ok=True)
+        out_txt_path.write_text("Chapter One\n\nThe gate stood in the fog all morning, and no one came to open it.", encoding="utf-8")
+
+    monkeypatch.setattr(ocr.PdfConverter, "convert_pdf_to_txt_async", convert)
+    monkeypatch.setattr(ocr.DeepSeekChatConfig, "from_env", classmethod(lambda cls, product_var: None))
+    scan = a_scan(mark=53)
+    # The same file under two names (a kept upload, and one read straight away).
+    first, second = tmp_path / "a" / "scan.pdf", tmp_path / "b" / "upload.pdf"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.write_bytes(scan)
+    docs: list = []
+    threads = [threading.Thread(target=lambda p=p: docs.append(sources._read_scanned(p, "scan.pdf"))) for p in (first, second, first)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(reads) == 1
+    assert len(docs) == 3 and all("gate stood" in doc.text for doc in docs)
+    # Its text is kept by its content: asked for again later, it is not read again.
+    assert "gate stood" in sources._read_scanned(first, "scan.pdf").text
+    assert len(reads) == 1
+    # Its pages' folder went once the text was out.
+    assert not (tmp_path / "talari-ocr" / hashlib.sha256(scan).hexdigest()).exists()
+
+
 def test_unsupported_damaged_and_empty_files(client: TestClient) -> None:
     unsupported = upload(client, "book.mobi", b"not supported")
     assert unsupported.status_code == 415 and "PDF" in unsupported.json()["detail"]

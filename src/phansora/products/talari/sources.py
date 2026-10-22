@@ -24,11 +24,13 @@ pictures, drawings and tables, kept as they are.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
 import shutil
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -262,29 +264,60 @@ def _parts(chapters: list[_Chapter]) -> list[_Chapter]:
     return parts
 
 
+# One reading of a scanned file at a time, by its content. A second asked for meanwhile — the
+# import tried again after its call timed out, a job put back in the queue by a restart, the
+# pictures' pass after the text's — waits for the first and takes its text: two at once shared
+# one folder, and the first to finish took it away from under the other ("No such file or
+# directory: …/text.txt").
+_SCAN_LOCKS: dict[str, threading.Lock] = {}
+_SCAN_LOCKS_GUARD = threading.Lock()
+
+
+def _scan_lock(digest: str) -> threading.Lock:
+    with _SCAN_LOCKS_GUARD:
+        return _SCAN_LOCKS.setdefault(digest, threading.Lock())
+
+
+def _file_digest(path: Path) -> str:
+    sha = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
 def _read_scanned(path: Path, filename: str | None) -> ParsedDoc:
     """A scanned PDF's text, by the shared OCR, parsed as plain text (its chapters then come
     from its headings, or its parts). Blocking — extract already runs in a thread, with no
     event loop of its own. Its pages are kept, as they are read, in a folder named after the
-    file, so a reading that is cut short and asked again picks up where it stopped."""
+    file's content, so a reading that is cut short and asked again picks up where it stopped;
+    its text, once read, is kept by its content too, so the file is read only once however
+    often it is asked for (one at a time: _scan_lock)."""
     from phansora.shared.ocr.pdf import PdfConverter, PdfToTxtConfig, explain_failure  # lazy: Tesseract is a system dependency
 
-    work = Path(tempfile.gettempdir()) / "talari-ocr" / path.stem
-    out = work / "text.txt"
-    cfg = PdfToTxtConfig(keep_page_breaks=False, to_chapters=False, ocr_concurrency=OCR_WORKERS, clean_concurrency=OCR_CLEAN, model_var="TALARI_MODEL")
+    root = Path(tempfile.gettempdir()) / "talari-ocr"
     try:
-        asyncio.run(PdfConverter(cfg).convert_pdf_to_txt_async(path, out, cache_dir=work / "pages"))
-        text = PAGE_MARK.sub("\n", out.read_text(encoding="utf-8", errors="ignore")).strip()
+        digest = _file_digest(path)
+        work = root / digest
+        done = root / f"{digest}.txt"
+        with _scan_lock(digest):
+            if not done.is_file():
+                out = work / "text.txt"
+                cfg = PdfToTxtConfig(keep_page_breaks=False, to_chapters=False, ocr_concurrency=OCR_WORKERS, clean_concurrency=OCR_CLEAN, model_var="TALARI_MODEL")
+                asyncio.run(PdfConverter(cfg).convert_pdf_to_txt_async(path, out, cache_dir=work / "pages"))
+                kept = done.with_name(f"{digest}.txt.tmp")
+                kept.write_text(out.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+                kept.replace(done)
+                shutil.rmtree(work, ignore_errors=True)
+            text = PAGE_MARK.sub("\n", done.read_text(encoding="utf-8", errors="ignore")).strip()
         if not text:
             raise ServiceError("This PDF looks scanned, and no text could be read from its pages.", status=422)
-        doc = parse_source(source_format="text", text=text, title_hint=_title_from_filename(filename))
+        return parse_source(source_format="text", text=text, title_hint=_title_from_filename(filename))
     except ServiceError:
         raise
     except Exception as error:  # noqa: BLE001 — Tesseract, DeepSeek or the file itself
         logger.exception("Talari: could not read a scanned PDF")
         raise ServiceError(explain_failure(error), status=422) from None
-    shutil.rmtree(work, ignore_errors=True)
-    return doc
 
 
 def extract(
