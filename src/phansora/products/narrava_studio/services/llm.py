@@ -153,6 +153,16 @@ def deepseek_text(system: str, user: str, *, max_output_tokens: int = 2000) -> s
     return _deepseek_text(system, user, max_output_tokens=max_output_tokens, json_mode=False)
 
 
+def deepseek_json(system: str, user: str, *, max_output_tokens: int = 2000) -> Any:
+    """Always DeepSeek, in JSON mode: the narration conversation and a document's reading.
+
+    Pinned for the same reason as deepseek_text: these are asked for by name, and the
+    conversation in particular is a back-and-forth someone is waiting on, not a piece of
+    writing the provider switch exists for. The answer as parsed JSON, or {} (_parse_json).
+    """
+    return _parse_json(_deepseek_text(system, user, max_output_tokens=max_output_tokens, json_mode=True))
+
+
 def generate_text(system: str, user: str, *, max_output_tokens: int = 2000) -> str:
     if _provider() == "deepseek":
         return _deepseek_text(system, user, max_output_tokens=max_output_tokens, json_mode=False)

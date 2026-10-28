@@ -361,6 +361,39 @@ def generate_script(
     return segment_script(body, wpm=wpm, source="prompt")
 
 
+def from_chapters(
+    book_title: str | None,
+    chapters: list[dict],
+    *,
+    direction: str | None = None,
+    style: str = "documentary",
+    tone: str | None = None,
+    target_duration_sec: int | None = None,
+    doc_style: str | None = None,
+) -> Script:
+    """The chosen chapters of an imported document -> one narration about them.
+
+    The Import tab's way to a script: the topics someone picked (each a chapter's title and
+    the summary documents.read wrote) are the material, and the conversation's brief is the
+    direction. Written by generate_script, so it is timed, styled and segmented exactly as a
+    narration written from a prompt.
+    """
+    title = (book_title or "").strip() or "the imported document"
+    lines = []
+    if direction and direction.strip():
+        lines += [direction.strip(), ""]
+    lines.append(
+        f'Adapt these parts of "{title}" into one narration. Stay grounded in what they say: '
+        "this is an adaptation, not an invention. Carry one through-line across them so it "
+        "plays as one piece, not a list of recaps."
+    )
+    for ch in chapters:
+        lines.append(f"- {(ch.get('title') or 'Untitled').strip()}: {(ch.get('summary') or '').strip()}")
+    return generate_script(
+        "\n".join(lines), style=style, tone=tone, target_duration_sec=target_duration_sec, doc_style=doc_style,
+    )
+
+
 # ── Enhance ──────────────────────────────────────────────────────────────────
 # The Write tab's "Enhance Narration". Everything here is written to protect one thing:
 # the piece the user already wrote. The model may reword freely, and may not add to,

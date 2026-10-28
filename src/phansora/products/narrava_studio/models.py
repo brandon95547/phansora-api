@@ -57,6 +57,60 @@ class ScriptGenerateResponse(BaseModel):
     script: Script
 
 
+# ── Import: write from a document's chosen chapters ──────────────────────────
+class ChapterPick(BaseModel):
+    title: str = Field(default="", max_length=300)
+    summary: str = Field(default="", max_length=2000)
+
+
+class FromChaptersRequest(BaseModel):
+    book_title: Optional[str] = Field(default=None, max_length=300)
+    chapters: List[ChapterPick] = Field(..., min_length=1, max_length=40)
+    # What the conversation settled (services/converse): the angle, audience and tone the
+    # chapters are to be told in. Absent writes a plain adaptation.
+    direction: Optional[str] = Field(default=None, max_length=4000)
+    style: str = Field(default="documentary", max_length=40)
+    tone: Optional[str] = Field(default=None, max_length=400)
+    target_duration_sec: Optional[int] = Field(default=None, ge=10, le=3600)
+    doc_style: Optional[str] = Field(default=None, max_length=40)
+
+
+# ── The narration conversation (AI and Import tabs) ──────────────────────────
+class ConverseTopic(BaseModel):
+    index: int = Field(..., ge=0)
+    title: str = Field(default="", max_length=300)
+    summary: str = Field(default="", max_length=2000)
+    recommended: bool = False
+
+
+class ConverseTurn(BaseModel):
+    question: str = Field(..., max_length=400)
+    answer: str = Field(..., min_length=1, max_length=1000)
+
+
+class ConverseRequest(BaseModel):
+    # describe: the AI tab, starting from "Describe your narration".
+    # topics: the Import tab, starting from the topics a document was found to have.
+    kind: Literal["describe", "topics"] = "describe"
+    # The first thing they wrote: the description, or which topics they want.
+    description: str = Field(..., min_length=1, max_length=2000)
+    topics: List[ConverseTopic] = Field(default_factory=list, max_length=120)
+    document_title: Optional[str] = Field(default=None, max_length=300)
+    # What the video is, in a line ("Video Short · Storytelling · about 60 seconds").
+    video: Optional[str] = Field(default=None, max_length=300)
+    turns: List[ConverseTurn] = Field(default_factory=list, max_length=8)
+    # Write now: no more questions, the brief as it stands.
+    finish: bool = False
+
+
+class ConverseResponse(BaseModel):
+    done: bool
+    question: Optional[str] = None
+    choices: List[str] = Field(default_factory=list)
+    brief: str = ""
+    topics: List[int] = Field(default_factory=list)
+
+
 # ── Enhance (Write tab: polish narration the user typed) ─────────────────────
 # Not a generation. The words are the user's; this returns the same narration written
 # better. The cap is generous because it is applied to a whole script at once.

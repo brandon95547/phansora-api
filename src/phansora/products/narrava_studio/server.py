@@ -5,6 +5,10 @@ Mounted by phansora.main under ``/studio``. Endpoints:
   GET  /voices             -> preset narration voices
   POST /script/generate    -> prompt      -> narrator script (timed beats)   [LLM]
   POST /script/enhance     -> narration   -> the same narration, in a voice  [DeepSeek]
+  POST /script/from-chapters -> chosen chapters of a document -> narrator script [LLM]
+  POST /ebook/analyze      -> a document  -> its chapters, condensed and ranked (a job)  [DeepSeek]
+  GET  /ebook/jobs/{id}    -> where that reading has got to, and its result
+  POST /narration/converse -> what they said so far -> the next question, or the brief  [DeepSeek]
   POST /media/animation    -> description -> canvas animation document       [LLM]
   POST /media/search       -> query       -> stock or web media to place
   POST /scene/suggest      -> one scene   -> fresh visual direction          [LLM]
@@ -33,6 +37,9 @@ from phansora.shared.utils.uploads import save_upload
 from .config import get_settings
 from .models import (
     AnimationGenerateRequest,
+    ConverseRequest,
+    ConverseResponse,
+    FromChaptersRequest,
     AnimationGenerateResponse,
     MediaSearchRequest,
     MediaSearchResponse,
@@ -45,7 +52,8 @@ from .models import (
     StoryboardRequest,
     StoryboardResponse,
 )
-from .services import align, animation, llm, media, script, storyboard, voices, web_images
+from .services import align, animation, converse, documents, llm, media, script, storyboard, voices, web_images
+from .services.jobs import jobs
 
 logger = logging.getLogger("narrava-studio")
 
@@ -179,6 +187,87 @@ async def enhance_narration(req: ScriptEnhanceRequest):
         logger.exception("Narration enhance failed")
         raise fail(502, "Enhancing the narration failed.", exc, logger=logger, context="Narration enhance failed") from exc
     return ScriptEnhanceResponse(text=text)
+
+
+# An imported document, as uploaded. Phansora caps it first; this is the backstop.
+MAX_DOCUMENT_BYTES = 100 * 1024 * 1024
+
+
+def _ensure_deepseek() -> None:
+    """For the routes pinned to DeepSeek, which a host on the OpenAI provider would pass
+    _ensure_llm for and then fail on the call (see enhance_narration)."""
+    if not llm.deepseek_configured():
+        raise HTTPException(status_code=503, detail="DEEPSEEK_API_KEY is not configured.")
+
+
+@app.post("/script/from-chapters", response_model=ScriptGenerateResponse)
+async def script_from_chapters(req: FromChaptersRequest):
+    """The topics chosen from an imported document -> a narration about them."""
+    _ensure_llm()
+    chapters = [c.model_dump() for c in req.chapters if c.summary.strip() or c.title.strip()]
+    if not chapters:
+        raise HTTPException(status_code=400, detail="Choose at least one topic.")
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: script.from_chapters(
+                req.book_title, chapters, direction=req.direction, style=req.style, tone=req.tone,
+                target_duration_sec=req.target_duration_sec, doc_style=req.doc_style,
+            ),
+        )
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Writing from chapters failed")
+        raise fail(502, "Writing the narration failed.", exc, logger=logger, context="From chapters failed") from exc
+    return ScriptGenerateResponse(script=result)
+
+
+@app.post("/ebook/analyze")
+async def ebook_analyze(file: UploadFile = File(...), title: Optional[str] = Form(None)):
+    """Start reading an imported document. Returns a job to poll: a book takes minutes."""
+    _ensure_deepseek()
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    fmt = documents.FORMATS.get(ext)
+    if not fmt:
+        supported = ", ".join(sorted({e.lstrip(".") for e in documents.FORMATS}))
+        raise HTTPException(status_code=400, detail=f"Unsupported document format '{ext or 'unknown'}'. Supported: {supported}.")
+    # Kept on disk past the response: the job reads it long after the request is gone,
+    # and removes it when it is done (documents.read).
+    fd, path = tempfile.mkstemp(suffix=ext, prefix="narrava_document_")
+    os.close(fd)
+    try:
+        await save_upload(file, Path(path), max_bytes=MAX_DOCUMENT_BYTES)
+    except Exception:
+        os.unlink(path)
+        raise
+    name = (title or os.path.splitext(file.filename or "")[0] or "Untitled").strip()[:200]
+    job = jobs.submit(lambda handle: documents.read(handle, path, fmt, name))
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.get("/ebook/jobs/{job_id}")
+def ebook_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or expired.")
+    return job.to_dict()
+
+
+@app.post("/narration/converse", response_model=ConverseResponse)
+async def narration_converse(req: ConverseRequest):
+    """One turn of the narration conversation: the next question, or the brief."""
+    _ensure_deepseek()
+    if req.kind == "topics" and not req.topics:
+        raise HTTPException(status_code=400, detail="There are no topics to choose from.")
+    try:
+        out = await asyncio.get_running_loop().run_in_executor(None, lambda: converse.next_turn(req))
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Narration conversation failed")
+        raise fail(502, "The AI could not answer.", exc, logger=logger, context="Narration converse failed") from exc
+    return ConverseResponse(**out)
 
 
 @app.post("/media/animation", response_model=AnimationGenerateResponse)
