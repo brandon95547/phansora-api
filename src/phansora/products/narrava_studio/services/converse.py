@@ -8,10 +8,20 @@ enough (or after MAX_QUESTIONS, or when the person says to write now) it stops, 
 a brief for the writer and, for a document, which of its topics to use.
 
 Every turn carries the whole conversation, so this keeps no state: the editor holds it.
+
+It is neutral, and that is checked, not only asked for. The conversation is how someone says
+what THEIR narration should say; the AI's view of the subject has no place in it. Asked
+about a documentary on a disputed subject, it used to offer four angles that all assumed the
+answer ("how the rumor spread", "fact-checking the claims"), leaving no way to tell the
+story any other way. So the model is told never to judge the subject in its own voice and
+to offer angles across the whole range, theirs among them; and whatever comes back is
+scanned for verdict words (verdicts) the person did not use themselves. A reply that judges
+is asked for once more; what still judges is dropped, and their own words stand in.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from . import llm
@@ -39,10 +49,20 @@ that joins two with "and" or "or" is two questions, so ask the one that matters 
 A question is plain and friendly, under 20 words, with no preamble and no compliments.
 Offer 2 to 4 short suggested answers (under 8 words each) that fit what they have said.
 
+Stay neutral. You are finding out what they want the narration to say, never deciding it
+for them. Do not judge the subject in your own voice: never call it, or anything in it, a
+rumor, hoax, myth, conspiracy theory, misinformation, debunked, baseless, fake, true or
+false, unless they used that word first. On a disputed subject, the suggested answers span
+the real range of angles, so their own take is always among them: telling it as the people
+who hold the view see it, examining the claims and the evidence on every side, an
+even-handed account that lets viewers decide. Never offer only one side, and never an angle
+that assumes the answer.
+
 Stop as soon as you know enough to write a good narration, usually after two or three
 questions. When you stop, set "done" to true and write the brief: one paragraph of
 direction for the writer, covering the subject, the angle, the audience, the tone and the
-shape of the piece. Put in only what they said or clearly meant. Never add facts.
+shape of the piece. Put in only what they said or clearly meant, in their framing. Never
+add facts, and never add a verdict of yours on the subject.
 """.strip()
 
 TOPICS_SYSTEM = """
@@ -60,6 +80,50 @@ When done: "done" true, "question" "", "choices" [], "brief" set.
 """.strip()
 
 FINISH = "Do not ask another question. Set \"done\" to true and write the brief now."
+
+# Sent back with a reply that judged the subject, for one more try.
+REWRITE = (
+    "Your last reply judged the subject in your own voice ({words}). Reply again with no "
+    "verdict of yours: neutral wording, and suggested answers across every angle, theirs "
+    "among them."
+)
+
+# What stands in for a question that still judged after the second try. Its answers went
+# with it: they were answers to the question that was dropped.
+NEUTRAL_QUESTION = "What angle should the narration take?"
+
+# Words that pass a verdict on the subject. In the AI's voice they settle the question the
+# person came to answer; in the person's own words (or the imported document's) they are
+# that framing, and may be echoed back. "True" and "false" count only where they judge.
+_VERDICT = re.compile(r"\b(?:" + "|".join((
+    r"rumou?rs?", r"hoax(?:es)?", r"myths?", r"conspirac(?:y|ies)(?:\s+theor(?:y|ies))?",
+    r"mis-?information", r"dis-?information", r"propaganda", r"pseudo-?scien(?:ce|tific)",
+    r"fringe", r"debunk(?:s|ed|ing)?", r"dispro(?:ve|ves|ven|ved|ving)", r"discredit(?:s|ed)?",
+    r"refut(?:e|es|ed)", r"baseless", r"unfounded", r"fake", r"lies",
+    r"fact-?check(?:s|ed|ing|ers?)?",
+    r"(?:is|are|was|were|proven|proved|shown\s+to\s+be)\s+(?:not\s+)?(?:true|false)",
+    r"false\s+(?:claims?|stor(?:y|ies)|accounts?|allegations?|narratives?)",
+)) + r")\b", re.IGNORECASE)
+
+
+def _stem(word: str) -> str:
+    """A verdict word without its ending, so "rumors" in their words covers "rumor"."""
+    return re.sub(r"(?:ies|es|s|ed|ing|ers|er)\b", "", word.lower())
+
+
+def verdicts(text: str, theirs: str) -> list[str]:
+    """The verdict words in ``text`` that ``theirs`` (what they said) does not use."""
+    own = {_stem(m.group(0)) for m in _VERDICT.finditer(theirs or "")}
+    return sorted({m.group(0).lower() for m in _VERDICT.finditer(text or "") if _stem(m.group(0)) not in own})
+
+
+def _theirs(req: Any) -> str:
+    """Their words, which the AI may echo: what they wrote and, for a document, the topics
+    as the document itself put them."""
+    parts = [req.description] + [t.answer for t in req.turns]
+    if req.kind == "topics":
+        parts += [f"{t.title} {t.summary}" for t in req.topics]
+    return "\n".join(parts)
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -116,27 +180,47 @@ def _topics(raw: Any, req: Any) -> list[int]:
     return recommended or [t.index for t in req.topics]
 
 
+def _reply(system: str, user: str) -> dict:
+    data = llm.deepseek_json(system, user, max_output_tokens=1200)
+    return data if isinstance(data, dict) else {}
+
+
+def _judging(data: dict, theirs: str) -> list[str]:
+    """The verdicts anywhere in a reply: its question, its answers, its brief."""
+    said = [data.get("question"), data.get("brief"), *(data.get("choices") or [])]
+    return verdicts("\n".join(str(x or "") for x in said), theirs)
+
+
 def next_turn(req: Any) -> dict:
     """The next question, or the brief. Always a usable answer: a reply the model got wrong
-    becomes "done" with their own words as the brief, never an error mid-conversation."""
+    becomes "done" with their own words as the brief, never an error mid-conversation; and
+    always a neutral one (see the module's note)."""
     finishing = bool(req.finish) or len(req.turns) >= MAX_QUESTIONS
     system = SYSTEM + ("\n\n" + TOPICS_SYSTEM if req.kind == "topics" else "") + "\n\n" + REPLY
-    data = llm.deepseek_json(system, _user(req, finishing), max_output_tokens=1200)
-    if not isinstance(data, dict):
-        data = {}
+    user = _user(req, finishing)
+    theirs = _theirs(req)
+    data = _reply(system, user)
+    judged = _judging(data, theirs)
+    if judged:
+        logger.info("Narration conversation judged the subject (%s); asking again", ", ".join(judged))
+        data = _reply(system, user + "\n\n" + REWRITE.format(words=", ".join(f'"{w}"' for w in judged))) or data
 
     question = _clip(data.get("question"), QUESTION_CHARS)
     choices: list[str] = []
     for c in data.get("choices") or []:
         text = _clip(c, CHOICE_CHARS)
-        if text and text.lower() not in (x.lower() for x in choices):
+        if text and not verdicts(text, theirs) and text.lower() not in (x.lower() for x in choices):
             choices.append(text)
+    if question and verdicts(question, theirs):
+        question, choices = NEUTRAL_QUESTION, []
+    brief = _clip(data.get("brief"), BRIEF_CHARS)
+    if verdicts(brief, theirs):
+        brief = ""
     done = finishing or bool(data.get("done")) or not question
-    out = {
+    return {
         "done": done,
         "question": None if done else question,
         "choices": [] if done else choices[:MAX_CHOICES],
-        "brief": (_clip(data.get("brief"), BRIEF_CHARS) or fallback_brief(req)) if done else "",
+        "brief": (brief or fallback_brief(req)) if done else "",
         "topics": _topics(data.get("topics"), req) if req.kind == "topics" else [],
     }
-    return out
