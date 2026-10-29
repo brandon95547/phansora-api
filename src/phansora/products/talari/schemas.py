@@ -501,8 +501,9 @@ class ImageBrief(Lenient):
     # The background design (or designs, combined) the author chose to begin from.
     designs: list[ImageDesign] = Field(default_factory=list, max_length=3)
     answers: list[ImageAnswer] = Field(default_factory=list, max_length=12)
-    # A background's type and texture (prompts.BACKGROUND_TYPES, BACKGROUND_TEXTURES), picked
-    # from set choices; empty when not picked (the author's own words are among the answers).
+    # A background's type and material (prompts.BACKGROUND_TYPES, BACKGROUND_MATERIALS; the
+    # material is still called `texture` here), picked from set choices; empty when not picked
+    # (the author's own words are among the answers).
     background_type: str = Field(default="", max_length=40)
     texture: str = Field(default="", max_length=40)
 
@@ -520,8 +521,8 @@ class ImageGuideResponse(Lenient):
     summary: str = ""
 
 
-# The author's own words for a background, matched to the set choices of its type and texture
-# (image_guide.background_choices): the ones that fit, best first.
+# The author's own words for a background, matched to the set choices of its type and material
+# (image_guide.background_choices; `textures` here are the materials): the ones that fit, best first.
 class BackgroundChoice(Lenient):
     id: str = Field(max_length=40)
     label: str = Field(default="", max_length=60)

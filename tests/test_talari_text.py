@@ -1283,7 +1283,7 @@ def test_after_a_design_the_questions_are_about_what_it_needs(client: TestClient
     assert "No figures, creatures or scenery beyond the decoration itself." in rules
 
 
-def test_a_background_of_a_chosen_type_and_texture_is_planned_without_the_book(client: TestClient, deepseek: FakeDeepSeek) -> None:
+def test_a_background_of_a_chosen_type_and_material_is_planned_without_the_book(client: TestClient, deepseek: FakeDeepSeek) -> None:
     # The app sends no book for a background: it is made from what the author says of it.
     brief = {"purpose": "interior", "mode": "background", "look": "Realism", "backgroundType": "atmospheric", "texture": "stone",
              "answers": [{"id": "background-type", "question": "What type of background?", "answer": "Atmospheric"}]}
@@ -1293,7 +1293,7 @@ def test_a_background_of_a_chosen_type_and_texture_is_planned_without_the_book(c
     user = deepseek.calls[0]["user"]
     assert "THE BOOK" not in user and "Untitled" not in user
     assert "THE BACKGROUND THE AUTHOR CHOSE" in user and "mist, haze, glow" in user and "stone and marble" in user
-    assert "Never ask about the type of background or its texture" in user and "fit this background" in user
+    assert "Never ask about the type of background or its material" in user and "fit this background" in user
     deepseek.replies = [{"prompt": "Mist over a dark stone ground.", "caption": "Misty stone", "summary": "Mist over stone.", "shape": "portrait"}]
     client.post("/users/7/images/compose", json=brief)
     rules = deepseek.calls[1]["user"]
@@ -1302,15 +1302,16 @@ def test_a_background_of_a_chosen_type_and_texture_is_planned_without_the_book(c
 
 
 def test_a_background_in_the_authors_own_words_is_matched_to_the_set_choices(client: TestClient, deepseek: FakeDeepSeek) -> None:
-    types = [{"id": "atmospheric", "label": "Atmospheric"}, {"id": "decorative", "label": "Decorative"}, {"id": "scenic", "label": "Scenic"}]
-    textures = [{"id": "stone", "label": "Stone & Marble"}, {"id": "distressed", "label": "Distressed"}, {"id": "wood", "label": "Wood"}]
-    deepseek.replies = [{"types": ["atmospheric", "nonsense", "decorative", "scenic"], "textures": ["stone", "stone", "distressed", "glass"]}]
+    types = [{"id": "atmospheric", "label": "Atmospheric"}, {"id": "abstract", "label": "Abstract"}, {"id": "landscape", "label": "Landscape"}]
+    textures = [{"id": "stone", "label": "Stone"}, {"id": "leather", "label": "Leather"}, {"id": "wood", "label": "Wood"}]
+    deepseek.replies = [{"types": ["atmospheric", "nonsense", "abstract", "landscape"], "textures": ["stone", "stone", "leather", "glass"]}]
     response = client.post("/users/7/images/background-choices", json={"words": "a stone occult background", "types": types, "textures": textures})
     assert response.status_code == 200, response.text
-    # Only choices offered, each once, at most two types and three textures.
-    assert response.json() == {"types": ["atmospheric", "decorative"], "textures": ["stone", "distressed"]}
+    # Only choices offered, each once, at most two types and three materials.
+    assert response.json() == {"types": ["atmospheric", "abstract"], "textures": ["stone", "leather"]}
     user = deepseek.calls[0]["user"]
-    assert "a stone occult background" in user and "- stone: Stone & Marble" in user and "- scenic: Scenic" in user
+    assert "a stone occult background" in user and "- stone: Stone" in user and "- landscape: Landscape" in user
+    assert "Which of these materials fit?" in user
     assert client.post("/users/7/images/background-choices", json={"words": "", "types": types}).status_code == 422
 
 

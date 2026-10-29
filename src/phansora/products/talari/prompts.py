@@ -669,27 +669,27 @@ DESIGN_QUESTIONS = {
     "abstract": "the shapes and their movement, how busy it is",
 }
 
-# What a background is (the app's model.js BACKGROUND_TYPES and BACKGROUND_TEXTURES, by
-# id): its type, then its texture — set choices the author picks, never written here.
+# What a background is (the app's model.js BACKGROUND_TYPES and BACKGROUND_MATERIALS, by
+# id): its type, then its material — set choices the author picks, never written here. The
+# material is one of the looks' materials, the same list the app's textures are filed by; the
+# request still calls it `texture`.
 BACKGROUND_TYPES = {
     "atmospheric": "light and mood more than things: mist, haze, glow, smoke, soft depths of shadow",
-    "scenic": "a place seen whole: a landscape, a sky, an interior",
+    "landscape": "a place seen whole: a landscape, a sky, an interior",
     "abstract": "shapes, strokes and color, nothing recognizable",
     "geometric": "geometric shapes, lines and repeating forms",
-    "decorative": "ornament: borders, flourishes, motifs, filigree",
-    "material": "a surface or material across the whole page, with no objects",
 }
-BACKGROUND_TEXTURES = {
-    "smooth": "smooth and even, with no grain",
-    "paper": "paper and parchment",
-    "canvas": "canvas and woven fabric",
-    "leather": "leather",
+BACKGROUND_MATERIALS = {
     "wood": "wood and its grain",
+    "metal": "metal with a metallic sheen",
     "stone": "stone and marble",
-    "metallic": "metal with a metallic sheen",
-    "painted": "a painted, brushed surface",
-    "distressed": "distressed: aged, worn and scratched",
-    "organic": "organic matter: leaves, moss, bark, petals",
+    "plaster": "plaster",
+    "ceramic": "glazed ceramic",
+    "fabric": "textile: woven fabric, linen or canvas",
+    "leather": "leather",
+    "glass": "glass",
+    "gemstone": "polished gemstone",
+    "paper": "paper and parchment",
 }
 
 GUIDE_ROLE = (
@@ -710,7 +710,7 @@ def _image_card(request: ImageBrief) -> str:
         parts.insert(0, f"THE BOOK\n{card}")
     background = [
         f"Type: {BACKGROUND_TYPES[request.background_type]}." if request.background_type in BACKGROUND_TYPES else "",
-        f"Texture: {BACKGROUND_TEXTURES[request.texture]}." if request.texture in BACKGROUND_TEXTURES else "",
+        f"Material: {BACKGROUND_MATERIALS[request.texture]}." if request.texture in BACKGROUND_MATERIALS else "",
     ]
     if request.mode == "background" and any(background):
         parts.append("THE BACKGROUND THE AUTHOR CHOSE\n" + "\n".join(x for x in background if x))
@@ -747,15 +747,15 @@ def _design_needs(request: ImageBrief) -> str:
 
 def image_guide(request: ImageBrief, remaining: int) -> tuple[str, str]:
     cover = request.mode == "background" and request.purpose in ("cover", "back-cover")
-    chosen = " Never ask about the type of background or its texture: the author chose them." if request.mode == "background" and (request.background_type or request.texture) else ""
+    chosen = " Never ask about the type of background or its material: the author chose them." if request.mode == "background" and (request.background_type or request.texture) else ""
     words = ", where the title and words will sit, so that part stays calm" if cover else ""
     if request.mode == "background" and request.designs:
         # A chosen design: the questions are about what it needs, not about a subject.
         order = f"what this design still needs: {_design_needs(request)}{words}, then the colors and the atmosphere"
     elif request.mode == "background" and (request.background_type or request.texture):
-        # Its type and texture picked: the questions are about what they still leave open.
-        order = (f"what this background still needs for its type and texture — for a scenic one what it shows, for a decorative one its "
-                 f"motifs, for a material or a texture its wear and grain{words} — then the mood and light, then the colors")
+        # Its type and material picked: the questions are about what they still leave open.
+        order = (f"what this background still needs for its type and material — for a landscape what it shows, for a material "
+                 f"its wear and grain{words} — then the mood and light, then the colors")
     elif request.mode == "background":
         order = f"the kind of background (a decorative border, corner ornaments, a texture, a pattern, an emblem, a minimal ground or a full scene) and what it shows{words}, the mood and light, the colors"
     else:
@@ -859,10 +859,10 @@ def image_compose(request: ImageComposeRequest) -> tuple[str, str]:
         rules.append("It fills the whole page edge to edge, with nothing important at the very edges, which are trimmed.")
         if request.background_type in BACKGROUND_TYPES:
             rules.append(f"It is {BACKGROUND_TYPES[request.background_type]}.")
-            if request.background_type in ("atmospheric", "abstract", "geometric", "material"):
+            if request.background_type in ("atmospheric", "abstract", "geometric"):
                 rules.append("No figures, creatures or story scenes in it.")
-        if request.texture in BACKGROUND_TEXTURES:
-            rules.append(f"Its surface is {BACKGROUND_TEXTURES[request.texture]}.")
+        if request.texture in BACKGROUND_MATERIALS:
+            rules.append(f"Its surface is {BACKGROUND_MATERIALS[request.texture]}.")
         for kind in sorted(kinds):
             if kind in DESIGN_KINDS:
                 rules.append(f"It is {DESIGN_KINDS[kind]}.")
@@ -932,7 +932,7 @@ def background_choices(request: BackgroundChoicesRequest) -> tuple[str, str]:
 Which of these types of background fit what they said? One or two, best first:
 {types}
 
-Which of these textures fit? Up to three, best first, or none when what they said needs no texture:
+Which of these materials fit? Up to three, best first, or none when what they said needs no material:
 {textures}
 
 Return a JSON object: {{"types": ["id", …], "textures": ["id", …]}}, using only the ids above."""

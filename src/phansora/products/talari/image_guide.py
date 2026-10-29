@@ -102,7 +102,7 @@ async def remix_questions(request: RemixQuestionsRequest) -> RemixQuestionsRespo
 
 async def background_choices(request: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
     """The author's own words for a background matched to its set choices: the types and
-    textures that fit, best first, and only ever ones offered."""
+    materials (`textures`) that fit, best first, and only ever ones offered."""
     system, user = prompts.background_choices(request)
     data = await llm.ask_json(system, user, max_tokens=120, temperature=0.2)
 

@@ -460,7 +460,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         check_user(user_id)
         return await image_guide.guide(body)
 
-    # A background described in the author's own words, matched to its types and textures.
+    # A background described in the author's own words, matched to its types and materials.
     @app.post("/users/{user_id}/images/background-choices", response_model=BackgroundChoicesResponse, response_model_by_alias=True)
     async def image_background_choices(user_id: str, body: BackgroundChoicesRequest) -> BackgroundChoicesResponse:
         check_user(user_id)
