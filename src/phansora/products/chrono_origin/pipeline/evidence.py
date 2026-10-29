@@ -13,20 +13,11 @@ real, what is missing. That is what the tokens are for.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 from urllib.parse import urlsplit
 
 from ..models import CLAIM_CLASS_BY_EVIDENCE_TYPE
-from .source_policy import EVIDENCE_RANK, READ_RANK, TIER_ORDER, WORST_RANK
-
-# Two rankings, two questions, and conflating them makes traces worse.
-#
-# READ_RANK (from source_policy) orders what is worth OPENING: an unrecognised
-# domain outranks a wiki there, because reading it is how we learn it is a
-# national archive. EVIDENCE_RANK orders what a source can SUPPORT, and there an
-# unclassified page is tier 5 like any other lead. Reading order is imported
-# under its old name so the callers below read as they always did.
-_TIER_RANK = READ_RANK
+from .source_policy import EVIDENCE_RANK, WORST_RANK
 
 # Hosts where each URL is a distinct work rather than one publisher's voice.
 # Grouping these by domain would wrongly collapse two unrelated papers into one
@@ -149,8 +140,8 @@ def build_chains(
 
     # A chain is represented by its strongest source: that is the tier at which
     # the chain can actually be argued, not the best-looking link in it. Ranked
-    # by EVIDENCE_RANK rather than reading order, so the tier printed on a chain
-    # means the same thing as the tier printed on the citations inside it.
+    # by EVIDENCE_RANK, so the tier printed on a chain means the same thing as the
+    # tier printed on the citations inside it.
     for group in groups.values():
         best = min(
             (tier_for(u) for u in group["urls"]),
@@ -160,136 +151,3 @@ def build_chains(
         group["tier"] = best
 
     return chain_of, list(groups.values())
-
-
-# ----------------------------------------------------------------- reading set
-def select_for_reading(
-    citations: List[Dict[str, Any]],
-    mentions: List[Dict[str, Any]],
-    tier_for: Any,
-    *,
-    limit: int,
-) -> List[str]:
-    """Choose the few URLs worth opening in full.
-
-    Reading pages is the expensive half of the budget, so it is spent where it
-    changes an answer: on the sources that carry provenance. A museum record or a
-    critical edition can settle whether a manuscript is the original or a later
-    copy. A blog restating that manuscript cannot, however confidently it is
-    written — so discovery-tier links are never read, only followed.
-
-    One page per domain, so a single well-SEO'd site cannot consume the budget.
-    """
-    if limit <= 0:
-        return []
-
-    cited_by: Dict[str, float] = {}
-    for m in mentions or []:
-        if not isinstance(m, dict):
-            continue
-        try:
-            conf = float(m.get("confidence", 0.5) or 0.5)
-        except (TypeError, ValueError):
-            conf = 0.5
-        for url in m.get("citations") or []:
-            if url:
-                cited_by[url] = max(cited_by.get(url, 0.0), conf)
-
-    scored: List[Tuple[int, float, str]] = []
-
-    for c in citations or []:
-        url = (c or {}).get("url") or ""
-        if not url:
-            continue
-        tier = tier_for(url)
-        if tier == "low_authority":
-            continue  # leads, never foundations — reading them buys nothing
-        scored.append((_TIER_RANK.get(tier, len(TIER_ORDER)), -cited_by.get(url, 0.0), url))
-
-    scored.sort()
-
-    chosen: List[str] = []
-    seen_domains: set[str] = set()
-    for _, _, url in scored:
-        domain = registrable_domain(url)
-        if domain and domain in seen_domains:
-            continue
-        seen_domains.add(domain)
-        chosen.append(url)
-        if len(chosen) >= limit:
-            break
-    return chosen
-
-
-# ---------------------------------------------------------------- connections
-# Background is not influence. A context node joined by "derives_from" asserts
-# the exact fallacy this report exists to expose, so the claim is downgraded to
-# the relation that states the honest version.
-_CAUSAL_RELATIONS = {"derives_from", "retells", "translates", "responds_to"}
-
-_VALID_RELATIONS = {
-    "derives_from", "retells", "translates", "responds_to",
-    "contradicts", "contemporaneous", "attests", "provides_context",
-    "no_established_link",
-}
-
-
-def validate_connections(
-    raw: Any,
-    valid_ids: set[str],
-    *,
-    max_connections: int,
-    node_types: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
-    """Keep only connections that point at real items and say something.
-
-    A model asked for edges will happily emit them between things it did not
-    relate, pointing at ids it invented. Three rules survive that: both ends must
-    exist, an item cannot connect to itself, and a pair is kept once. An edge with
-    no mechanism is downgraded to ``no_established_link`` rather than dropped —
-    "these are merely sequential" is a true and useful statement about a timeline,
-    and hiding it would let the reader assume a causal story we never verified.
-
-    A fourth rule needs ``node_types``: an edge running out of a context item
-    cannot be causal. "Older religions existed, therefore they shaped this one"
-    is the oldest error in comparative history, and a context item exists
-    precisely to supply background whose influence was NOT established — so the
-    relation is rewritten to ``provides_context`` rather than believed.
-    """
-    if not isinstance(raw, list):
-        return []
-
-    out: List[Dict[str, Any]] = []
-    seen: set[Tuple[str, str]] = set()
-
-    for item in raw:
-        if not isinstance(item, dict) or len(out) >= max_connections:
-            continue
-        a = str(item.get("from_id") or "").strip()
-        b = str(item.get("to_id") or "").strip()
-        if a not in valid_ids or b not in valid_ids or a == b:
-            continue
-        if (a, b) in seen or (b, a) in seen:
-            continue
-        seen.add((a, b))
-
-        relation = item.get("relation")
-        if relation not in _VALID_RELATIONS:
-            relation = "no_established_link"
-        if relation in _CAUSAL_RELATIONS and (node_types or {}).get(a) == "context":
-            relation = "provides_context"
-
-        ev = item.get("evidence")
-        ev = dict(ev) if isinstance(ev, dict) else {}
-        if not str(ev.get("mechanism") or "").strip():
-            relation = "no_established_link"
-            ev.setdefault(
-                "mechanism",
-                "No mechanism established — these items are adjacent in time only.",
-            )
-
-        item = dict(item)
-        item["from_id"], item["to_id"], item["relation"], item["evidence"] = a, b, relation, ev
-        out.append(item)
-
-    return out

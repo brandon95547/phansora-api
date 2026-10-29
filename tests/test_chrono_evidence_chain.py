@@ -266,35 +266,6 @@ def test_an_unknown_mode_falls_back_rather_than_failing():
     assert expand_mode("preservation")["label"] == "Path to Discovery"
 
 
-def test_what_is_already_shown_is_named_for_the_model():
-    """A duplicate cannot be avoided by a model that was never shown it."""
-    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
-
-    block = format_existing_block(["The four Gospels", "Tacitus, Annals"])
-    assert "The four Gospels" in block and "Tacitus, Annals" in block
-
-
-def test_an_empty_board_says_so_rather_than_printing_nothing():
-    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
-
-    assert "nothing else on the timeline" in format_existing_block([])
-    assert "nothing else on the timeline" in format_existing_block(["  ", None])
-
-
-def test_the_existing_list_is_bounded():
-    """It rides on every expansion call; a long trace should not turn it into a wall.
-
-    The bound rose with the size of an expansion. At 40 it was sized for a board where
-    one call added six cards; one now adds up to a hundred, and every title the list
-    fails to name is a repeat the user pays for and then watches the client drop as a
-    duplicate. Still bounded, because it is caller-supplied and rides on every call.
-    """
-    from phansora.products.chrono_origin.pipeline.prompts import format_existing_block
-
-    assert len(format_existing_block([f"Item {i}" for i in range(500)]).split("\n")) == 150
-    assert len(format_existing_block([f"Item {i}" for i in range(12)]).split("\n")) == 12
-
-
 # ------------------------------------------- the expand search must state its query
 # A real expansion came back with queries_run == ["jesus christ"] and citations full
 # of wallpaper pages and an article about basilisk lizards. The web query is scraped

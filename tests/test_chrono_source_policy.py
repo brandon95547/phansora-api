@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pytest
 
-from phansora.products.chrono_origin.pipeline import evidence as ev
 from phansora.products.chrono_origin.pipeline import source_policy as sp
 from phansora.products.chrono_origin.pipeline.orchestrator import _coerce_dossier
 
@@ -50,19 +49,15 @@ class TestHostClassification:
         assert sp.default_tier("https://www.loc.gov/item/2021667925/") == "repository"
         assert sp.default_tier("https://www.archives.gov/founding-docs") == "repository"
 
+    def test_an_author_upload_platform_establishes_that_a_paper_exists_not_that_it_is_right(self):
+        # Academia.edu is a container. The paper it carries may be excellent; the
+        # URL is evidence of neither review nor publication, which is tier 3.
+        assert sp.default_tier("https://www.academia.edu/37829437/Messianic_Expectations") == "reference_index"
 
-class TestTwoOrderings:
-    """Reading order and evidentiary weight are different questions."""
 
+class TestUnclassifiedSources:
     def test_an_unclassified_source_cannot_be_evidence(self):
         assert sp.EVIDENCE_RANK["unknown"] == 5
-
-    def test_but_is_still_worth_opening_before_a_wiki(self):
-        # Opening an unrecognised page is how the pipeline discovers it is a
-        # national archive on an odd domain. Ranking `unknown` as tier 5 for
-        # reading too would quietly stop it reading good sources — a change that
-        # would make traces worse while looking stricter.
-        assert sp.READ_RANK["unknown"] < sp.READ_RANK["low_authority"]
 
 
 class TestTierIsRelational:
@@ -92,11 +87,6 @@ class TestTierIsRelational:
 
     def test_a_self_declared_primary_source_on_a_wiki_is_still_a_wiki(self):
         assert sp.rank_for("primary", url=WIKI) == 5
-
-    def test_reads_a_year_out_of_a_url_for_free(self):
-        assert sp.url_year(NYT_1963) == 1963
-        assert sp.url_year("https://example.org/about") is None
-
 
 class TestRoles:
     def test_tiers_one_to_three_may_be_evidence(self):
@@ -225,41 +215,3 @@ class TestCapAndRelabelNeverDrop:
         assert d is not None
         assert d.claim == "a claim"
         assert d.verification in {"verified", "unverified", "unknown"}
-
-
-class TestChasingLeads:
-    @staticmethod
-    def _tier(url: str) -> str:
-        return sp.default_tier(url)
-
-    def test_reading_still_refuses_to_read_leads(self):
-        # Mining is a separate budget for a separate purpose, not a widening of
-        # the reading set: a wiki's prose must still never reach the model.
-        cites = [{"url": WIKI}, {"url": BL}]
-        assert ev.select_for_reading(cites, [], self._tier, limit=5) == [BL]
-
-
-
-class TestContextIsNotInfluence:
-    def test_a_causal_edge_out_of_a_context_node_is_downgraded(self):
-        # "Older religions existed, therefore they shaped this one" is the oldest
-        # error in comparative history, and the one the user's own outline opens
-        # by warning against.
-        edges = ev.validate_connections(
-            [{"from_id": "c1", "to_id": "t1", "relation": "derives_from",
-              "evidence": {"mechanism": "shared motifs"}}],
-            {"c1", "t1"},
-            max_connections=5,
-            node_types={"c1": "context"},
-        )
-        assert edges[0]["relation"] == "provides_context"
-
-    def test_a_real_descent_claim_is_left_alone(self):
-        edges = ev.validate_connections(
-            [{"from_id": "t1", "to_id": "t2", "relation": "derives_from",
-              "evidence": {"mechanism": "direct textual dependency, shared verbatim passages"}}],
-            {"t1", "t2"},
-            max_connections=5,
-            node_types={"t1": "text_composition"},
-        )
-        assert edges[0]["relation"] == "derives_from"

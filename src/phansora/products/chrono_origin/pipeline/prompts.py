@@ -850,29 +850,6 @@ def expand_body(mode: dict, subject: str, is_collection: bool = False) -> str:
     return body.replace("{subject}", subject or "this subject")
 
 
-def format_existing_block(existing) -> str:
-    """What the board already shows, so an expansion can avoid handing it back.
-
-    NO LONGER WIRED INTO EXPAND_PROMPT. The block rode on every expand call and could run
-    to 150 titles, and the client filters duplicates by title on arrival anyway ("told not
-    to repeat; enforced anyway"), so it was paying tokens for a guarantee it already had.
-    Kept, with its tests, because putting it back is one placeholder.
-
-    The most common way an expansion wastes a call is by returning the anchor's own
-    neighbour — ask for material around Paul's letters and the gospels come back, which
-    are already the next step along. Naming them is cheaper than any instruction about
-    novelty, because the model cannot avoid a duplicate it has not been shown.
-    """
-    items = [str(t).strip() for t in (existing or []) if str(t or "").strip()]
-    if not items:
-        return "(nothing else on the timeline yet)"
-    # 40 was sized for a board where one expansion added six cards. One now adds up to a
-    # hundred, so a list cut at 40 stops naming most of what is already there — and every
-    # title it fails to name is a repeat the user pays for and then watches the client
-    # drop as a duplicate.
-    return "\n".join(f"- {t}" for t in items[:150])
-
-
 # The wrapper, and everything in it earns its line.
 #
 # `Search query:` — the DeepSeek client reads this line to build its web query

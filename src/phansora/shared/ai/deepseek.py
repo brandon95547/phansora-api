@@ -76,17 +76,6 @@ OUTPUT:
 # the resolution order). Nothing is re-exported: there is no default name to re-export.
 
 
-def chat_model(product_var: str | None = None) -> str:
-    """The DeepSeek model this deployment should use, for an optional product override.
-
-    Single source of truth for callers that need the name without building a
-    DeepSeekChatConfig. Hardcoding the name at call sites is what left Dossier Nova broken
-    when the `deepseek-chat` alias was retired — the .env everything else reads couldn't
-    reach it.
-    """
-    return resolve_model(product_var, provider="deepseek")
-
-
 def api_key() -> str:
     """The DeepSeek key from the environment, or "" when there is none."""
     return (os.getenv(KEY_VAR) or os.getenv("DEEPSEEK_CHAT_API_KEY") or "").strip()

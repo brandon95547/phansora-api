@@ -39,6 +39,7 @@ from typing import Any, NamedTuple, Optional
 
 from . import cover as cover_mod
 from . import db, prompts
+from . import phases as phases_mod
 from .audio import VoiceServiceBusy, VoiceServiceError, render_script_to_audio
 from .chunking import build_chunks
 from .deepseek_client import DeepSeekClient
@@ -759,11 +760,6 @@ async def _phase_curriculum(project: dict, client: DeepSeekClient) -> None:
     # the chapter each came from — is already in memory. It costs no query and no
     # model call, and it is the one and only time these boundaries are decided: a
     # listener told "Phase 3 of 7" must never watch that renumber.
-    #
-    # Imported inside the function on purpose. phases.py reads this module's
-    # listening constants, so a top-level import here would be a cycle.
-    from . import phases as phases_mod
-
     planned = phases_mod.plan_phases([
         {
             "ordinal": l["ordinal"],

@@ -56,19 +56,6 @@ EVIDENCE_RANK: Dict[str, int] = {
 }
 WORST_RANK = 5
 
-# Ranking for READING, which is a different question with a different answer.
-# `unknown` sits above `low_authority` here on purpose: opening an unrecognised
-# page is how we find out it is a national archive on an odd domain, whereas
-# opening a wiki tells us nothing we did not already assume. Ranking `unknown`
-# as tier 5 for reading too would quietly stop the pipeline reading good sources.
-TIER_ORDER = (
-    "primary", "repository", "academic", "reference_index",
-    "institutional", "press", "unknown", "low_authority",
-)
-READ_RANK = {t: i for i, t in enumerate(TIER_ORDER)}
-
-VALID_TIERS = set(EVIDENCE_RANK)
-
 # Host signals. A URL is a weak signal but a cheap one, and it is the only signal
 # available when the model declines to label a source.
 LOW_AUTHORITY_HOSTS = (
@@ -81,9 +68,7 @@ LOW_AUTHORITY_HOSTS = (
     # Generated and devotional encyclopaedias. Listed for the same reason
     # Wikipedia is: not because of who runs them, but because the class of
     # thing they are — a tertiary write-up with no editorial chain a reader can
-    # follow — is a lead. Tier 5 is where every unrecognised host already lands;
-    # naming these buys the READ budget back, since READ_RANK deliberately opens
-    # unclassified pages and would otherwise spend a fetch on one of these.
+    # follow — is a lead.
     "grokipedia.com", "thoughtco.com", "learnreligions.com", "christianity.com",
     "gotquestions.org", "biblestudytools.com", "crosswalk.com", "allaboutgod.com",
 )
@@ -136,10 +121,6 @@ PRESS_HOSTS = (
 
 _ABSENCE = ("none identified", "none", "n/a", "na", "not identified", "not found", "unknown", "")
 
-# A year sitting in a URL path or query — /2024/03/, -1963-, ?year=1904. Free,
-# and right often enough on news URLs to decide the contemporaneity question
-# without spending a token on it.
-_URL_YEAR = re.compile(r"(?:^|[/\-_?&=])((?:1[5-9]|20)\d{2})(?:[/\-_?&]|$)")
 _TEXT_YEAR = re.compile(r"\b((?:1[0-9]|20)\d{2})\b")
 
 
@@ -169,39 +150,6 @@ def default_tier(url: str) -> str:
     if any(h in u for h in INSTITUTIONAL_HOSTS):
         return "institutional"
     return "unknown"
-
-
-def resolve_tier(claimed: Any, url: str) -> str:
-    """The tier of a URL, taking the model's label but never above its host.
-
-    Every tier in a trace starts as an assertion by a language model, and the one
-    assertion that must not be taken on trust is the one that promotes a lead.
-    A trace came back having READ a Wikipedia file-description page and an
-    AI-generated wiki, both of which the reader is supposed to skip: the host
-    check was there, but the model had labelled them ``primary``, and a claimed
-    tier was allowed to win. So a known lead host is a floor, not a starting
-    point — nothing a model says about a wiki makes it stop being a wiki.
-
-    Demotion is still free in the other direction: an unrecognised host that the
-    model recognises as a national archive keeps the tier the model gave it,
-    because that is a promotion the host signal genuinely cannot make.
-    """
-    host = default_tier(url)
-    tier = claimed if claimed in EVIDENCE_RANK else host
-    if host == "low_authority":
-        return "low_authority"
-    if EVIDENCE_RANK[tier] < EVIDENCE_RANK[host] and host in ("reference_index", "press"):
-        # Author-upload platforms and news sites, claimed as scholarship or as
-        # the record itself. Both are the same mistake: crediting the container
-        # with the authority of whatever it happens to be carrying.
-        return host
-    return tier
-
-
-def url_year(url: str) -> Optional[int]:
-    """A publication year read out of the URL, when one is sitting there."""
-    m = _URL_YEAR.search(url or "")
-    return int(m.group(1)) if m else None
 
 
 def parse_year(value: Any) -> Optional[int]:
