@@ -2,6 +2,8 @@
 
     phansora serve [--host H] [--port P]   Run the unified API (uvicorn).
     phansora tts   [...]                    SpokenVerse batch TTS / PDF->TXT CLI.
+    phansora sweep [--dry-run] [--move-to DIR]
+                                            Remove files no record names (phansora/sweep.py).
 
 Everything after the subcommand is forwarded verbatim to that product's own
 argument parser, so their existing flags keep working unchanged.
@@ -52,6 +54,32 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         _forward(rest, "phansora-tts")
         tts_main()
+        return 0
+
+    if command == "sweep":
+        import argparse
+        import asyncio
+        from pathlib import Path
+
+        from phansora import sweep
+
+        parser = argparse.ArgumentParser(prog="phansora sweep")
+        parser.add_argument("--dry-run", action="store_true", help="list what would go; change nothing")
+        parser.add_argument("--move-to", type=Path, help="move it under this folder instead of deleting it")
+        opts = parser.parse_args(rest)
+
+        root = sweep.runtime_root()
+        # Planned first, measured, then removed: a size read after the removal is nothing.
+        found = asyncio.run(sweep.sweep(root=root, dry_run=True))
+        total = 0
+        for path in found:
+            size = sweep.size_of(path)
+            total += size
+            print(f"{size / 1e6:9.1f} MB  {path.relative_to(root)}")
+        if not opts.dry_run:
+            sweep.apply(found, root, move_to=opts.move_to)
+        verb = "would go" if opts.dry_run else (f"moved to {opts.move_to}" if opts.move_to else "removed")
+        print(f"{len(found)} files and folders, {total / 1e6:.1f} MB, {verb}.")
         return 0
 
     print(f"Unknown command: {command}\n")

@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
+from phansora import sweep
 from phansora.config import settings
 from phansora.shared.admin.email import router as admin_email_router
 from phansora.shared.admin.router import router as admin_router
@@ -90,14 +91,20 @@ _products = _load_products()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Propagate each mounted sub-app's lifespan (startup/shutdown)."""
+    """Propagate each mounted sub-app's lifespan (startup/shutdown), and run the daily
+    sweep of files no record names (phansora/sweep.py)."""
     async with AsyncExitStack() as stack:
         for prefix, sub in _products.items():
             try:
                 await stack.enter_async_context(sub.router.lifespan_context(sub))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Lifespan startup failed for %s: %s", prefix, exc)
-        yield
+        sweeper = sweep.start()
+        try:
+            yield
+        finally:
+            if sweeper is not None:
+                sweeper.cancel()
 
 
 app = FastAPI(title=settings.app_name, version=settings.version, lifespan=lifespan)

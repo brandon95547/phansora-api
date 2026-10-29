@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone
 import json
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from starlette.background import BackgroundTask
 
 from . import admission
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -345,6 +347,10 @@ async def txt_to_audio(
     file_concurrency: int = Form(1),
     speed: Optional[float] = Form(None),  # 0.5-2.0; native CosyVoice speed
     instruct_text: Optional[str] = Form(None),  # delivery direction, e.g. "in a calm tone"
+    # Whether the audio stays here once sent. SpokenVerse keeps it: its history plays the
+    # file back from here later. Narrava and Book Alchemy keep their own copy, so they send
+    # keep=false and nothing is left here that no record names.
+    keep: bool = Form(True),
 ) -> FileResponse | dict:
     """
     Upload a .txt and return an audio file (mp3/wav).
@@ -363,7 +369,12 @@ async def txt_to_audio(
 
     txt_path = tmp_in_dir / f"{source_stem}.txt"
     await _save_upload(file, txt_path)
-    user_audio_dir = _user_audio_dir(safe_user)
+    # Kept audio goes where the user's history finds it. Audio the caller keeps itself is
+    # made in this request's own folder and deleted once sent, so it cannot pile up, and
+    # two renders of the same name (Book Alchemy's are all "session") cannot overwrite each
+    # other. If the send never finishes, the daily sweep (phansora/sweep.py) removes it.
+    out_dir = _user_audio_dir(safe_user) if keep else TMP_UPLOADS_DIR / f"out_{job_id}"
+    rendered = False
 
     # A non-"default" voice may be one of the user's saved cloned voices; resolve its id to
     # the on-disk reference clip CosyVoice clones from, plus its stored transcript
@@ -418,9 +429,10 @@ async def txt_to_audio(
         # never take the last slot; see admission.py.
         async with admission.slot(priority):
             converter = BatchConverter(cfg)
-            rc = await converter.convert_folder(tmp_in_dir, user_audio_dir)
+            rc = await converter.convert_folder(tmp_in_dir, out_dir)
         if rc != 0:
             raise RuntimeError(f"TTS conversion returned non-zero status: {rc}")
+        rendered = True
     except admission.Busy as busy:
         # 503 with Retry-After, immediately. The alternative — holding the connection until
         # a slot appears — is what made a busy service look like an unreachable one.
@@ -439,10 +451,14 @@ async def txt_to_audio(
             tmp_in_dir.rmdir()
         except Exception:  # noqa: S110 — a temp folder, removed best-effort
             pass
+        if not keep and not rendered:
+            shutil.rmtree(out_dir, ignore_errors=True)
 
     # The audio filename is based on the txt stem; here it's job_id
-    audio_path = user_audio_dir / f"{source_stem}.{output_format}"
+    audio_path = out_dir / f"{source_stem}.{output_format}"
     if not audio_path.exists():
+        if not keep:
+            shutil.rmtree(out_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail="Audio file was not created.")
 
     _append_history_event(
@@ -451,7 +467,7 @@ async def txt_to_audio(
             "type": "txt_to_audio",
             "job_id": job_id,
             "input_filename": file.filename,
-            "output_path": str(audio_path),
+            "output_path": str(audio_path) if keep else None,
             "options": {
                 "voice": voice,
                 "speaker": speaker,
@@ -473,6 +489,7 @@ async def txt_to_audio(
         path=str(audio_path),
         media_type="audio/mpeg" if output_format == "mp3" else "audio/wav",
         filename=audio_path.name,
+        background=None if keep else BackgroundTask(shutil.rmtree, out_dir, ignore_errors=True),
     )
 
 

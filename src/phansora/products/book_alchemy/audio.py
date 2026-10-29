@@ -84,6 +84,9 @@ async def render_script_to_audio(
     form.add_field("user_id", str(user_id))
     form.add_field("voice", str(voice or "default"))
     form.add_field("output_format", output_format)
+    # The lesson is saved to the course's own folder below, which goes when the course is
+    # deleted. Kept at the endpoint too, it would sit in output_audio/ with nothing naming it.
+    form.add_field("keep", "false")
     if speed is not None:
         form.add_field("speed", str(speed))
     # Delivery direction, e.g. "read this calmly". Sent only when the project asked

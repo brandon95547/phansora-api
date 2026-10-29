@@ -379,7 +379,12 @@ mp3. Long sessions do **not** hit nginx's `proxy_read_timeout` (300 s): the work
 
 ```bash
 phansora tts --help        # batch TTS / PDF→TXT
+phansora sweep --dry-run   # files under PHANSORA_DATA_DIR that no record names, with sizes
+phansora sweep             # remove them (--move-to DIR moves them there instead)
 ```
+
+The API runs the sweep itself once a day (`src/phansora/sweep.py`), counted from the last run
+(`data/.sweep-last-run`), so restarts do not reset it. `PHANSORA_SWEEP=off` turns it off.
 
 ## Known issues / what not to do (SpokenVerse + CosyVoice + vLLM)
 
