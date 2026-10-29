@@ -122,6 +122,7 @@ def test_doc_style_reaches_the_script_writer(monkeypatch):
         return "The port never truly sleeps."
 
     monkeypatch.setattr(script.llm, "generate_text", fake)
+    monkeypatch.setattr(script.llm, "deepseek_json", lambda *a, **k: {"opening": "other", "sentences": []})
     script.generate_script("A port at night", style="documentary", doc_style="dark")
 
     assert seen["user"].startswith("DOCUMENTARY STYLE — Dark / Suspense")

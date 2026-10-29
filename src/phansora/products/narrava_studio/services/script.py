@@ -11,13 +11,16 @@ clip at the moment the narration talks about it.
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from typing import List, Optional
 
 from .. import config
 from ..models import Script, ScriptSegment
-from . import enhance_styles, llm, styles
+from . import enhance_styles, llm, neutrality, styles
+
+logger = logging.getLogger("narrava-studio.script")
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 # Split on sentence-ending punctuation followed by whitespace. Good enough for
@@ -137,6 +140,48 @@ _SCRIPT_SYSTEM = (
     "- Open with a hook and give the piece a clear beginning, middle and end.\n"
     "- Do not address 'the viewer' with meta commentary about the video itself."
 )
+
+# Always part of the writer's instructions. The narration is the person's, about the subject
+# as THEY frame it: asked for a documentary on a disputed subject, the writer used to open on
+# its aftermath and call it a conspiracy theory in its own voice, which settles the question
+# for them and leaves the people who see it otherwise no way to tell it. Checked, too, not
+# only asked for (generate_script, services/neutrality.py).
+_NEUTRAL_SYSTEM = (
+    "\n\nStay neutral about real people and events. The narrator reports; it does not rule:\n"
+    "- Never pass a verdict on the subject in the narrator's own voice. Never call it, or "
+    "anything in it, a rumor, hoax, myth, conspiracy theory, misinformation, propaganda, "
+    "debunked, baseless, fake, true or false, unless the brief does. Who called it what is "
+    "part of the story: say who said it.\n"
+    "- On a disputed subject, the first lines are the claim itself: what is alleged, against "
+    "whom, and by whom. Not an event that came after it (an attack, an arrest, a ruling), "
+    "and not a verdict. This holds whatever opening the house style asks for: a cold open "
+    "opens cold on the claim.\n"
+    "- Set out the claims and theories in full, in the terms of the people who hold them: "
+    "say what is alleged and whom it names. Then the answers of the people who reject them. "
+    "Each attributed, and each side given its strongest case.\n"
+    "- State as fact only what is on the record: what happened and when, what was said and "
+    "by whom. What police, courts or officials found or ruled is theirs: 'police said they "
+    "found no evidence', never 'there was no evidence' in the narrator's voice. An accusation "
+    "against a real person is told as an accusation, never as a fact, and never waved away "
+    "either.\n"
+    "- No closing line that sums up who was right, or that sets the facts against the "
+    "claims.\n"
+    "- Follow the angle in the brief. Asked to tell it as the people who hold a view see it, "
+    "tell it from inside that view, attributed to them. Asked for a point of view, argue "
+    "theirs. Otherwise leave the question open for the viewer to decide."
+)
+
+# Sent back with a narration that is less than neutral, for one more draft: what is wrong
+# with it (_faults_note), then the draft.
+_NEUTRAL_REWRITE = (
+    "Your draft is below. It is not neutral.\n{faults}\n\nWrite the narration again with the "
+    "same subject, shape and length, changing only what you must. Output only the "
+    "narration.\n\nYour draft:\n{draft}"
+)
+
+# Fiction is the one kind the check stays out of: a story's narrator may call a character's
+# word a lie. The instructions above still hold for a story about real people.
+_UNCHECKED_KINDS = {"story"}
 
 # Appended to the system prompt ONLY when research is attached, so the plain
 # brief-only path stays byte-identical to what it always sent.
@@ -354,11 +399,51 @@ def generate_script(
     if research_block:
         user += "\n\n" + research_block
 
-    system = _SCRIPT_SYSTEM + (_RESEARCH_SYSTEM if research_block else "")
-    body = llm.generate_text(system, user, max_output_tokens=2500).strip()
-    body = _strip_artifacts(body)
+    system = _SCRIPT_SYSTEM + _NEUTRAL_SYSTEM + (_RESEARCH_SYSTEM if research_block else "")
+    body = _strip_artifacts(llm.generate_text(system, user, max_output_tokens=2500).strip())
+    if style not in _UNCHECKED_KINDS:
+        body = _neutral(body, system, user, theirs=f"{prompt}\n{research_block}")
 
     return segment_script(body, wpm=wpm, source="prompt")
+
+
+def _neutral(body: str, system: str, user: str, *, theirs: str) -> str:
+    """A narration whose narrator passes no verdict the brief did not (see _NEUTRAL_SYSTEM).
+
+    A draft with faults (neutrality.faults) is written once more, told what they are. The
+    redraft is kept only if it has fewer and is not a stub of the first; otherwise the first
+    stands, as a narration that judges in a sentence is still more use than none.
+    """
+    found = neutrality.faults(body, theirs)
+    if not neutrality.fault_count(found):
+        return body
+    logger.info("Narration is not neutral (%s); writing it again", found)
+    ask = _NEUTRAL_REWRITE.format(faults=_faults_note(found), draft=body)
+    try:
+        again = _strip_artifacts(llm.generate_text(system, f"{user}\n\n{ask}", max_output_tokens=2500).strip())
+    except Exception:  # noqa: BLE001 - the first draft is still a narration
+        logger.warning("Narration redraft failed; keeping the first draft", exc_info=True)
+        return body
+    if not again or _word_count(again) < _word_count(body) * 0.6:
+        return body
+    still = neutrality.faults(again, theirs)
+    return again if neutrality.fault_count(still) < neutrality.fault_count(found) else body
+
+
+def _faults_note(found: dict) -> str:
+    lines = []
+    if found["aftermath"]:
+        lines.append(
+            "It opens on something that came after the claim. Open on the claim itself: what "
+            "is alleged, against whom, and by whom."
+        )
+    if found["sentences"]:
+        lines.append(
+            "These sentences pass a verdict on the subject in the narrator's own voice. Say "
+            "whose verdict or finding each one is, or tell it without one:"
+        )
+        lines += [f"- {s}" for s in found["sentences"]]
+    return "\n".join(lines)
 
 
 def from_chapters(

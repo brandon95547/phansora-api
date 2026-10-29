@@ -218,5 +218,7 @@ def narration_block(style: Optional[str]) -> str:
         "This governs how the narration is WRITTEN — voice, tone, sentence rhythm, "
         "structure and storytelling approach. It does not change the subject, and it never "
         "overrides the output rules or the target length: still only the words to be "
-        "spoken, with no scene directions, labels or headings.\n\n"
+        "spoken, with no scene directions, labels or headings, and still neutral about real "
+        "people and events: an opening it calls for is found in the subject, never in a "
+        "verdict on it.\n\n"
     )

@@ -15,16 +15,17 @@ about a documentary on a disputed subject, it used to offer four angles that all
 answer ("how the rumor spread", "fact-checking the claims"), leaving no way to tell the
 story any other way. So the model is told never to judge the subject in its own voice and
 to offer angles across the whole range, theirs among them; and whatever comes back is
-scanned for verdict words (verdicts) the person did not use themselves. A reply that judges
-is asked for once more; what still judges is dropped, and their own words stand in.
+scanned for verdict words (neutrality.verdicts) the person did not use themselves. A reply
+that judges is asked for once more; what still judges is dropped, and their own words stand
+in. The narration written from the brief is checked the same way (script.generate_script).
 """
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from . import llm
+from .neutrality import verdicts
 
 logger = logging.getLogger("narrava-studio.converse")
 
@@ -91,30 +92,6 @@ REWRITE = (
 # What stands in for a question that still judged after the second try. Its answers went
 # with it: they were answers to the question that was dropped.
 NEUTRAL_QUESTION = "What angle should the narration take?"
-
-# Words that pass a verdict on the subject. In the AI's voice they settle the question the
-# person came to answer; in the person's own words (or the imported document's) they are
-# that framing, and may be echoed back. "True" and "false" count only where they judge.
-_VERDICT = re.compile(r"\b(?:" + "|".join((
-    r"rumou?rs?", r"hoax(?:es)?", r"myths?", r"conspirac(?:y|ies)(?:\s+theor(?:y|ies))?",
-    r"mis-?information", r"dis-?information", r"propaganda", r"pseudo-?scien(?:ce|tific)",
-    r"fringe", r"debunk(?:s|ed|ing)?", r"dispro(?:ve|ves|ven|ved|ving)", r"discredit(?:s|ed)?",
-    r"refut(?:e|es|ed)", r"baseless", r"unfounded", r"fake", r"lies",
-    r"fact-?check(?:s|ed|ing|ers?)?",
-    r"(?:is|are|was|were|proven|proved|shown\s+to\s+be)\s+(?:not\s+)?(?:true|false)",
-    r"false\s+(?:claims?|stor(?:y|ies)|accounts?|allegations?|narratives?)",
-)) + r")\b", re.IGNORECASE)
-
-
-def _stem(word: str) -> str:
-    """A verdict word without its ending, so "rumors" in their words covers "rumor"."""
-    return re.sub(r"(?:ies|es|s|ed|ing|ers|er)\b", "", word.lower())
-
-
-def verdicts(text: str, theirs: str) -> list[str]:
-    """The verdict words in ``text`` that ``theirs`` (what they said) does not use."""
-    own = {_stem(m.group(0)) for m in _VERDICT.finditer(theirs or "")}
-    return sorted({m.group(0).lower() for m in _VERDICT.finditer(text or "") if _stem(m.group(0)) not in own})
 
 
 def _theirs(req: Any) -> str:
