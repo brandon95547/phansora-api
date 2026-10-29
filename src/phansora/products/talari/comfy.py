@@ -16,6 +16,7 @@ import io
 import json
 import math
 import random
+import re
 import time
 import uuid
 from pathlib import Path
@@ -109,6 +110,62 @@ def upscale_workflow(image: str, model_file: str, scale: float) -> dict[str, Any
         out = ["4", 0]
     workflow["9"] = {"class_type": "SaveImage", "inputs": {"images": out, "filename_prefix": "talari-upscale"}}
     return workflow
+
+
+# The gateway: this ComfyUI lent to another of the owner's apps (Telios), which builds its
+# own workflows and keeps its own pictures. It sends a workflow and the pictures it loads; it
+# gets back the picture the workflow saves. Nothing is kept here. A workflow may use only
+# these nodes: drawing with FLUX, image-to-image, background removal and upscaling, with the
+# models this ComfyUI already has. Anything else (a node that reads or writes files, fetches,
+# or runs code) is refused before ComfyUI sees it.
+GATEWAY_NODES = frozenset({
+    "LoadImage", "ImageScale", "ImageScaleBy", "ImageInvert",
+    "UnetLoaderGGUF", "UNETLoader", "DualCLIPLoader", "VAELoader", "LoraLoaderModelOnly",
+    "CLIPTextEncode", "FluxGuidance", "EmptySD3LatentImage", "VAEEncode", "VAEDecode", "KSampler", "EasyCache",
+    "LoadBackgroundRemovalModel", "RemoveBackground", "MaskToImage",
+    "UpscaleModelLoader", "ImageUpscaleWithModel",
+    "SaveImage",
+})
+GATEWAY_MAX_NODES = 64
+GATEWAY_MAX_IMAGES = 4
+GATEWAY_PREFIX = "gateway"
+_GATEWAY_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def gateway_workflow(workflow: dict[str, Any], images: dict[str, str]) -> dict[str, Any]:
+    """A gateway workflow as it will run, or a ServiceError (422) saying what is wrong with it.
+
+    `images` maps each picture's name in the workflow to the name ComfyUI keeps it under: a
+    LoadImage may load only a picture that was sent with the workflow. Every SaveImage saves
+    under the gateway's own prefix."""
+
+    def refuse(reason: str) -> ServiceError:
+        return ServiceError(f"The workflow was refused: {reason}", status=422)
+
+    if not isinstance(workflow, dict) or not workflow:
+        raise refuse("it is empty.")
+    if len(workflow) > GATEWAY_MAX_NODES:
+        raise refuse(f"it has more than {GATEWAY_MAX_NODES} nodes.")
+    out: dict[str, Any] = {}
+    saves = 0
+    for key, node in workflow.items():
+        if not isinstance(node, dict) or not isinstance(node.get("inputs"), dict):
+            raise refuse(f"node {key} is not a node.")
+        kind = node.get("class_type")
+        if kind not in GATEWAY_NODES:
+            raise refuse(f"node {key} is {kind!r}, which the gateway does not run.")
+        inputs = dict(node["inputs"])
+        if kind == "LoadImage":
+            if inputs.get("image") not in images:
+                raise refuse(f"node {key} loads a picture that was not sent.")
+            inputs["image"] = images[inputs["image"]]
+        if kind == "SaveImage":
+            inputs["filename_prefix"] = GATEWAY_PREFIX
+            saves += 1
+        out[str(key)] = {"class_type": kind, "inputs": inputs}
+    if not saves:
+        raise refuse("it saves no picture.")
+    return out
 
 
 def dimensions(aspect: float, base: int) -> tuple[int, int]:
@@ -641,6 +698,45 @@ class ComfyUI:
         name = await self._upload_picture(base64.b64encode(picture).decode("ascii"), "picture", "upscale")
         workflow = upscale_workflow(name, file, scale)
         return await self.run(workflow), workflow
+
+    # --- the gateway ----------------------------------------------------------------------
+
+    async def gateway_info(self) -> dict[str, Any]:
+        """Whether ComfyUI can draw, and the model files a gateway workflow should name: the
+        ones Talari draws with, the upscalers and the background removal model it has."""
+        settings = self._settings
+        problem = await self.problem()
+        upscalers: list[str] = []
+        cutout: str | None = None
+        if problem is None:
+            upscalers = [u.file for u in await self.upscalers() if u.installed]
+            have = await self._choices("LoadBackgroundRemovalModel", "bg_removal_name") or []
+            cutout = BG_REMOVAL_FILE if BG_REMOVAL_FILE in have else (have[0] if have else None)
+        flux = settings.comfyui_pipeline == "flux" and not self._custom_workflow
+        return {
+            "ready": problem is None,
+            "detail": problem or "",
+            "flux": {
+                "unet": settings.flux_unet, "t5": settings.flux_t5, "clipL": settings.flux_clip_l,
+                "vae": settings.flux_vae, "guidance": settings.flux_guidance, "steps": settings.comfyui_steps,
+                "sampler": settings.comfyui_sampler, "scheduler": settings.comfyui_scheduler,
+                "size": settings.comfyui_base_size, "easycache": settings.flux_easycache,
+            } if flux else None,
+            "upscalers": upscalers,
+            "backgroundRemoval": cutout,
+            "nodes": sorted(GATEWAY_NODES),
+        }
+
+    async def gateway(self, workflow: dict[str, Any], images: dict[str, str]) -> bytes:
+        """Run a gateway workflow (gateway_workflow) with the pictures it loads (base64 PNG,
+        JPEG or WebP, by the names it loads them by); returns the picture it saves."""
+        if len(images) > GATEWAY_MAX_IMAGES:
+            raise ServiceError(f"The workflow was refused: it sends more than {GATEWAY_MAX_IMAGES} pictures.", status=422)
+        if any(not _GATEWAY_NAME.match(name) for name in images):
+            raise ServiceError("The workflow was refused: a picture's name is not a plain file name.", status=422)
+        gateway_workflow(workflow, {name: name for name in images})   # refused before anything is sent
+        uploaded = {name: await self._upload_picture(data, f"picture {name}", GATEWAY_PREFIX) for name, data in images.items()}
+        return await self.run(gateway_workflow(workflow, uploaded))
 
     async def _uso_missing(self) -> list[str]:
         """What a style picture needs and ComfyUI does not have: the files below, in the folders

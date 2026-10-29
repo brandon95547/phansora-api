@@ -784,3 +784,62 @@ def test_the_lab_says_which_upscalers_comfyui_has(make_client, network: Recorder
     network.handler = comfy(object_info={**LAB_INFO, **UPSCALE_INFO})
     upscalers = lab_client(make_client).get("/users/7/lab/options").json()["upscalers"]
     assert [(u["id"], u["installed"]) for u in upscalers] == [("ultrasharp", True), ("nmkd-siax", True), ("animesharp", False)]
+
+
+# --- the ComfyUI gateway ------------------------------------------------------------------
+# ComfyUI lent to Telios, which builds its own workflows: a workflow and its pictures in,
+# the picture out, nothing kept, and only the nodes the gateway runs.
+
+FLUX_INFO = {
+    **LAB_INFO,
+    "DualCLIPLoader": {"input": {"required": {"clip_name1": [["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"], {}]}}},
+    "VAELoader": {"input": {"required": {"vae_name": [["ae.safetensors"], {}]}}},
+}
+RESTYLE = {
+    "1": {"class_type": "LoadImage", "inputs": {"image": "source.png"}},
+    "2": {"class_type": "ImageScale", "inputs": {"image": ["1", 0], "upscale_method": "lanczos", "width": 768, "height": 768, "crop": "center"}},
+    "9": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "../elsewhere"}},
+}
+SOURCE = _b64.b64encode(b"\x89PNG\r\n\x1a\n a source picture").decode()
+
+
+def test_the_gateway_runs_a_workflow_with_its_pictures_and_keeps_nothing(make_client, network: Recorder, tmp_path: Path) -> None:
+    network.handler = comfy(object_info=FLUX_INFO)
+    client = lab_client(make_client, auth={"internal": False, "user_id": "telios"}, lab_users=frozenset({"telios"}))
+    response = client.post("/users/telios/comfyui/run", json={"workflow": RESTYLE, "images": {"source.png": SOURCE}})
+    assert response.status_code == 200 and response.content == PNG and response.headers["content-type"] == "image/png"
+    [sent] = network.bodies("/prompt")
+    assert sent["prompt"]["1"]["inputs"]["image"] == "talari-ref.png"   # what ComfyUI named the upload
+    assert sent["prompt"]["9"]["inputs"]["filename_prefix"] == "gateway"
+    assert not (tmp_path / "talari").exists()
+    assert any(r.url.path == "/free" for r in network.requests)        # the GPU handed back
+
+
+def test_the_gateway_says_what_to_draw_with(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info={**FLUX_INFO, **UPSCALE_INFO})
+    info = lab_client(make_client).get("/users/telios/comfyui").json()
+    assert info["ready"] is True and info["flux"]["unet"] == "flux1-dev-Q4_K_S.gguf"
+    assert info["upscalers"] == ["4x-UltraSharp.pth", "4x_NMKD-Siax_200k.pth"] and info["backgroundRemoval"] is None
+    assert "KSampler" in info["nodes"]
+
+
+def test_the_gateway_is_open_only_to_the_named_accounts(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=FLUX_INFO)
+    other = lab_client(make_client, auth={"internal": False, "user_id": "8"}, lab_users=frozenset({"telios"}))
+    assert other.post("/users/8/comfyui/run", json={"workflow": RESTYLE, "images": {"source.png": SOURCE}}).status_code == 403
+    assert other.get("/users/8/comfyui").status_code == 403
+    assert network.bodies("/prompt") == []
+
+
+@pytest.mark.parametrize("workflow, images, reason", [
+    ({"1": {"class_type": "LoadImage", "inputs": {"image": "/etc/passwd"}}, "9": RESTYLE["9"]}, {}, "not sent"),
+    ({**RESTYLE, "5": {"class_type": "SaveText", "inputs": {"text": "x"}}}, {"source.png": SOURCE}, "SaveText"),
+    ({"1": RESTYLE["1"]}, {"source.png": SOURCE}, "saves no picture"),
+    ({}, {}, "empty"),
+    (RESTYLE, {"../source.png": SOURCE}, "plain file name"),
+])
+def test_the_gateway_refuses_a_workflow_before_comfyui_sees_it(make_client, network: Recorder, workflow, images, reason) -> None:
+    network.handler = comfy(object_info=FLUX_INFO)
+    response = lab_client(make_client).post("/users/telios/comfyui/run", json={"workflow": workflow, "images": images})
+    assert response.status_code == 422 and reason in response.json()["detail"]
+    assert network.bodies("/prompt") == [] and not any(r.url.path == "/upload/image" for r in network.requests)

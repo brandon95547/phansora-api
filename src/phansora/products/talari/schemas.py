@@ -71,6 +71,14 @@ class Status(Model):
     illustration: ServiceState
 
 
+class GatewayRequest(Model):
+    """A workflow for the ComfyUI gateway (comfy.gateway_workflow), and the pictures it loads:
+    base64 PNG, JPEG or WebP, by the names its LoadImage nodes give."""
+
+    workflow: dict[str, Any]
+    images: dict[str, str] = Field(default_factory=dict)
+
+
 # --- writing ----------------------------------------------------------------
 # Requests are lenient where the app may leave a field out (it is optional in the UI),
 # and bounded where an unbounded field would only cost tokens.

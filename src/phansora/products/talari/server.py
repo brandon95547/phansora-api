@@ -15,6 +15,13 @@ given, open only to the accounts in TALARI_LAB_USERS (and the app's internal key
                                                    and which upscalers ComfyUI has
     POST /users/{user_id}/lab/illustrations        draw one picture with exactly these settings
 
+The ComfyUI gateway, for another of the owner's apps (Telios) that builds its own workflows,
+open to the same accounts. Nothing is kept: the picture comes back in the response.
+
+    GET  /users/{user_id}/comfyui                  is ComfyUI ready, and the model files to name
+    POST /users/{user_id}/comfyui/run              run a workflow (only comfy.GATEWAY_NODES) with
+                                                   the pictures it loads; the picture it saves
+
 Text, written by DeepSeek (writing.py), and imported documents (sources.py):
 
     POST /users/{user_id}/sources/extract          an uploaded PDF/EPUB/DOCX/TXT/MD, as chapters, with
@@ -63,7 +70,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from phansora.shared.auth import enforce_user_scope
 
@@ -85,6 +92,7 @@ from .schemas import (
     ClassifyResponse,
     ForgetRequest,
     ForgetResponse,
+    GatewayRequest,
     KeptSource,
     ReadRequest,
     ExtractResponse,
@@ -270,6 +278,19 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         name = f"{uuid.uuid4().hex}.png"
         (folder / name).write_bytes(image)
         return LabResponse(src=f"/talari/users/{user_id}/images/{name}", seed=seed, width=width, height=height, workflow=workflow)
+
+    # --- the ComfyUI gateway ----------------------------------------------------------
+
+    @app.get("/users/{user_id}/comfyui")
+    async def gateway_info(user_id: str, request: Request) -> dict:
+        lab_user(user_id, request)
+        return await request.app.state.comfy.gateway_info()
+
+    @app.post("/users/{user_id}/comfyui/run")
+    async def gateway_run(user_id: str, body: GatewayRequest, request: Request) -> Response:
+        lab_user(user_id, request)
+        picture = await request.app.state.comfy.gateway(body.workflow, body.images)
+        return Response(content=picture, media_type="image/png")
 
     @app.get("/users/{user_id}/images/{name}")
     def image(user_id: str, name: str) -> FileResponse:
