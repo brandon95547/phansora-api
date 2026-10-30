@@ -115,18 +115,23 @@ def upscale_workflow(image: str, model_file: str, scale: float) -> dict[str, Any
 # The gateway: this ComfyUI lent to another of the owner's apps (Telios), which builds its
 # own workflows and keeps its own pictures. It sends a workflow and the pictures it loads; it
 # gets back the picture the workflow saves. Nothing is kept here. A workflow may use only
-# these nodes: drawing with FLUX, image-to-image, a style picture (USO), background removal and
-# upscaling, with the models this ComfyUI already has. Anything else (a node that reads or writes files, fetches,
-# or runs code) is refused before ComfyUI sees it.
+# these nodes: drawing with FLUX, image-to-image, a style picture (USO), drawing only the part of
+# a picture a mask names (an inpaint), background removal and upscaling, with the models this
+# ComfyUI already has. Anything else (a node that reads or writes files, fetches, or runs code)
+# is refused before ComfyUI sees it.
 GATEWAY_NODES = frozenset({
     "LoadImage", "ImageScale", "ImageScaleBy", "ImageInvert",
     "UnetLoaderGGUF", "UNETLoader", "DualCLIPLoader", "VAELoader", "LoraLoaderModelOnly",
     "CLIPTextEncode", "FluxGuidance", "EmptySD3LatentImage", "VAEEncode", "VAEDecode", "KSampler", "EasyCache",
     "CLIPVisionLoader", "CLIPVisionEncode", "ModelPatchLoader", "USOStyleReference",
+    "InpaintModelConditioning", "DifferentialDiffusion", "ImageToMask",
     "LoadBackgroundRemovalModel", "RemoveBackground", "MaskToImage",
     "UpscaleModelLoader", "ImageUpscaleWithModel",
     "SaveImage",
 })
+# The nodes an inpaint uses that core ComfyUI may not have (an old one): the gateway says whether
+# it can inpaint only when it has all of them.
+INPAINT_NODES = ("InpaintModelConditioning", "DifferentialDiffusion", "ImageToMask")
 GATEWAY_MAX_NODES = 64
 GATEWAY_MAX_IMAGES = 4
 GATEWAY_PREFIX = "gateway"
@@ -382,6 +387,11 @@ class ComfyUI:
         response = await self._get(f"/object_info/{node}", timeout=10.0)
         info = response.json() if response.status_code == 200 else {}
         return _options(info, node, field) if node in info else None
+
+    async def _has_node(self, node: str) -> bool:
+        """Whether ComfyUI has this node at all."""
+        response = await self._get(f"/object_info/{node}", timeout=10.0)
+        return response.status_code == 200 and node in response.json()
 
     async def checkpoints(self) -> list[str]:
         return await self._choices("CheckpointLoaderSimple", "ckpt_name") or []
@@ -704,18 +714,21 @@ class ComfyUI:
 
     async def gateway_info(self) -> dict[str, Any]:
         """Whether ComfyUI can draw, and the model files a gateway workflow should name: the
-        ones Talari draws with, the upscalers and the background removal model it has, and whether
-        it can take a style picture (USO's files, see `_uso_missing`)."""
+        ones Talari draws with, the upscalers and the background removal model it has, whether
+        it can take a style picture (USO's files, see `_uso_missing`) and whether it can inpaint
+        (the nodes in INPAINT_NODES)."""
         settings = self._settings
         problem = await self.problem()
         upscalers: list[str] = []
         cutout: str | None = None
         style_reference = False
+        inpaint = False
         if problem is None:
             upscalers = [u.file for u in await self.upscalers() if u.installed]
             have = await self._choices("LoadBackgroundRemovalModel", "bg_removal_name") or []
             cutout = BG_REMOVAL_FILE if BG_REMOVAL_FILE in have else (have[0] if have else None)
             style_reference = not await self._uso_missing()
+            inpaint = all([await self._has_node(node) for node in INPAINT_NODES])
         flux = settings.comfyui_pipeline == "flux" and not self._custom_workflow
         return {
             "ready": problem is None,
@@ -729,6 +742,7 @@ class ComfyUI:
             "upscalers": upscalers,
             "backgroundRemoval": cutout,
             "styleReference": style_reference,
+            "inpaint": inpaint,
             "nodes": sorted(GATEWAY_NODES),
         }
 

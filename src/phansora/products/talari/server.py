@@ -18,7 +18,8 @@ given, open only to the accounts in TALARI_LAB_USERS (and the app's internal key
 The ComfyUI gateway, for another of the owner's apps (Telios) that builds its own workflows,
 open to the same accounts. Nothing is kept: the picture comes back in the response.
 
-    GET  /users/{user_id}/comfyui                  is ComfyUI ready, and the model files to name
+    GET  /users/{user_id}/comfyui                  is ComfyUI ready, the model files to name, and
+                                                   whether it takes a style picture or can inpaint
     POST /users/{user_id}/comfyui/run              run a workflow (only comfy.GATEWAY_NODES) with
                                                    the pictures it loads; the picture it saves
 

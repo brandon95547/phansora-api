@@ -822,11 +822,44 @@ def test_the_gateway_says_what_to_draw_with(make_client, network: Recorder) -> N
     assert info["upscalers"] == ["4x-UltraSharp.pth", "4x_NMKD-Siax_200k.pth"] and info["backgroundRemoval"] is None
     assert "KSampler" in info["nodes"] and "USOStyleReference" in info["nodes"]
     assert info["styleReference"] is True   # USO's LoRA, projector and vision model are all there
+    assert {"InpaintModelConditioning", "DifferentialDiffusion", "ImageToMask"} <= set(info["nodes"])
+    assert info["inpaint"] is False         # but this ComfyUI has none of the inpaint nodes
 
 
 def test_the_gateway_says_when_it_cannot_take_a_style_picture(make_client, network: Recorder) -> None:
     network.handler = comfy(object_info={k: v for k, v in FLUX_INFO.items() if k != "ModelPatchLoader"})
     assert lab_client(make_client).get("/users/telios/comfyui").json()["styleReference"] is False
+
+
+INPAINT_INFO = {node: {"input": {"required": {}}} for node in comfy_module.INPAINT_NODES}
+
+
+def test_the_gateway_says_it_can_inpaint_only_when_comfyui_has_every_inpaint_node(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info={**FLUX_INFO, **INPAINT_INFO})
+    assert lab_client(make_client).get("/users/telios/comfyui").json()["inpaint"] is True
+    network.handler = comfy(object_info={**FLUX_INFO, **{k: v for k, v in INPAINT_INFO.items() if k != "DifferentialDiffusion"}})
+    assert lab_client(make_client).get("/users/telios/comfyui").json()["inpaint"] is False
+
+
+def test_the_gateway_runs_an_inpaint_with_the_picture_and_its_mask(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info={**FLUX_INFO, **INPAINT_INFO})
+    client = lab_client(make_client, auth={"internal": False, "user_id": "telios"}, lab_users=frozenset({"telios"}))
+    workflow = {
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+        "5": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["4", 0], "guidance": 3.5}},
+        "20": {"class_type": "LoadImage", "inputs": {"image": "picture.png"}},
+        "21": {"class_type": "LoadImage", "inputs": {"image": "mask.png"}},
+        "22": {"class_type": "ImageToMask", "inputs": {"image": ["21", 0], "channel": "red"}},
+        "24": {"class_type": "InpaintModelConditioning", "inputs": {"positive": ["5", 0], "negative": ["6", 0], "vae": ["3", 0], "pixels": ["20", 0], "mask": ["22", 0], "noise_mask": True}},
+        "25": {"class_type": "DifferentialDiffusion", "inputs": {"model": ["1", 0]}},
+        "9": RESTYLE["9"],
+    }
+    response = client.post("/users/telios/comfyui/run", json={"workflow": workflow, "images": {"picture.png": SOURCE, "mask.png": SOURCE}})
+    assert response.status_code == 200 and response.content == PNG
+    [sent] = network.bodies("/prompt")
+    assert sent["prompt"]["22"]["class_type"] == "ImageToMask" and sent["prompt"]["25"]["class_type"] == "DifferentialDiffusion"
+    assert sent["prompt"]["20"]["inputs"]["image"] == "talari-ref.png" and sent["prompt"]["21"]["inputs"]["image"] == "talari-ref.png"
+    assert sent["prompt"]["9"]["inputs"]["filename_prefix"] == "gateway"
 
 
 def test_the_gateway_runs_a_workflow_that_takes_a_style_picture(make_client, network: Recorder) -> None:
