@@ -820,7 +820,32 @@ def test_the_gateway_says_what_to_draw_with(make_client, network: Recorder) -> N
     info = lab_client(make_client).get("/users/telios/comfyui").json()
     assert info["ready"] is True and info["flux"]["unet"] == "flux1-dev-Q4_K_S.gguf"
     assert info["upscalers"] == ["4x-UltraSharp.pth", "4x_NMKD-Siax_200k.pth"] and info["backgroundRemoval"] is None
-    assert "KSampler" in info["nodes"]
+    assert "KSampler" in info["nodes"] and "USOStyleReference" in info["nodes"]
+    assert info["styleReference"] is True   # USO's LoRA, projector and vision model are all there
+
+
+def test_the_gateway_says_when_it_cannot_take_a_style_picture(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info={k: v for k, v in FLUX_INFO.items() if k != "ModelPatchLoader"})
+    assert lab_client(make_client).get("/users/telios/comfyui").json()["styleReference"] is False
+
+
+def test_the_gateway_runs_a_workflow_that_takes_a_style_picture(make_client, network: Recorder) -> None:
+    network.handler = comfy(object_info=FLUX_INFO)
+    client = lab_client(make_client, auth={"internal": False, "user_id": "telios"}, lab_users=frozenset({"telios"}))
+    workflow = {
+        **RESTYLE,
+        "30": {"class_type": "LoadImage", "inputs": {"image": "style.png"}},
+        "31": {"class_type": "CLIPVisionLoader", "inputs": {"clip_name": "sigclip_vision_patch14_384.safetensors"}},
+        "32": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["31", 0], "image": ["30", 0], "crop": "center"}},
+        "33": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["1", 0], "lora_name": "uso-flux1-dit-lora-v1.safetensors", "strength_model": 0.5}},
+        "34": {"class_type": "ModelPatchLoader", "inputs": {"name": "uso-flux1-projector-v1.safetensors"}},
+        "35": {"class_type": "USOStyleReference", "inputs": {"model": ["33", 0], "model_patch": ["34", 0], "clip_vision_output": ["32", 0]}},
+    }
+    response = client.post("/users/telios/comfyui/run", json={"workflow": workflow, "images": {"source.png": SOURCE, "style.png": SOURCE}})
+    assert response.status_code == 200 and response.content == PNG
+    [sent] = network.bodies("/prompt")
+    assert sent["prompt"]["35"]["class_type"] == "USOStyleReference"
+    assert sent["prompt"]["30"]["inputs"]["image"] == "talari-ref.png"   # the style picture went up like the source
 
 
 def test_the_gateway_is_open_only_to_the_named_accounts(make_client, network: Recorder) -> None:

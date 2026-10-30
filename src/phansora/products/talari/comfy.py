@@ -115,13 +115,14 @@ def upscale_workflow(image: str, model_file: str, scale: float) -> dict[str, Any
 # The gateway: this ComfyUI lent to another of the owner's apps (Telios), which builds its
 # own workflows and keeps its own pictures. It sends a workflow and the pictures it loads; it
 # gets back the picture the workflow saves. Nothing is kept here. A workflow may use only
-# these nodes: drawing with FLUX, image-to-image, background removal and upscaling, with the
-# models this ComfyUI already has. Anything else (a node that reads or writes files, fetches,
+# these nodes: drawing with FLUX, image-to-image, a style picture (USO), background removal and
+# upscaling, with the models this ComfyUI already has. Anything else (a node that reads or writes files, fetches,
 # or runs code) is refused before ComfyUI sees it.
 GATEWAY_NODES = frozenset({
     "LoadImage", "ImageScale", "ImageScaleBy", "ImageInvert",
     "UnetLoaderGGUF", "UNETLoader", "DualCLIPLoader", "VAELoader", "LoraLoaderModelOnly",
     "CLIPTextEncode", "FluxGuidance", "EmptySD3LatentImage", "VAEEncode", "VAEDecode", "KSampler", "EasyCache",
+    "CLIPVisionLoader", "CLIPVisionEncode", "ModelPatchLoader", "USOStyleReference",
     "LoadBackgroundRemovalModel", "RemoveBackground", "MaskToImage",
     "UpscaleModelLoader", "ImageUpscaleWithModel",
     "SaveImage",
@@ -703,15 +704,18 @@ class ComfyUI:
 
     async def gateway_info(self) -> dict[str, Any]:
         """Whether ComfyUI can draw, and the model files a gateway workflow should name: the
-        ones Talari draws with, the upscalers and the background removal model it has."""
+        ones Talari draws with, the upscalers and the background removal model it has, and whether
+        it can take a style picture (USO's files, see `_uso_missing`)."""
         settings = self._settings
         problem = await self.problem()
         upscalers: list[str] = []
         cutout: str | None = None
+        style_reference = False
         if problem is None:
             upscalers = [u.file for u in await self.upscalers() if u.installed]
             have = await self._choices("LoadBackgroundRemovalModel", "bg_removal_name") or []
             cutout = BG_REMOVAL_FILE if BG_REMOVAL_FILE in have else (have[0] if have else None)
+            style_reference = not await self._uso_missing()
         flux = settings.comfyui_pipeline == "flux" and not self._custom_workflow
         return {
             "ready": problem is None,
@@ -724,6 +728,7 @@ class ComfyUI:
             } if flux else None,
             "upscalers": upscalers,
             "backgroundRemoval": cutout,
+            "styleReference": style_reference,
             "nodes": sorted(GATEWAY_NODES),
         }
 
