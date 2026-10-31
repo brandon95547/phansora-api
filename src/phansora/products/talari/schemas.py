@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -171,9 +171,25 @@ class ClassifySection(Lenient):
     text: str = Field(default="", max_length=4_000)
 
 
+KNOWN_NAME_MAX = 80
+KNOWN_NAMES_MAX = {"subjects": 60, "topics": 150}
+
+
 class ClassifyRequest(Lenient):
     pictures: list[ClassifyPicture] = Field(default_factory=list, max_length=600)
     sections: list[ClassifySection] = Field(default_factory=list, max_length=3000)
+    # The subjects and topics the project already uses, so a batch words its own the same way.
+    # Trimmed, never refused: too many are cut to the first, and a long name to its first 80.
+    subjects: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+
+    @field_validator("subjects", "topics", mode="before")
+    @classmethod
+    def _trim_names(cls, value: Any, info: ValidationInfo) -> Any:
+        if not isinstance(value, list):
+            return value
+        names = (" ".join(name.split())[:KNOWN_NAME_MAX].rstrip() for name in value if isinstance(name, str))
+        return [name for name in names if name][: KNOWN_NAMES_MAX[info.field_name]]
 
 
 class PictureClass(Lenient):
@@ -185,7 +201,14 @@ class PictureClass(Lenient):
 class SectionClass(Lenient):
     id: str
     kind: Literal["text", "exercise"]
+    # Where the section sits in the Content Library: a broad subject, then its primary topic,
+    # which is also topics[0] (topics adds up to two related ones). All empty when the
+    # section could not be classified.
+    subject: str = ""
+    topic: str = ""
     topics: list[str] = Field(default_factory=list)
+    # A real title, only for a section whose own heading was a placeholder; "" otherwise.
+    title: str = ""
 
 
 class ClassifyResponse(Lenient):

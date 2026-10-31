@@ -1160,9 +1160,10 @@ def test_pictures_are_sorted_by_their_layout_without_a_vision_key(client: TestCl
     assert response.status_code == 200, response.text
     body = response.json()
     assert [(p["id"], p["kind"]) for p in body["pictures"]] == [("a", "diagram"), ("b", "table"), ("c", "music"), ("d", "image")]
+    # An answer in the older style (topics only) still works: its first topic is the topic.
     assert body["sections"] == [
-        {"id": "s1", "kind": "exercise", "topics": ["Soil testing", "pH"]},
-        {"id": "s2", "kind": "text", "topics": ["Watering"]},
+        {"id": "s1", "kind": "exercise", "subject": "", "topic": "Soil testing", "topics": ["Soil testing", "pH"], "title": ""},
+        {"id": "s2", "kind": "text", "subject": "", "topic": "Watering", "topics": ["Watering"], "title": ""},
     ]
 
 

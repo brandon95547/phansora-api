@@ -36,7 +36,8 @@ Text, written by DeepSeek (writing.py), and imported documents (sources.py):
     POST /users/{user_id}/forget                   delete pictures and kept imports the app no longer uses
                                                    (a book or a document deleted)
     POST /users/{user_id}/sources/analyze          what imported material holds: summary, themes, concepts
-    POST /users/{user_id}/sources/classify         what kind each picture and section is (library.py)
+    POST /users/{user_id}/sources/classify         what kind each picture and section is; for a section, also its
+                                                   subject, topic and (for a placeholder heading) a title (library.py)
     POST /users/{user_id}/blueprints               one to three plans for a book
     POST /users/{user_id}/blueprints/refine        a plan changed by a conversation
     POST /users/{user_id}/chapters/write           one chapter, as blocks of inline HTML
