@@ -147,7 +147,7 @@ def test_a_picture_is_drawn_stored_for_its_user_and_served_back(client: TestClie
     assert workflow["1"]["inputs"]["ckpt_name"] == "sdxl_base.safetensors"
     assert workflow["2"]["inputs"]["text"].startswith("A lighthouse at dusk, pen and ink illustration")
     assert "lettering" in workflow["3"]["inputs"]["text"]
-    assert (workflow["4"]["inputs"]["width"], workflow["4"]["inputs"]["height"]) == (896, 1152)
+    assert (workflow["4"]["inputs"]["width"], workflow["4"]["inputs"]["height"]) == (912, 1152)
     assert workflow["5"]["inputs"]["seed"] == 42 and workflow["5"]["inputs"]["steps"] == 20
 
 
@@ -235,8 +235,16 @@ def test_a_browser_token_only_reaches_its_own_pictures(make_client, network: Rec
 
 def test_dimensions_keep_the_pixel_budget_and_snap_to_the_grid() -> None:
     width, height = dimensions(0.8, 1024)
-    assert width % 64 == 0 and height % 64 == 0
+    assert width % 16 == 0 and height % 16 == 0
     assert abs(width * height - 1024 * 1024) / (1024 * 1024) < 0.1
+
+
+def test_the_three_shapes_are_drawn_at_high_in_one_pixel_budget() -> None:
+    # Talari's Tall 1:2, Portrait 2:3 and Wide 3:2 at Telios's High (1280): the same 1.6 megapixels each.
+    sizes = {name: dimensions(ratio, 1280) for name, ratio in (("tall", 1 / 2), ("portrait", 2 / 3), ("wide", 3 / 2))}
+    assert sizes == {"tall": (912, 1808), "portrait": (1040, 1568), "wide": (1568, 1040)}
+    for width, height in sizes.values():
+        assert abs(width * height - 1280 * 1280) / (1280 * 1280) < 0.03
 
 
 def test_fill_workflow_only_turns_whole_numeric_tokens_into_numbers() -> None:
@@ -274,7 +282,7 @@ def test_a_reference_is_uploaded_and_the_sampler_starts_from_it(client: TestClie
     assert workflow["20"] == {"class_type": "LoadImage", "inputs": {"image": "talari-ref.png"}}
     # Scaled and cropped to the picture's own shape, never stretched to it.
     assert workflow["21"]["class_type"] == "ImageScale"
-    assert (workflow["21"]["inputs"]["width"], workflow["21"]["inputs"]["height"]) == (896, 1152)
+    assert (workflow["21"]["inputs"]["width"], workflow["21"]["inputs"]["height"]) == (912, 1152)
     assert workflow["21"]["inputs"]["crop"] == "center"
     # The empty latent is gone: the sampler starts from the encoded reference, at the strength asked.
     assert workflow["4"] == {"class_type": "VAEEncode", "inputs": {"pixels": ["21", 0], "vae": ["1", 2]}}
@@ -750,14 +758,15 @@ def test_a_print_copy_is_a_jpeg_and_a_transparent_picture_keeps_its_transparency
     assert kept.getpixel((10, 50))[3] == 0 and kept.getpixel((110, 50))[3] == 255
 
 
-def test_pictures_are_drawn_at_768_in_16_steps_at_0_85_unless_set_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pictures_are_drawn_at_1280_in_48_steps_at_0_85_unless_set_otherwise(monkeypatch: pytest.MonkeyPatch) -> None:
     from phansora.products.talari.config import load_settings
 
     for name in ("FLUX_SIZE", "COMFYUI_PIPELINE", "FLUX_STEPS", "FLUX_DENOISE"):
         monkeypatch.delenv(name, raising=False)
     settings = load_settings()
-    assert (settings.comfyui_base_size, settings.comfyui_steps, settings.comfyui_denoise) == (768, 16, 0.85)
-    assert dimensions(6.25 / 9.25, 768) == (640, 960)
+    assert (settings.comfyui_base_size, settings.comfyui_steps, settings.comfyui_denoise) == (1280, 48, 0.85)
+    assert settings.comfyui_timeout_s == 1800.0
+    assert dimensions(6.25 / 9.25, 768) == (624, 928)
     monkeypatch.setenv("FLUX_SIZE", "1024")
     assert load_settings().comfyui_base_size == 1024
 

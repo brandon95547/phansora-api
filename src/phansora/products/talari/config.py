@@ -80,17 +80,21 @@ def load_settings() -> Settings:
         comfyui_url=(os.getenv("COMFYUI_URL", "").strip() or "http://127.0.0.1:8188").rstrip("/"),
         comfyui_checkpoint=os.getenv("COMFYUI_CHECKPOINT", "").strip(),
         comfyui_workflow=os.getenv("COMFYUI_WORKFLOW", "").strip(),
-        # FLUX draws at about this size squared, in the picture's shape: 768 (0.6 megapixels)
-        # draws in about half the time of 1024 and still well; the app enlarges a picture for
-        # print when it is exported (up to 4×, 4x-UltraSharp), which covers any page at 200 DPI.
-        comfyui_base_size=_int("FLUX_SIZE", 768 if flux else 1024),
-        # 16 for every picture, redraws included (the user's choice, 2026-10-19): a fifth
-        # faster than ComfyUI's own FLUX templates' 20.
-        comfyui_steps=_int("FLUX_STEPS", 16 if flux else 28),
+        # FLUX draws at about this size squared, in the picture's shape: 1280 is Telios's High
+        # (about 1.6 megapixels: 1040 x 1568 at 2:3, 912 x 1808 at 1:2, 1568 x 1040 at 3:2). At
+        # 2:3 that is 232 DPI across 75% of a 6 x 9 page, so most pictures print sharp as they
+        # are; the app enlarges the few that fall short when it is exported (up to 4×,
+        # 4x-UltraSharp), which covers any page at 200 DPI.
+        comfyui_base_size=_int("FLUX_SIZE", 1280 if flux else 1024),
+        # 48 for every picture, redraws included (the user's choice, 2026-10-31, from Telios's
+        # High: fewer steps draw this size blurry). Telios's Fast is 768 at 24 steps and its
+        # Standard 1024 at 32. It was 16 at 768 before (2026-10-19), a few minutes' work less.
+        comfyui_steps=_int("FLUX_STEPS", 48 if flux else 28),
         comfyui_cfg=_float("COMFYUI_CFG", 6.5),
         comfyui_sampler=os.getenv("COMFYUI_SAMPLER", "").strip() or ("euler" if flux else "dpmpp_2m"),
         comfyui_scheduler=os.getenv("COMFYUI_SCHEDULER", "").strip() or ("simple" if flux else "karras"),
-        comfyui_timeout_s=_float("FLUX_TIMEOUT_SECONDS", 600.0 if flux else 300.0),
+        # A picture at High takes minutes, more behind another or while the model loads.
+        comfyui_timeout_s=_float("FLUX_TIMEOUT_SECONDS", 1800.0 if flux else 300.0),
         data_dir=runtime_dir("talari"),
         comfyui_pipeline=pipeline,
         flux_unet=os.getenv("FLUX_UNET_FILE", "").strip() or f"flux1-dev-{quant}.gguf",

@@ -36,7 +36,8 @@ POLL_INTERVAL_S = 1.0
 USO_LORA = "uso-flux1-dit-lora-v1.safetensors"
 USO_PROJECTOR = "uso-flux1-projector-v1.safetensors"
 USO_VISION = "sigclip_vision_patch14_384.safetensors"
-SIZE_STEP = 64
+# FLUX's own grid, as Telios draws on it: a 2:3 picture at 1280 is 1040 x 1568.
+SIZE_STEP = 16
 MIN_SIZE = 256
 
 # Values a custom workflow file may ask for. A string that is exactly one of
