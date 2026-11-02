@@ -637,10 +637,10 @@ def test_a_substyle_is_drawn_in_its_own_words_and_only_with_its_art_style() -> N
 
 def test_a_picture_is_drawn_in_its_substyle(client: TestClient, network: Recorder) -> None:
     network.handler = comfy()
-    response = client.post("/users/7/illustrations", json={**REQUEST, "artStyle": "comic-book", "substyle": "golden-age", "medium": "auto"})
+    response = client.post("/users/7/illustrations", json={**REQUEST, "artStyle": "comic-book", "substyle": "european-comics", "medium": "auto"})
     assert response.status_code == 200, response.text
     text = network.bodies("/prompt")[0]["prompt"]["2"]["inputs"]["text"]
-    assert "golden age comic book art" in text and "bold inked outlines" not in text
+    assert "ligne claire" in text and "bold inked outlines" not in text
 
 
 # --- background removal --------------------------------------------------------------
