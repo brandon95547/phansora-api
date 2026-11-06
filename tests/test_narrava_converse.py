@@ -76,6 +76,29 @@ def test_after_the_last_question_it_finishes_and_their_words_stand_in_for_a_miss
     assert "Q0? A0" in out["brief"]
 
 
+# The questions are the four that hold for any video, and never about mood. Asked about tone,
+# it put "What feeling should the narration have for these beginners?" to a video on
+# repotting a plant, with four mood words to choose from (2026-11-05).
+
+def test_the_model_asks_only_the_four_questions_any_video_has(model):
+    model["reply"] = {"done": False, "question": "Who is the video for?", "choices": []}
+    converse.next_turn(ask(description="How to repot a plant"))
+    system = model["seen"][0]["system"]
+    for q in converse.QUESTIONS:
+        assert f"- {q}" in system
+    assert "Never ask about tone, mood, feeling, voice or style" in system
+    assert "the tone or feeling" not in system
+    assert "Never adjectives or moods" in system
+
+
+def test_it_stops_after_three_questions(model):
+    model["reply"] = {"done": False, "question": "How should it end?", "choices": []}
+    two = [{"question": f"Q{i}?", "answer": f"A{i}"} for i in range(2)]
+    assert converse.next_turn(ask(turns=two))["done"] is False
+    three = two + [{"question": "Q2?", "answer": "A2"}]
+    assert converse.next_turn(ask(turns=three))["done"] is True
+
+
 def test_write_now_asks_for_the_brief_at_once(model):
     model["reply"] = {"done": True, "brief": "Told for children, warm, ending at dawn."}
     out = converse.next_turn(ask(finish=True))

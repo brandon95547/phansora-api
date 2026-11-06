@@ -3,9 +3,16 @@
 The AI tab opens on one box, "Describe your narration"; the Import tab on the topics a
 document was found to have. Whatever the person writes first is ``description``. From
 there DeepSeek asks one short follow-up question at a time, each with a few suggested
-answers, about what would most change the narration and is not yet answered. When it knows
-enough (or after MAX_QUESTIONS, or when the person says to write now) it stops, and returns
-a brief for the writer and, for a document, which of its topics to use.
+answers, from the four that hold for any video in any category (QUESTIONS): who it is for,
+what viewers should come away with, what it must cover, how it ends. It asks only what is not
+answered yet. When it knows enough (or after MAX_QUESTIONS, or when the person says to write
+now) it stops, and returns a brief for the writer and, for a document, which of its topics
+to use.
+
+It never asks about tone, mood or feeling. The video's category sets the tone, and the
+editor asks for style and delivery itself (the form's last question and its Delivery field).
+Asked here, it came back as mood words with nothing to decide: "What feeling should the
+narration have for these beginners?" for a video on repotting a plant (2026-11-05).
 
 Every turn carries the whole conversation, so this keeps no state: the editor holds it.
 
@@ -29,8 +36,9 @@ from .neutrality import verdicts
 
 logger = logging.getLogger("narrava-studio.converse")
 
-# Follow-up questions in one conversation, at most. Most need two or three.
-MAX_QUESTIONS = 4
+# Follow-up questions in one conversation, at most: all of QUESTIONS but the one the
+# description usually answers already.
+MAX_QUESTIONS = 3
 MAX_CHOICES = 4
 QUESTION_CHARS = 200
 CHOICE_CHARS = 60
@@ -38,17 +46,32 @@ BRIEF_CHARS = 3000
 # A topic's summary as shown to the model: enough to tell topics apart.
 TOPIC_SUMMARY_CHARS = 400
 
+# The questions worth asking about any video, in any category, in the order they are asked.
+QUESTIONS = (
+    "Who is the video for?",
+    "What should viewers come away with?",
+    "What must it cover?",
+    "How should it end?",
+)
+
 SYSTEM = """
-You help someone plan the narration for a video by asking short follow-up questions, one at
-a time, about what is still unclear. They have already said what the video is about.
+You help someone plan the narration for a video, as a producer would: by asking short
+follow-up questions, one at a time, about what is still unclear. They have already said what
+the video is about.
 
-Ask about what would change the narration most and has not been answered yet: the angle or
-focus, who it is for, the tone or feeling, how it should open or end, what to include or
-leave out. Never ask something they have already answered. Ask one thing only: a question
-that joins two with "and" or "or" is two questions, so ask the one that matters more.
+Ask only these, in this order, and only the ones they have not already answered:
+""" + "\n".join(f"- {q}" for q in QUESTIONS) + """
 
-A question is plain and friendly, under 20 words, with no preamble and no compliments.
-Offer 2 to 4 short suggested answers (under 8 words each) that fit what they have said.
+Never ask about tone, mood, feeling, voice or style: those are chosen elsewhere. Never ask
+something they have already answered. Ask one thing only.
+
+Word a question plainly and directly, under 12 words, close to the wording above. No
+preamble and no compliments. Call the audience "viewers", never a label you worked out for
+them yourself ("these beginners").
+
+Offer 2 to 4 suggested answers, each under 8 words, drawn from the subject itself: real
+options for this video, such as its actual steps, facts, scenes or selling points, a real
+audience, a real way to end. Never adjectives or moods.
 
 Stay neutral. You are finding out what they want the narration to say, never deciding it
 for them. Do not judge the subject in your own voice: never call it, or anything in it, a
@@ -61,10 +84,11 @@ that assumes the answer.
 
 Stop as soon as you know enough to write a good narration, usually after two or three
 questions. When you stop, set "done" to true and write the brief: one paragraph of
-direction for the writer, covering the subject, the angle, the audience, the tone and the
-shape of the piece. Put in only what they said or clearly meant, in their framing. Never
-add facts, and never add a verdict of yours on the subject.
-""".strip()
+direction for the writer, covering the subject, who it is for, what viewers should come away
+with, what it must cover and how it ends. Put in only what they said or clearly meant, in
+their framing. Never add facts, and never add a verdict of yours on the subject.
+"""
+SYSTEM = SYSTEM.strip()
 
 TOPICS_SYSTEM = """
 They are choosing from the topics found in a document they imported, listed below by the
@@ -91,7 +115,7 @@ REWRITE = (
 
 # What stands in for a question that still judged after the second try. Its answers went
 # with it: they were answers to the question that was dropped.
-NEUTRAL_QUESTION = "What angle should the narration take?"
+NEUTRAL_QUESTION = QUESTIONS[1]
 
 
 def _theirs(req: Any) -> str:
