@@ -111,6 +111,32 @@ class ConverseResponse(BaseModel):
     topics: List[int] = Field(default_factory=list)
 
 
+# ── The guide: a question about the studio, answered from its articles ───────
+class GuideArticle(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    body: str = Field(..., min_length=1, max_length=8000)
+
+
+class GuideTurn(BaseModel):
+    question: str = Field(..., max_length=500)
+    answer: str = Field(..., max_length=3000)
+
+
+class GuideRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=500)
+    # The studio's how-to articles, sent by its server with every question.
+    articles: List[GuideArticle] = Field(..., min_length=1, max_length=300)
+    history: List[GuideTurn] = Field(default_factory=list, max_length=8)
+    # What the video is, in a line ("Video Short · Storytelling").
+    video: Optional[str] = Field(default=None, max_length=300)
+
+
+class GuideResponse(BaseModel):
+    answer: str
+    # The titles of the articles it answered from, the most useful first.
+    articles: List[str] = Field(default_factory=list)
+
+
 # ── Enhance (Write tab: polish narration the user typed) ─────────────────────
 # Not a generation. The words are the user's; this returns the same narration written
 # better. The cap is generous because it is applied to a whole script at once.

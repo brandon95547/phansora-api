@@ -9,6 +9,7 @@ Mounted by phansora.main under ``/studio``. Endpoints:
   POST /ebook/analyze      -> a document  -> its chapters, condensed and ranked (a job)  [DeepSeek]
   GET  /ebook/jobs/{id}    -> where that reading has got to, and its result
   POST /narration/converse -> what they said so far -> the next question, or the brief  [DeepSeek]
+  POST /narration/guide    -> a question + the studio's how-to articles -> an answer  [DeepSeek]
   POST /media/animation    -> description -> canvas animation document       [LLM]
   POST /media/search       -> query       -> stock or web media to place
   POST /scene/suggest      -> one scene   -> fresh visual direction          [LLM]
@@ -40,6 +41,8 @@ from .models import (
     ConverseRequest,
     ConverseResponse,
     FromChaptersRequest,
+    GuideRequest,
+    GuideResponse,
     AnimationGenerateResponse,
     MediaSearchRequest,
     MediaSearchResponse,
@@ -52,7 +55,7 @@ from .models import (
     StoryboardRequest,
     StoryboardResponse,
 )
-from .services import align, animation, converse, documents, llm, media, script, storyboard, voices, web_images
+from .services import align, animation, converse, documents, guide, llm, media, script, storyboard, voices, web_images
 from .services.jobs import jobs
 
 logger = logging.getLogger("narrava-studio")
@@ -268,6 +271,20 @@ async def narration_converse(req: ConverseRequest):
         logger.exception("Narration conversation failed")
         raise fail(502, "The AI could not answer.", exc, logger=logger, context="Narration converse failed") from exc
     return ConverseResponse(**out)
+
+
+@app.post("/narration/guide", response_model=GuideResponse)
+async def narration_guide(req: GuideRequest):
+    """A question to the editor's guide, answered from the studio's how-to articles."""
+    _ensure_deepseek()
+    try:
+        out = await asyncio.get_running_loop().run_in_executor(None, lambda: guide.answer(req))
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Guide question failed")
+        raise fail(502, "The guide could not answer.", exc, logger=logger, context="Guide question failed") from exc
+    return GuideResponse(**out)
 
 
 @app.post("/media/animation", response_model=AnimationGenerateResponse)
