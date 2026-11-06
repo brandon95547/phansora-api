@@ -77,6 +77,14 @@ class DatedItem:
     # rather than left to `details` because it is not display metadata: it selects which
     # prompt an expansion of this node runs. See models.TimelineEvent.is_collection.
     is_collection: bool = False
+    # Set only by the research kinds that ask for them (research_modes): which
+    # perspective an entry belongs to, where a source stands on a claim, its place in a
+    # narrative or symbolic sequence, and the date as written, for an ordering that
+    # does not sort on it.
+    perspective: str = ""
+    stance: str = ""
+    stage: str = ""
+    date_text: str = ""
 
 
 # The keys the prompt asks for, and the ones models substitute for them. Read leniently:
@@ -105,7 +113,36 @@ _DETAIL_KEYS = (
     ("function", "Function"),
     ("description", "Description"),
     ("notes", "Notes"),
+    # Chronology
+    ("passage", "Passage"),
+    ("certainty", "Date certainty"),
+    # Parallels
+    ("subject", "Parallels"),
+    ("similarities", "Similarities"),
+    ("differences", "Differences"),
+    ("relation", "Relation"),
+    # Translations
+    ("version", "Version"),
+    ("wording", "Wording"),
+    ("meaning", "Meaning"),
+    ("translation_choice", "Translation choice"),
+    ("manuscript_basis", "Manuscript basis"),
+    # Evidence
+    ("source_type", "Source type"),
+    ("shows", "What it shows"),
+    ("reliability", "Reliability"),
 )
+
+# Values written as a fixed vocabulary ("probable_influence"), shown as words.
+_WORD_VALUES = {"Relation", "Source type", "Date certainty"}
+
+_STANCES = {
+    "supports": "supports", "support": "supports", "supporting": "supports", "for": "supports",
+    "challenges": "challenges", "challenge": "challenges", "challenging": "challenges",
+    "against": "challenges", "contradicts": "challenges",
+    "limitation": "limitation", "limitations": "limitation", "dispute": "limitation",
+    "disputed": "limitation", "gap": "limitation",
+}
 
 
 def parse_dated_list(text: str) -> List[DatedItem]:
@@ -174,7 +211,8 @@ def _parse_json_items(text: str) -> List[DatedItem]:
             continue
         seen.add(key)
 
-        year, year_end, precision, era_label = parse_date(_first_string(lowered, _DATE_KEYS))
+        date_text = _first_string(lowered, _DATE_KEYS)
+        year, year_end, precision, era_label = parse_date(date_text)
         items.append(
             DatedItem(
                 title=title,
@@ -182,8 +220,12 @@ def _parse_json_items(text: str) -> List[DatedItem]:
                 year_end=year_end,
                 precision=precision,
                 era_label=era_label,
-                details=_details(lowered),
+                details=_details(lowered) + _readings(lowered),
                 is_collection=_truthy(lowered),
+                perspective=_first_string(lowered, ("perspective",)),
+                stance=_STANCES.get(_first_string(lowered, ("stance",)).casefold(), ""),
+                stage=_first_string(lowered, ("stage", "step", "position")),
+                date_text=date_text,
             )
         )
     return items
@@ -254,8 +296,29 @@ def _details(entry: dict) -> Tuple[Tuple[str, str], ...]:
         if value:
             # A value spanning lines would break every consumer that shows these as
             # rows, and nothing in a field this size needs a line break.
-            out.append((label, " ".join(value.split())))
+            value = " ".join(value.split())
+            if label in _WORD_VALUES:
+                value = value.replace("_", " ")
+                value = value[:1].upper() + value[1:]
+            out.append((label, value))
             used.add(label)
+    return tuple(out)
+
+
+def _readings(entry: dict) -> Tuple[Tuple[str, str], ...]:
+    """A grouped chronology's per-perspective readings of one stage, as labelled rows.
+
+    Keyed by the perspective's name as the prompt wrote it, so the label is already the
+    reader's word for it.
+    """
+    readings = entry.get("readings")
+    if not isinstance(readings, dict):
+        return ()
+    out: List[Tuple[str, str]] = []
+    for key, value in readings.items():
+        label = " ".join(str(key).split())
+        if label and isinstance(value, (str, int, float)) and str(value).strip():
+            out.append((label, " ".join(str(value).split())))
     return tuple(out)
 
 

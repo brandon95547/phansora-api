@@ -149,6 +149,53 @@ Attribution = Literal[
 ]
 
 
+# What the dashboard's start screen asked for. Absent on every trace made before the
+# screen existed and on any caller that only names a title: those are an Origins trace
+# with no focus, which is exactly what a trace always was.
+#
+# The ids are mirrored in the phansora repo (src/chrono-origin/research.js and
+# assets/js/products/chrono-origin/research-modes.js) and pinned by a test on each side.
+# A value here with no prompt behind it would be a label that changes nothing.
+ResearchKind = Literal["chronology", "origins", "parallels", "translations", "evidence"]
+ResearchFocus = Literal[
+    # origins
+    "stories", "beliefs", "words", "practices",
+    # parallels (stories, practices shared with origins)
+    "people", "symbols",
+    # translations
+    "wording", "choices", "manuscripts",
+]
+ResearchPerspective = Literal[
+    # chronology
+    "narrative", "bodily_spiritual", "solar_astronomical", "historical", "comparative",
+    # origins (historical, comparative shared)
+    "textual", "archaeological", "linguistic",
+    # parallels (historical shared)
+    "literary", "symbolic", "cultural", "natural",
+]
+ResearchSequence = Literal["narrative", "historical", "symbolic"]
+ResearchLayout = Literal["separate", "grouped"]
+ResearchSourceType = Literal["all", "texts", "records", "inscriptions"]
+
+
+class ResearchSpec(BaseModel):
+    """The choices that shape a research request beyond its subject."""
+
+    kind: ResearchKind = "origins"
+    focus: Optional[ResearchFocus] = None
+    perspectives: List[ResearchPerspective] = Field(default_factory=list, max_length=5)
+    sequence: Optional[ResearchSequence] = None
+    layout: Optional[ResearchLayout] = None
+    # Parallels: two or more subjects are compared with each other; one is searched for
+    # parallels. The trace title is the subjects joined, for display.
+    subjects: List[str] = Field(default_factory=list, max_length=4)
+    # Translations.
+    languages: List[str] = Field(default_factory=list, max_length=12)
+    versions: List[str] = Field(default_factory=list, max_length=8)
+    # Evidence.
+    source_types: List[ResearchSourceType] = Field(default_factory=list, max_length=4)
+
+
 class TraceRequest(BaseModel):
     title: str = Field(..., min_length=2, description="Story / event title to trace.")
     context: Optional[str] = Field(
@@ -157,6 +204,7 @@ class TraceRequest(BaseModel):
     )
     max_depth: Optional[int] = Field(default=None, ge=1, le=8)
     language: str = Field(default="en")
+    research: Optional[ResearchSpec] = None
 
 
 class CacheKeyRequest(BaseModel):
@@ -320,6 +368,11 @@ class TimelineEvent(BaseModel):
     # What the research reported about this item besides its title and date. Empty when
     # it reported nothing, which is a fact about the answer rather than a gap to fill.
     details: List[DetailField] = Field(default_factory=list)
+    # Which of the request's perspectives this item belongs to (Chronology with separate
+    # timelines), and where a source stands on the claim (Evidence: supports, challenges
+    # or limitation). Empty for every other kind of research.
+    perspective: str = ""
+    stance: str = ""
 
 
 class OriginResult(BaseModel):
@@ -339,6 +392,8 @@ class OriginResult(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence: Optional[EvidenceDossier] = None
     details: List[DetailField] = Field(default_factory=list)
+    perspective: str = ""
+    stance: str = ""
 
 
 class ConnectionEvidence(BaseModel):
@@ -450,6 +505,13 @@ class Conclusion(BaseModel):
 class TraceResponse(BaseModel):
     title: str
     normalized_title: str
+    # The request's research choices, echoed so the board can lay the result out for its
+    # purpose (group sources by stance, split perspectives) and a rerun can ask again.
+    research: Optional[ResearchSpec] = None
+    # "date": the board orders cards by year. "given": the research's own order, for a
+    # narrative or symbolic sequence, where the order IS the finding and a year sort
+    # would undo it.
+    ordering: Literal["date", "given"] = "date"
     origin: OriginResult
     timeline: List[TimelineEvent]
     # Evaluated edges between items. Empty on traces generated before connections

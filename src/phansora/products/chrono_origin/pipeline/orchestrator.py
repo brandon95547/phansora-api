@@ -21,6 +21,7 @@ directly: it works from an item already on the board rather than from a search.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -49,6 +50,7 @@ from phansora.shared.ai.research import GroundedAnswer, build_research_client
 from . import evidence as ev
 from . import source_policy as sp
 from .dated_list import SIGNIFICANCE_LABEL, parse_dated_list
+from . import research_modes
 from .prompts import (
     RESEARCH_PROMPT,
     expand_extract,
@@ -576,6 +578,31 @@ def build_research_prompt(title: str, context: Optional[str]) -> str:
     return prompt
 
 
+def research_prompt_for(req: TraceRequest) -> str:
+    """The prompt a request sends: its own kind's, or the trace prompt for Origins.
+
+    Origins is the trace, so it keeps build_research_prompt's checks and gets its focus
+    and perspectives appended, the way the context line is.
+    """
+    own = research_modes.prompt_for(req.title, req.context, req.research)
+    if own is not None:
+        return own
+    prompt = build_research_prompt(req.title, req.context)
+    extra = research_modes.origins_addendum(req.research)
+    return f"{prompt.rstrip()}\n\n{extra}\n" if extra else prompt
+
+
+def _research_key(req: TraceRequest) -> Optional[str]:
+    """The research choices as one canonical string for the cache key; None for a plain trace."""
+    spec = req.research
+    if spec is None:
+        return None
+    data = spec.model_dump()
+    if spec.kind == "origins" and not spec.focus and not spec.perspectives:
+        return None  # the same request as a plain trace, so the same cache entry
+    return json.dumps(data, sort_keys=True, ensure_ascii=False)
+
+
 class TraceOrchestrator:
     def __init__(self, client: Optional[object] = None) -> None:
         # Provider chosen by CHRONO_LLM_PROVIDER.
@@ -600,6 +627,7 @@ class TraceOrchestrator:
             context=req.context,
             max_depth=req.max_depth,
             language=req.language,
+            research=_research_key(req),
         )
 
         progress(2, "Checking cache")
@@ -637,7 +665,7 @@ class TraceOrchestrator:
         # to allocate badly. RESEARCH_PROMPT asks for descent first and evidence about
         # the subject second, in one answer.
         progress(15, "Searching")
-        research_prompt = build_research_prompt(req.title, req.context)
+        research_prompt = research_prompt_for(req)
         answers = self._search_prompts([research_prompt])
         # What the model actually searched for, reported back so the user sees the
         # real queries rather than a template we wrote.
@@ -775,13 +803,30 @@ class TraceOrchestrator:
         step being added. The synthesis pass that once filled them (claims, dossiers,
         graded connections) is kept at the git tag parked/chrono-synthesis.
         """
+        spec = req.research
+        ordering = research_modes.ordering_for(spec)
+
+        def when(item: Any) -> Dict[str, Any]:
+            """The item's date fields. In a given order the card is labelled by its place
+            in the sequence, and its historical date moves to the details: a year on the
+            card would invite reading the sequence as a chronology of dates, which it is
+            not, and the board orders undated cards as the research gave them."""
+            if ordering != "given":
+                return {"year": item.year, "year_end": item.year_end,
+                        "era_label": item.era_label, "precision": item.precision}
+            label = item.stage or item.date_text or None
+            return {"year": None, "year_end": None, "era_label": label, "precision": "unknown"}
+
+        def details(item: Any) -> List[DetailField]:
+            rows = _details_of(item)
+            if ordering == "given" and item.stage and item.date_text:
+                rows.insert(0, DetailField(label="Date", value=item.date_text))
+            return rows
+
         events = [
             TimelineEvent(
                 id=f"t{i + 1}",
-                year=item.year,
-                year_end=item.year_end,
-                era_label=item.era_label,
-                precision=item.precision,
+                **when(item),
                 node_type="event",
                 # The only path a trace takes, so the flag has to be set here: wired
                 # only into the old synthesis path, it stayed false on every node.
@@ -789,17 +834,21 @@ class TraceOrchestrator:
                 attribution="not_applicable",
                 source_title=item.title,
                 claim=_claim_of(item),
-                details=_details_of(item),
+                details=details(item),
                 citations=[],
                 confidence=0.5,
                 evidence=None,
+                perspective=research_modes.perspective_label(spec, item.perspective),
+                stance=item.stance,
             )
             for i, item in enumerate(items)
         ]
         # The model is asked for oldest-first and gives it, but a list that came back a
         # little out of order should be shown in order rather than shown wrong. Ids were
-        # assigned before this, so they survive the sort.
-        events.sort(key=lambda e: _sort_key(e.year, e.year_end))
+        # assigned before this, so they survive the sort. A narrative or symbolic
+        # sequence is NOT sorted: its order is the finding.
+        if ordering == "date":
+            events.sort(key=lambda e: _sort_key(e.year, e.year_end))
 
         # The oldest item IS the origin — that is what the trace set out to find. It
         # moves out of the timeline rather than being copied, so the board does not show
@@ -821,11 +870,15 @@ class TraceOrchestrator:
             citations=[],
             confidence=first.confidence,
             details=list(first.details),
+            perspective=first.perspective,
+            stance=first.stance,
         )
 
         return TraceResponse(
             title=req.title,
             normalized_title=normalized,
+            research=spec,
+            ordering=ordering,
             origin=origin,
             timeline=events[1:],
             connections=[],

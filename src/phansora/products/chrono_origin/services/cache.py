@@ -75,6 +75,7 @@ def request_key(
     context: Optional[str] = None,
     max_depth: Optional[int] = None,
     language: Optional[str] = None,
+    research: Optional[str] = None,
 ) -> str:
     """Everything about a request that changes its answer, as one string.
 
@@ -88,6 +89,11 @@ def request_key(
         str(max_depth or ""),
         (language or "en").strip().lower(),
     ]
+    # The start screen's choices (kind, focus, perspectives…), canonical JSON from the
+    # caller. Appended only when present, so every key written before it existed — an
+    # Origins trace with nothing chosen — is still the key it was.
+    if research:
+        parts.append(research)
     return "\x1f".join(parts)
 
 
