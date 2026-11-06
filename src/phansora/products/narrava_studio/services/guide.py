@@ -5,6 +5,10 @@ question by the studio's server, so they change with the screens they describe. 
 only from them: in a few plain steps, with the studio's labels as the articles give them, and
 saying so when they do not cover the question rather than guessing at a button that is not there.
 
+It answers from where they are. The studio says which screen they are on, which tool is open and
+what the project already has; asked "how do I begin a video?" in the editor, she used to answer
+with the home page's first question, a step already taken (2026-11-06).
+
 The articles go first in the system prompt, in the order they are sent, and the question after.
 That keeps the long, unchanging part of every request the same from one question to the next,
 which DeepSeek's prompt cache serves without reading it again.
@@ -41,6 +45,11 @@ studio, from the how-to articles below and nothing else.
 - Use the studio's names for things exactly as the articles write them, in **bold**.
 - Speak to the person as "you". Plain words, American spelling.
 - If the question is not about using the studio, say you can only help with the studio.
+- Answer from where they are ("Where they are", given with each question): start from the
+  screen they are on and skip what they have already done. In the editor they are past the home
+  page, so never send them back to choose the kind of video or its category to begin; tell them
+  how to go on from the editor. Only point to the home page if they ask to start a different
+  video.
 """.strip()
 
 REPLY = """
@@ -66,6 +75,8 @@ def _user(req: Any) -> str:
     lines = []
     if req.video:
         lines.append(f"Their video: {_clip(req.video, 200)}")
+    if req.where:
+        lines.append(f"Where they are: {_clip(req.where, 600)}")
     history = req.history[-HISTORY_TURNS:]
     if history:
         lines.append("The conversation so far:")

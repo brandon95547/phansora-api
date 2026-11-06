@@ -66,6 +66,17 @@ def test_the_conversation_so_far_is_shown(model):
     assert "Q1" not in user and "Q2" in user and "A5" in user
 
 
+def test_it_answers_from_where_they_are(model):
+    model["reply"] = {"answer": "x"}
+    where = "In the editor, past the home page: the kind of video and its category are already chosen."
+    guide.answer(ask(question="How do I begin a video?", where=where))
+    assert f"Where they are: {where}" in model["seen"][0]["user"]
+    system = model["seen"][0]["system"]
+    assert "never send them back to choose the kind of video or its category" in system
+    # Where they are changes between questions, so it stays out of the cached system prompt.
+    assert "Where they are:" not in system
+
+
 def test_an_empty_reply_says_it_is_not_covered(model):
     model["reply"] = {}
     assert guide.answer(ask()) == {"answer": guide.NOT_COVERED, "articles": []}

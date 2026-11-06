@@ -129,6 +129,9 @@ class GuideRequest(BaseModel):
     history: List[GuideTurn] = Field(default_factory=list, max_length=8)
     # What the video is, in a line ("Video Short · Storytelling").
     video: Optional[str] = Field(default=None, max_length=300)
+    # Where they are and what the project already has ("In the editor… The Narration tool is
+    # open. The project is empty…"), so the answer starts from there.
+    where: Optional[str] = Field(default=None, max_length=600)
 
 
 class GuideResponse(BaseModel):
