@@ -46,6 +46,8 @@ from .models import (
     AnimationGenerateResponse,
     MediaSearchRequest,
     MediaSearchResponse,
+    PlanRequest,
+    PlanResponse,
     SceneSuggestRequest,
     SceneSuggestResponse,
     ScriptEnhanceRequest,
@@ -55,7 +57,7 @@ from .models import (
     StoryboardRequest,
     StoryboardResponse,
 )
-from .services import align, animation, converse, documents, guide, llm, media, script, storyboard, voices, web_images
+from .services import align, animation, converse, documents, guide, llm, media, plan, script, storyboard, voices, web_images
 from .services.jobs import jobs
 
 logger = logging.getLogger("narrava-studio")
@@ -406,6 +408,29 @@ async def suggest_scene(req: SceneSuggestRequest):
         ideas=suggestion.get("ideas", []),
         degraded=bool(suggestion.get("degraded", False)),
     )
+
+
+@app.post("/storyboard/plan", response_model=PlanResponse)
+async def plan_scenes(req: PlanRequest):
+    """Scenes planned from an idea or a written script, before anything is recorded.
+
+    Not /storyboard: there is no voice to time against yet, so each scene comes back with the
+    length it should hold and its script, and the studio lays them end to end.
+    """
+    _ensure_llm()
+    try:
+        out = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: plan.plan_from_idea(
+                req.idea, req.total_duration_sec, max_scenes=req.max_scenes, style=req.style,
+            ),
+        )
+    except llm.ProviderRejected as exc:
+        raise _provider_error(exc) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Scene planning failed")
+        raise fail(502, "Scene planning failed.", exc, logger=logger, context="Scene planning failed") from exc
+    return PlanResponse(**out)
 
 
 @app.post("/narration/align")

@@ -304,5 +304,28 @@ class SceneSuggestResponse(BaseModel):
     degraded: bool = False
 
 
+# ── Planning scenes before anything is recorded (services/plan.py) ──────────
+class PlanRequest(BaseModel):
+    # An idea ("a short history of lighthouses") or a script already written.
+    idea: str = Field(..., min_length=3, max_length=20000)
+    # How long the video should run. The scenes' lengths are made to add up to it.
+    total_duration_sec: float = Field(..., ge=5, le=3600)
+    max_scenes: int = Field(default=24, ge=1, le=80)
+    style: Optional[str] = Field(default=None, max_length=40)
+
+
+class PlannedScene(BaseModel):
+    name: str                       # a short label for the scene list, 2-4 words
+    text: str                       # its script: the words to be spoken over it
+    visual_prompt: str = ""         # what the viewer sees, standing alone
+    media_type: Literal["image", "video"] = "image"
+    search_terms: List[str] = Field(default_factory=list)
+    seconds: float                  # how long it holds the screen
+
+
+class PlanResponse(BaseModel):
+    scenes: List[PlannedScene] = Field(default_factory=list)
+
+
 class StoryboardResponse(BaseModel):
     scenes: List[StoryboardScene] = Field(default_factory=list)
