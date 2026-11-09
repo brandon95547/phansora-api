@@ -1,11 +1,11 @@
-"""The five kinds of research the start screen offers, and the prompt each one sends.
+"""The six kinds of research the start screen offers, and the prompt each one sends.
 
 Every kind runs the same pipeline as a trace: one grounded call in which the model runs
 its own searches and answers with a JSON array, read by ``dated_list`` and laid on the
 board. What differs is the question, and the question is the whole product: a
-chronology asks for an ORDER, a parallel for a COMPARISON, a translation for WORDING, a
+chronology asks for an ORDER, a genealogy for DESCENT, a parallel for a COMPARISON, a translation for WORDING, a
 piece of evidence for a STANCE. Changing the heading on the same trace prompt would have
-answered all five with the same lineage.
+answered all six with the same lineage.
 
 Origins is the trace itself. ``RESEARCH_PROMPT`` is tuned by hand against the live model,
 so its focus and perspectives are added after it, as the context line is, rather than
@@ -53,6 +53,63 @@ CHRONOLOGY_PERSPECTIVES = {
         "Comparative",
         "related accounts in other traditions, cultures, periods or sources, set beside "
         "each point in the sequence",
+    ),
+}
+
+GENEALOGY_FOCUS = {
+    "families": (
+        "people and families",
+        "parents, children, spouses and siblings, as recorded in vital records, census and "
+        "parish registers, wills, family papers, peerages and published genealogies",
+        "parent",
+    ),
+    "dynasties": (
+        "dynasties and rulers",
+        "royal, imperial and noble houses: who descended from whom, who succeeded whom, and "
+        "how the title passed, including adoptions, regencies and disputed successions",
+        "parent or predecessor",
+    ),
+    "deities": (
+        "gods and mythic figures",
+        "divine, heroic and legendary parentage as myths, scriptures, epics and traditions "
+        "give it, including where traditions give a figure different parents",
+        "parent",
+    ),
+    "schools": (
+        "ideas and schools",
+        "teachers and students, founders and followers, and the schools, movements and "
+        "traditions that grew from one another",
+        "teacher or forerunner",
+    ),
+    "languages": (
+        "languages",
+        "parent languages, proto-languages, branches and daughter languages, as historical "
+        "linguists reconstruct them",
+        "parent language",
+    ),
+}
+
+GENEALOGY_PERSPECTIVES = {
+    "historical": ("Historical", "documented records: births, marriages, deaths and succession"),
+    "traditional": ("Traditional & Mythic", "lines of descent as myths, scriptures and traditions give them"),
+    "textual": ("Textual", "genealogies as written in particular texts, and where those texts differ"),
+}
+
+_DIRECTIONS = {
+    "ancestors": (
+        "ANCESTORS. Start from the subject and follow the line BACK, generation by "
+        "generation, through every {parent} the research names, as far as the evidence "
+        "or tradition reaches."
+    ),
+    "descendants": (
+        "DESCENDANTS. Start from the subject and follow the line FORWARD, generation by "
+        "generation, through every child, heir or successor the research names, as far as "
+        "the evidence or tradition reaches."
+    ),
+    "both": (
+        "ANCESTORS AND DESCENDANTS. Follow the line BACK from the subject through every "
+        "{parent} the research names, and FORWARD through every child, heir or successor, "
+        "with the subject itself between them."
     ),
 }
 
@@ -265,6 +322,47 @@ Return the result as a JSON array and nothing else, one object per entry, in the
 {_JSON_RULES}"""
 
 
+# ----------------------------------------------------------------------- genealogy
+def genealogy_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
+    name, scope, parent = GENEALOGY_FOCUS.get(spec.focus or "", GENEALOGY_FOCUS["families"])
+    direction = _DIRECTIONS.get(spec.direction or "", _DIRECTIONS["ancestors"]).format(parent=parent)
+    chosen = [GENEALOGY_PERSPECTIVES[p] for p in spec.perspectives if p in GENEALOGY_PERSPECTIVES]
+    lens = ""
+    if chosen:
+        lens = "\n\nSearch the line through these perspectives, giving each its own searches:\n\n" + "\n".join(
+            f"* {label}: {desc}" for label, desc in chosen
+        )
+
+    return f"""\
+Using live web search, trace the genealogy of {_subject(title, context)} among {name}: {scope}.{lens}
+
+{direction}
+
+Include the subject itself as its own entry. Give each member of the line its own entry, and give "generation" relative to the subject: 0 for the subject, -1 for a {parent}, -2 for the generation before that, 1 for a child or successor, and so on.
+
+Where sources or traditions disagree about a link (two different fathers, a disputed succession, a contested language family), include each version and say whose it is in "line". Report traditional and mythic descent as the tradition gives it, naming the tradition: do not present it as historical fact, and do not dismiss it. Never invent a link to complete a line: where it breaks, end it.
+
+The goal is a large, complete line with rich detail, not a brief summary. Include every member the research supports, not only the famous ones.
+
+Return the result as a JSON array and nothing else, one object per member of the line, earliest generation first:
+
+[
+  {{
+    "title": "The person, figure, house, school or language, by its usual name",
+    "date": "Birth to death, reign, founding or period of use, e.g. 742-814 CE, c. 3500 BCE; empty where none is known",
+    "generation": "Its generation relative to the subject, e.g. -2, 0, 3",
+    "relationship": "How it is related to the subject, e.g. paternal grandfather, son, teacher, parent language",
+    "line": "Which line or version of the genealogy it belongs to, and whose account that is",
+    "origin": "Where it lived, ruled, taught or was spoken",
+    "authorship": "The record, text or tradition that attests the link",
+    "significance": "Who it was, and why it matters to the line",
+    "is_collection": false
+  }}
+]
+
+{_JSON_RULES}"""
+
+
 # ----------------------------------------------------------------------- parallels
 def parallels_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     focus_name, focus_desc = PARALLEL_FOCUS.get(spec.focus or "", PARALLEL_FOCUS["stories"])
@@ -418,6 +516,7 @@ Return the result as a JSON array and nothing else, one object per source, oldes
 # ------------------------------------------------------------------------ dispatch
 _BUILDERS = {
     "chronology": chronology_prompt,
+    "genealogy": genealogy_prompt,
     "parallels": parallels_prompt,
     "translations": translations_prompt,
     "evidence": evidence_prompt,
@@ -434,6 +533,9 @@ def prompt_for(title: str, context: Optional[str], spec: Optional[ResearchSpec])
 def ordering_for(spec: Optional[ResearchSpec]) -> str:
     """"given" when the research's own order is the finding and a date sort would undo it."""
     if spec is not None and spec.kind == "chronology" and spec.sequence in ("narrative", "symbolic"):
+        return "given"
+    # A line of descent is ordered by generation, and a mythic one has no dates to sort by.
+    if spec is not None and spec.kind == "genealogy":
         return "given"
     return "date"
 

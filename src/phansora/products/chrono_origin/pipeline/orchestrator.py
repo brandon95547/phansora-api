@@ -598,6 +598,10 @@ def _research_key(req: TraceRequest) -> Optional[str]:
     if spec is None:
         return None
     data = spec.model_dump()
+    # A field added after the cache existed is left out until it is set, so every request
+    # made before it keeps the key it was cached under.
+    if data.get("direction") is None:
+        data.pop("direction", None)
     if spec.kind == "origins" and not spec.focus and not spec.perspectives:
         return None  # the same request as a plain trace, so the same cache entry
     return json.dumps(data, sort_keys=True, ensure_ascii=False)

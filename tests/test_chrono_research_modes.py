@@ -71,6 +71,7 @@ class TestEachKindAsksItsOwnQuestion:
 
     @pytest.mark.parametrize("kind,marker", [
         ("chronology", "build the chronology of"),
+        ("genealogy", "trace the genealogy of"),
         ("parallels", "find the parallels to"),
         ("translations", "is worded across languages and versions"),
         ("evidence", "find the evidence bearing on"),
@@ -83,7 +84,7 @@ class TestEachKindAsksItsOwnQuestion:
         assert '"The Flood"' in prompt
 
     def test_the_context_reaches_every_kind(self, run):
-        for kind in ("chronology", "parallels", "translations", "evidence"):
+        for kind in ("chronology", "genealogy", "parallels", "translations", "evidence"):
             _, client = run(TWO, research={"kind": kind}, context="Mesopotamian myth")
             assert "Mesopotamian myth" in client.searches[0], kind
 
@@ -211,6 +212,61 @@ class TestEvidence:
         assert [e.stance for e in trace.timeline] == ["challenges", "limitation"]
 
 
+class TestGenealogy:
+    def test_the_kind_of_lineage_decides_what_is_searched(self):
+        spec = lambda focus: ResearchSpec(kind="genealogy", focus=focus)
+        assert "people and families" in rm.genealogy_prompt("X", None, spec("families"))
+        assert "lines of succession" not in rm.genealogy_prompt("X", None, spec("families"))
+        assert "who succeeded whom" in rm.genealogy_prompt("X", None, spec("dynasties"))
+        assert "divine, heroic and legendary parentage" in rm.genealogy_prompt("X", None, spec("deities"))
+        assert "teachers and students" in rm.genealogy_prompt("X", None, spec("schools"))
+        assert "proto-languages" in rm.genealogy_prompt("X", None, spec("languages"))
+
+    def test_each_direction_is_its_own_instruction(self):
+        spec = lambda d: ResearchSpec(kind="genealogy", focus="families", direction=d)
+        assert "follow the line BACK" in rm.genealogy_prompt("X", None, spec("ancestors"))
+        assert "FORWARD" not in rm.genealogy_prompt("X", None, spec("ancestors"))
+        assert "follow the line FORWARD" in rm.genealogy_prompt("X", None, spec("descendants"))
+        both = rm.genealogy_prompt("X", None, spec("both"))
+        assert "BACK" in both and "FORWARD" in both
+        # With no direction sent, a genealogy goes back, as the dashboard defaults it.
+        assert "follow the line BACK" in rm.genealogy_prompt("X", None, ResearchSpec(kind="genealogy"))
+
+    def test_the_parent_is_named_for_the_kind_of_lineage(self):
+        prompt = rm.genealogy_prompt("Latin", None, ResearchSpec(kind="genealogy", focus="languages"))
+        assert "every parent language the research names" in prompt
+        assert "-1 for a parent language" in prompt
+
+    def test_only_the_chosen_perspectives_are_asked_for(self):
+        prompt = rm.genealogy_prompt("Zeus", None, ResearchSpec(
+            kind="genealogy", focus="deities", perspectives=["traditional"]))
+        assert "Traditional & Mythic:" in prompt
+        assert "Historical:" not in prompt
+
+    def test_traditional_descent_is_reported_not_asserted(self):
+        prompt = rm.genealogy_prompt("X", None, ResearchSpec(kind="genealogy"))
+        assert "do not present it as historical fact" in prompt
+        assert "Never invent a link" in prompt
+
+    def test_the_line_is_kept_in_generation_order(self, run):
+        items = [{"title": "Pepin the Short", "date": "714-768 CE", "generation": -1, "relationship": "father"},
+                 {"title": "Charlemagne", "date": "742-814 CE", "generation": 0},
+                 {"title": "Charles Martel", "date": "c. 688-741 CE", "generation": -2}]
+        trace, _ = run(items, title="Charlemagne",
+                       research={"kind": "genealogy", "focus": "dynasties", "direction": "ancestors"})
+        assert trace.origin.source_title == "Pepin the Short"
+        assert [e.source_title for e in trace.timeline] == ["Charlemagne", "Charles Martel"]
+
+    def test_generation_and_relationship_reach_the_card(self):
+        [item] = parse_dated_list(json.dumps([{
+            "title": "Pepin the Short", "date": "714-768 CE", "generation": -1,
+            "relationship": "father", "line": "Frankish annals"}]))
+        details = dict(item.details)
+        assert details["Generation"] == "-1"
+        assert details["Relationship"] == "father"
+        assert details["Line"] == "Frankish annals"
+
+
 # ----------------------------------------------------------------------------- the rest
 class TestTheRequestAndTheCache:
     def test_an_unknown_choice_is_refused(self):
@@ -218,6 +274,8 @@ class TestTheRequestAndTheCache:
             ResearchSpec(kind="horoscope")
         with pytest.raises(ValidationError):
             ResearchSpec(kind="chronology", perspectives=["vibes"])
+        with pytest.raises(ValidationError):
+            ResearchSpec(kind="genealogy", direction="sideways")
 
     def test_the_research_choices_are_echoed_back(self, run):
         trace, _ = run(TWO, research={"kind": "evidence", "source_types": ["texts"]})
@@ -229,8 +287,16 @@ class TestTheRequestAndTheCache:
         assert orch._research_key(TraceRequest(title="The Flood")) is None
         assert orch._research_key(TraceRequest(title="The Flood", research=ResearchSpec())) is None
 
+    def test_a_request_from_before_genealogy_keeps_its_cache_key(self):
+        # `direction` came later; a request that does not set it is keyed as it always was.
+        key = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="evidence")))
+        assert "direction" not in json.loads(key)
+
     def test_different_choices_are_different_cache_entries(self):
         a = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="evidence")))
+        up = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="genealogy", direction="ancestors")))
+        down = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="genealogy", direction="descendants")))
+        assert up != down
         b = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="parallels")))
         assert a and b and a != b
 
@@ -247,12 +313,17 @@ class TestTheIdsMatchTheDashboard:
 
         from phansora.products.chrono_origin import models as m
 
-        assert get_args(m.ResearchKind) == ("chronology", "origins", "parallels", "translations", "evidence")
+        assert get_args(m.ResearchKind) == (
+            "chronology", "genealogy", "origins", "parallels", "translations", "evidence")
+        assert get_args(m.ResearchDirection) == ("ancestors", "descendants", "both")
         assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
         assert get_args(m.ResearchLayout) == ("separate", "grouped")
         assert get_args(m.ResearchSourceType) == ("all", "texts", "records", "inscriptions")
         assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
             "narrative", "bodily_spiritual", "solar_astronomical", "historical", "comparative"]
+        assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
+        assert list(rm.GENEALOGY_PERSPECTIVES) == ["historical", "traditional", "textual"]
+        assert list(rm._DIRECTIONS) == ["ancestors", "descendants", "both"]
         assert list(rm.ORIGINS_FOCUS) == ["stories", "beliefs", "words", "practices"]
         assert list(rm.ORIGINS_PERSPECTIVES) == ["historical", "textual", "archaeological", "linguistic", "comparative"]
         assert list(rm.PARALLEL_FOCUS) == ["stories", "people", "symbols", "practices"]

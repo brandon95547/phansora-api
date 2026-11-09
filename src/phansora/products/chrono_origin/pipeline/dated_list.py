@@ -116,6 +116,10 @@ _DETAIL_KEYS = (
     # Chronology
     ("passage", "Passage"),
     ("certainty", "Date certainty"),
+    # Genealogy
+    ("generation", "Generation"),
+    ("relationship", "Relationship"),
+    ("line", "Line"),
     # Parallels
     ("subject", "Parallels"),
     ("similarities", "Similarities"),

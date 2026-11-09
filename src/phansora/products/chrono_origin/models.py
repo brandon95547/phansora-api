@@ -156,8 +156,10 @@ Attribution = Literal[
 # The ids are mirrored in the phansora repo (src/chrono-origin/research.js and
 # assets/js/products/chrono-origin/research-modes.js) and pinned by a test on each side.
 # A value here with no prompt behind it would be a label that changes nothing.
-ResearchKind = Literal["chronology", "origins", "parallels", "translations", "evidence"]
+ResearchKind = Literal["chronology", "genealogy", "origins", "parallels", "translations", "evidence"]
 ResearchFocus = Literal[
+    # genealogy
+    "families", "dynasties", "deities", "schools", "languages",
     # origins
     "stories", "beliefs", "words", "practices",
     # parallels (stories, practices shared with origins)
@@ -172,9 +174,12 @@ ResearchPerspective = Literal[
     "textual", "archaeological", "linguistic",
     # parallels (historical shared)
     "literary", "symbolic", "cultural", "natural",
+    # genealogy (historical, textual shared)
+    "traditional",
 ]
 ResearchSequence = Literal["narrative", "historical", "symbolic"]
 ResearchLayout = Literal["separate", "grouped"]
+ResearchDirection = Literal["ancestors", "descendants", "both"]
 ResearchSourceType = Literal["all", "texts", "records", "inscriptions"]
 
 
@@ -186,6 +191,8 @@ class ResearchSpec(BaseModel):
     perspectives: List[ResearchPerspective] = Field(default_factory=list, max_length=5)
     sequence: Optional[ResearchSequence] = None
     layout: Optional[ResearchLayout] = None
+    # Genealogy: which way from the subject the line is followed.
+    direction: Optional[ResearchDirection] = None
     # Parallels: two or more subjects are compared with each other; one is searched for
     # parallels. The trace title is the subjects joined, for display.
     subjects: List[str] = Field(default_factory=list, max_length=4)
