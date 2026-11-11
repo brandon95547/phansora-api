@@ -3,9 +3,9 @@
 Every kind runs the same pipeline as a trace: one grounded call in which the model runs
 its own searches and answers with a JSON array, read by ``dated_list`` and laid on the
 board. What differs is the question, and the question is the whole product: a
-chronology asks for an ORDER, a genealogy for DESCENT, a parallel for a COMPARISON, a translation for WORDING, a
-piece of evidence for a STANCE. Changing the heading on the same trace prompt would have
-answered all six with the same lineage.
+chronology asks for an ORDER, a genealogy for DESCENT, a parallel for a COMPARISON, a
+translation for WORDING, an establishment for a HIERARCHY. Changing the heading on the
+same trace prompt would have answered all six with the same lineage.
 
 Origins is the trace itself. ``RESEARCH_PROMPT`` is tuned by hand against the live model,
 so its focus and perspectives are added after it, as the context line is, rather than
@@ -177,13 +177,42 @@ TRANSLATION_FOCUS = {
     ),
 }
 
-EVIDENCE_SOURCE_TYPES = {
-    "texts": "texts and manuscripts: literary, religious, scientific or legal writings and "
-             "their surviving copies",
-    "records": "historical records: administrative, legal, financial and census records, "
-               "correspondence, chronicles, newspapers and official reports",
-    "inscriptions": "inscriptions and artifacts: inscriptions, coins, seals, monuments, "
-                    "excavated objects and other physical remains",
+# What kind of body an Establishment maps: (name, its parts, what its top is called). The
+# words its offices and units go by differ by kind, and a prompt that only said "leader"
+# and "division" would map a church as if it were a company.
+ESTABLISHMENT_FOCUS = {
+    "religions": (
+        "a religion, church or denomination",
+        "its supreme authority, governing councils and synods, the ranks of its clergy, its "
+        "provinces, dioceses and congregations, its rites and member churches, and its "
+        "religious orders, institutes and societies",
+        "supreme authority",
+    ),
+    "societies": (
+        "an order, society or fraternity",
+        "its grand or supreme bodies, its officers, its lodges, chapters and degrees, its "
+        "jurisdictions, its appendant and concordant bodies, and its auxiliary orders",
+        "grand or supreme body",
+    ),
+    "governments": (
+        "a government, state or public body",
+        "its head of state and government, its executive, legislature and judiciary, its "
+        "ministries, departments and agencies, its armed forces, and its regional and local "
+        "governments",
+        "head of state or highest authority",
+    ),
+    "companies": (
+        "a company or institution",
+        "its owners and board, its executive officers, its divisions, business units and "
+        "subsidiaries, its regional operations, and its foundations and affiliates",
+        "owners, board or chief executive",
+    ),
+    "movements": (
+        "a movement, party or cause",
+        "its leadership and founders, its governing committees, its wings, chapters and "
+        "branches, its youth, women's and affiliated organizations, and its allied groups",
+        "leadership",
+    ),
 }
 
 
@@ -466,46 +495,49 @@ Return the result as a JSON array and nothing else, one object per version, olde
 {_JSON_RULES}"""
 
 
-# ------------------------------------------------------------------------ evidence
-def evidence_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
-    types = [t for t in spec.source_types if t in EVIDENCE_SOURCE_TYPES]
-    if types:
-        kinds = "\n".join(f"* {EVIDENCE_SOURCE_TYPES[t]}" for t in types)
-        scope = f"Look in these kinds of source:\n\n{kinds}"
-    else:
-        kinds = "\n".join(f"* {d}" for d in EVIDENCE_SOURCE_TYPES.values())
-        scope = f"Look in every kind of source:\n\n{kinds}\n* modern scholarship that weighs them"
+# ------------------------------------------------------------------- establishment
+def establishment_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
+    name, parts, top = ESTABLISHMENT_FOCUS.get(spec.focus or "", ESTABLISHMENT_FOCUS["companies"])
 
     return f"""\
-Using live web search, find the evidence bearing on {_subject(title, context)}. It may be a subject or a specific claim, from any field or period.
+Using live web search, map the power structure of {_subject(title, context)}, which is {name}: {parts}.
 
-{scope}
+Include:
 
-Search for sources that CHALLENGE it as hard as for sources that SUPPORT it. Then search for its LIMITATIONS: late or single copies, unknown provenance, suspected forgery or interpolation, dating disputes, silence where evidence would be expected, and disagreement among specialists.
+1. THE OFFICIAL STRUCTURE, from the top down: its {top}, then every level of leadership and authority beneath it, and its major divisions and branches. Each office, body or unit is its own entry.
+2. EVERYTHING OUTSIDE THE OFFICIAL STRUCTURE: splinter groups, breakaway factions, schisms, rival claimants, bodies whose standing is disputed, and bodies the official structure does not recognize. Search for these separately, as hard as for the official structure; finding one does not complete them.
 
-Do not decide the question. Report what each source shows, when it was made, and how reliable it is, and classify each in "stance":
+Map the structure as it stands now. Include a former body only where a group outside the structure still descends from or claims it.
 
-* supports: the source is evidence for it
-* challenges: the source is evidence against it, or for an alternative
-* limitation: a gap, dispute or weakness in the evidence itself
+Map kinds of unit, not every instance: "Dioceses" is one entry, not one per diocese, unless there are only a few of them and each matters to the structure (each rite, each branch of the armed forces, each major subsidiary).
 
-Date each source to when the SOURCE was made, not to what it describes.
+Give every entry a title no other entry has. Name in "parent_body" the entry it sits directly under, written EXACTLY as that entry's title. Leave "parent_body" empty only for the top of the structure. For a body outside the official structure, "parent_body" is the official body it broke from, rivals or claims.
 
-The goal is a large, complete list with rich detail, not a brief summary. Include every qualifying source found, rather than only the strongest.
+Classify each entry in "standing":
 
-Return the result as a JSON array and nothing else, one object per source, oldest first:
+* official: part of the official structure
+* breakaway: a splinter group, breakaway faction or schism that left it
+* disputed: claims a place in it, but that claim is contested or irregular
+* unrecognized: a body the official structure does not recognize
+
+Report each body's standing as the sources give it, and where the official structure and the group disagree about it, give both views in "relationship". Do not take a side.
+
+The goal is a large, complete map with rich detail, not a brief summary. Include every body the research supports.
+
+Return the result as a JSON array and nothing else, one object per entry, the top of the structure first and every entry after the one it sits under:
 
 [
   {{
-    "title": "The source, by its usual name",
-    "date": "When the source was made, e.g. c. 700 BCE, 1947 CE",
-    "stance": "supports, challenges or limitation",
-    "source_type": "text, manuscript, record, inscription, artifact or scholarship",
-    "origin": "Where it was made, found or is now held",
-    "shows": "What it shows about the subject or claim",
-    "reliability": "Its provenance, dating and how far it can be trusted",
-    "authorship": "Author, issuer or finder",
-    "significance": "Why it matters to the question",
+    "title": "The office, body or group, by its usual name",
+    "date": "When it was founded, established or split off, e.g. 1054 CE, 1970; empty where none is known",
+    "parent_body": "The title of the entry it sits directly under",
+    "standing": "official, breakaway, disputed or unrecognized",
+    "level": "Its place in the structure, e.g. supreme authority, governing council, division, branch, splinter group",
+    "head": "Who leads it: the office, and the current holder where known",
+    "authority": "What it governs, controls or answers for",
+    "relationship": "How it relates to the body above it; for a body outside the structure, how and why it split, and how each side regards the other",
+    "origin": "Where it is based",
+    "significance": "Its role in the structure, and why it matters",
     "is_collection": false
   }}
 ]
@@ -519,7 +551,7 @@ _BUILDERS = {
     "genealogy": genealogy_prompt,
     "parallels": parallels_prompt,
     "translations": translations_prompt,
-    "evidence": evidence_prompt,
+    "establishment": establishment_prompt,
 }
 
 
@@ -536,6 +568,9 @@ def ordering_for(spec: Optional[ResearchSpec]) -> str:
         return "given"
     # A line of descent is ordered by generation, and a mythic one has no dates to sort by.
     if spec is not None and spec.kind == "genealogy":
+        return "given"
+    # A structure is read from the top down, and its order is the hierarchy.
+    if spec is not None and spec.kind == "establishment":
         return "given"
     return "date"
 

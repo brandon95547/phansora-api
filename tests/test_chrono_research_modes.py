@@ -74,7 +74,7 @@ class TestEachKindAsksItsOwnQuestion:
         ("genealogy", "trace the genealogy of"),
         ("parallels", "find the parallels to"),
         ("translations", "is worded across languages and versions"),
-        ("evidence", "find the evidence bearing on"),
+        ("establishment", "map the power structure of"),
     ])
     def test_every_other_kind_sends_a_prompt_of_its_own(self, run, kind, marker):
         _, client = run(TWO, research={"kind": kind})
@@ -84,7 +84,7 @@ class TestEachKindAsksItsOwnQuestion:
         assert '"The Flood"' in prompt
 
     def test_the_context_reaches_every_kind(self, run):
-        for kind in ("chronology", "genealogy", "parallels", "translations", "evidence"):
+        for kind in ("chronology", "genealogy", "parallels", "translations", "establishment"):
             _, client = run(TWO, research={"kind": kind}, context="Mesopotamian myth")
             assert "Mesopotamian myth" in client.searches[0], kind
 
@@ -192,24 +192,52 @@ class TestTranslations:
         assert "at most about 25 words" in prompt
 
 
-class TestEvidence:
-    def test_it_asks_for_challenges_and_limitations_as_hard_as_support(self):
-        prompt = rm.evidence_prompt("The Trojan War happened", None, ResearchSpec(kind="evidence"))
-        assert "CHALLENGE" in prompt and "LIMITATIONS" in prompt
-        assert "Do not decide the question" in prompt
+class TestEstablishment:
+    def test_the_kind_of_body_decides_what_is_searched(self):
+        spec = lambda focus: ResearchSpec(kind="establishment", focus=focus)
+        assert "dioceses" in rm.establishment_prompt("X", None, spec("religions"))
+        assert "lodges" in rm.establishment_prompt("X", None, spec("societies"))
+        assert "legislature" in rm.establishment_prompt("X", None, spec("governments"))
+        assert "subsidiaries" in rm.establishment_prompt("X", None, spec("companies"))
+        assert "youth" in rm.establishment_prompt("X", None, spec("movements"))
+        # The top is named in the words that kind of body uses.
+        assert "its supreme authority, then every level" in rm.establishment_prompt("X", None, spec("religions"))
+        assert "its head of state or highest authority, then" in rm.establishment_prompt("X", None, spec("governments"))
 
-    def test_only_the_chosen_source_types_are_named(self):
-        prompt = rm.evidence_prompt("X", None, ResearchSpec(kind="evidence", source_types=["inscriptions"]))
-        assert "inscriptions and artifacts" in prompt
-        assert "historical records" not in prompt
+    def test_it_maps_the_official_structure_and_everything_outside_it(self):
+        prompt = rm.establishment_prompt("The Catholic Church", None, ResearchSpec(kind="establishment", focus="religions"))
+        assert "THE OFFICIAL STRUCTURE, from the top down" in prompt
+        assert "EVERYTHING OUTSIDE THE OFFICIAL STRUCTURE" in prompt
+        assert "splinter groups, breakaway factions" in prompt
+        assert "Do not take a side" in prompt
+        assert '"parent_body"' in prompt and '"standing"' in prompt
 
-    def test_each_source_carries_its_stance(self, run):
-        items = [{"title": "A", "date": "700 BCE", "stance": "supports"},
-                 {"title": "B", "date": "600 BCE", "stance": "Against"},
-                 {"title": "C", "date": "1900 CE", "stance": "limitation"}]
-        trace, _ = run(items, research={"kind": "evidence"})
-        assert trace.origin.stance == "supports"
-        assert [e.stance for e in trace.timeline] == ["challenges", "limitation"]
+    def test_the_structure_is_kept_top_down(self, run):
+        items = [{"title": "Pope", "date": "c. 33 CE", "standing": "official"},
+                 {"title": "College of Bishops", "date": "", "parent_body": "Pope"},
+                 {"title": "Society of Saint Pius X", "date": "1970", "parent_body": "Pope",
+                  "standing": "Irregular"}]
+        trace, _ = run(items, title="The Catholic Church",
+                       research={"kind": "establishment", "focus": "religions"})
+        assert trace.ordering == "given"
+        assert trace.origin.source_title == "Pope"
+        assert trace.origin.standing == "official"
+        assert [e.source_title for e in trace.timeline] == ["College of Bishops", "Society of Saint Pius X"]
+        assert [e.parent_body for e in trace.timeline] == ["Pope", "Pope"]
+        assert [e.standing for e in trace.timeline] == ["", "disputed"]
+
+    def test_level_head_and_standing_reach_the_card(self):
+        [item] = parse_dated_list(json.dumps([{
+            "title": "Society of Saint Pius X", "date": "1970", "parent": "Pope",
+            "standing": "schismatic", "level": "priestly society", "head": "Superior General",
+            "authority": "its priories and seminaries"}]))
+        assert item.parent_body == "Pope"
+        assert item.standing == "breakaway"
+        details = dict(item.details)
+        assert details["Level"] == "priestly society"
+        assert details["Led by"] == "Superior General"
+        assert details["Authority"] == "its priories and seminaries"
+        assert details["Standing"] == "Schismatic"
 
 
 class TestGenealogy:
@@ -278,9 +306,9 @@ class TestTheRequestAndTheCache:
             ResearchSpec(kind="genealogy", direction="sideways")
 
     def test_the_research_choices_are_echoed_back(self, run):
-        trace, _ = run(TWO, research={"kind": "evidence", "source_types": ["texts"]})
-        assert trace.research.kind == "evidence"
-        assert trace.research.source_types == ["texts"]
+        trace, _ = run(TWO, research={"kind": "establishment", "focus": "societies"})
+        assert trace.research.kind == "establishment"
+        assert trace.research.focus == "societies"
 
     def test_a_plain_trace_keeps_the_cache_key_it_always_had(self):
         assert request_key("The Flood", language="en") == request_key("The Flood", language="en", research=None)
@@ -289,11 +317,11 @@ class TestTheRequestAndTheCache:
 
     def test_a_request_from_before_genealogy_keeps_its_cache_key(self):
         # `direction` came later; a request that does not set it is keyed as it always was.
-        key = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="evidence")))
+        key = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="parallels")))
         assert "direction" not in json.loads(key)
 
     def test_different_choices_are_different_cache_entries(self):
-        a = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="evidence")))
+        a = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="establishment")))
         up = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="genealogy", direction="ancestors")))
         down = orch._research_key(TraceRequest(title="Troy", research=ResearchSpec(kind="genealogy", direction="descendants")))
         assert up != down
@@ -314,11 +342,10 @@ class TestTheIdsMatchTheDashboard:
         from phansora.products.chrono_origin import models as m
 
         assert get_args(m.ResearchKind) == (
-            "chronology", "genealogy", "origins", "parallels", "translations", "evidence")
+            "chronology", "genealogy", "origins", "parallels", "translations", "establishment")
         assert get_args(m.ResearchDirection) == ("ancestors", "descendants", "both")
         assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
         assert get_args(m.ResearchLayout) == ("separate", "grouped")
-        assert get_args(m.ResearchSourceType) == ("all", "texts", "records", "inscriptions")
         assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
             "narrative", "bodily_spiritual", "solar_astronomical", "historical", "comparative"]
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
@@ -328,5 +355,5 @@ class TestTheIdsMatchTheDashboard:
         assert list(rm.ORIGINS_PERSPECTIVES) == ["historical", "textual", "archaeological", "linguistic", "comparative"]
         assert list(rm.PARALLEL_FOCUS) == ["stories", "people", "symbols", "practices"]
         assert list(rm.PARALLEL_PERSPECTIVES) == ["historical", "literary", "symbolic", "cultural", "natural"]
+        assert list(rm.ESTABLISHMENT_FOCUS) == ["religions", "societies", "governments", "companies", "movements"]
         assert list(rm.TRANSLATION_FOCUS) == ["wording", "choices", "manuscripts"]
-        assert list(rm.EVIDENCE_SOURCE_TYPES) == ["texts", "records", "inscriptions"]

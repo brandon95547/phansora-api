@@ -156,7 +156,7 @@ Attribution = Literal[
 # The ids are mirrored in the phansora repo (src/chrono-origin/research.js and
 # assets/js/products/chrono-origin/research-modes.js) and pinned by a test on each side.
 # A value here with no prompt behind it would be a label that changes nothing.
-ResearchKind = Literal["chronology", "genealogy", "origins", "parallels", "translations", "evidence"]
+ResearchKind = Literal["chronology", "genealogy", "origins", "parallels", "translations", "establishment"]
 ResearchFocus = Literal[
     # genealogy
     "families", "dynasties", "deities", "schools", "languages",
@@ -166,6 +166,8 @@ ResearchFocus = Literal[
     "people", "symbols",
     # translations
     "wording", "choices", "manuscripts",
+    # establishment
+    "religions", "societies", "governments", "companies", "movements",
 ]
 ResearchPerspective = Literal[
     # chronology
@@ -180,7 +182,6 @@ ResearchPerspective = Literal[
 ResearchSequence = Literal["narrative", "historical", "symbolic"]
 ResearchLayout = Literal["separate", "grouped"]
 ResearchDirection = Literal["ancestors", "descendants", "both"]
-ResearchSourceType = Literal["all", "texts", "records", "inscriptions"]
 
 
 class ResearchSpec(BaseModel):
@@ -199,8 +200,6 @@ class ResearchSpec(BaseModel):
     # Translations.
     languages: List[str] = Field(default_factory=list, max_length=12)
     versions: List[str] = Field(default_factory=list, max_length=8)
-    # Evidence.
-    source_types: List[ResearchSourceType] = Field(default_factory=list, max_length=4)
 
 
 class TraceRequest(BaseModel):
@@ -376,10 +375,13 @@ class TimelineEvent(BaseModel):
     # it reported nothing, which is a fact about the answer rather than a gap to fill.
     details: List[DetailField] = Field(default_factory=list)
     # Which of the request's perspectives this item belongs to (Chronology with separate
-    # timelines), and where a source stands on the claim (Evidence: supports, challenges
-    # or limitation). Empty for every other kind of research.
+    # timelines). Empty for every other kind of research.
     perspective: str = ""
-    stance: str = ""
+    # Establishment: the body this one sits under, by its title as written on that item
+    # (empty at the top), and where it stands: official, or outside the official structure
+    # as breakaway, disputed or unrecognized. Empty for every other kind of research.
+    parent_body: str = ""
+    standing: str = ""
 
 
 class OriginResult(BaseModel):
@@ -400,7 +402,8 @@ class OriginResult(BaseModel):
     evidence: Optional[EvidenceDossier] = None
     details: List[DetailField] = Field(default_factory=list)
     perspective: str = ""
-    stance: str = ""
+    parent_body: str = ""
+    standing: str = ""
 
 
 class ConnectionEvidence(BaseModel):
@@ -513,7 +516,7 @@ class TraceResponse(BaseModel):
     title: str
     normalized_title: str
     # The request's research choices, echoed so the board can lay the result out for its
-    # purpose (group sources by stance, split perspectives) and a rerun can ask again.
+    # purpose (chart a structure, split perspectives) and a rerun can ask again.
     research: Optional[ResearchSpec] = None
     # "date": the board orders cards by year. "given": the research's own order, for a
     # narrative or symbolic sequence, where the order IS the finding and a year sort

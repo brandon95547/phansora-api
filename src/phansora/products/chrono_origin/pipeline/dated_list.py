@@ -78,11 +78,12 @@ class DatedItem:
     # prompt an expansion of this node runs. See models.TimelineEvent.is_collection.
     is_collection: bool = False
     # Set only by the research kinds that ask for them (research_modes): which
-    # perspective an entry belongs to, where a source stands on a claim, its place in a
-    # narrative or symbolic sequence, and the date as written, for an ordering that
-    # does not sort on it.
+    # perspective an entry belongs to, the body an entry sits under and where it stands
+    # (Establishment), its place in a narrative or symbolic sequence, and the date as
+    # written, for an ordering that does not sort on it.
     perspective: str = ""
-    stance: str = ""
+    parent_body: str = ""
+    standing: str = ""
     stage: str = ""
     date_text: str = ""
 
@@ -131,21 +132,27 @@ _DETAIL_KEYS = (
     ("meaning", "Meaning"),
     ("translation_choice", "Translation choice"),
     ("manuscript_basis", "Manuscript basis"),
-    # Evidence
-    ("source_type", "Source type"),
-    ("shows", "What it shows"),
-    ("reliability", "Reliability"),
+    # Establishment
+    ("level", "Level"),
+    ("parent_body", "Under"),
+    ("standing", "Standing"),
+    ("head", "Led by"),
+    ("authority", "Authority"),
 )
 
 # Values written as a fixed vocabulary ("probable_influence"), shown as words.
-_WORD_VALUES = {"Relation", "Source type", "Date certainty"}
+_WORD_VALUES = {"Relation", "Standing", "Date certainty"}
 
-_STANCES = {
-    "supports": "supports", "support": "supports", "supporting": "supports", "for": "supports",
-    "challenges": "challenges", "challenge": "challenges", "challenging": "challenges",
-    "against": "challenges", "contradicts": "challenges",
-    "limitation": "limitation", "limitations": "limitation", "dispute": "limitation",
-    "disputed": "limitation", "gap": "limitation",
+# Where a body stands against the official structure (Establishment), read leniently: the
+# prompt names four values, and a model that writes "schismatic" or "irregular" means one.
+_STANDINGS = {
+    "official": "official", "recognized": "official", "recognised": "official",
+    "canonical": "official", "regular": "official",
+    "breakaway": "breakaway", "splinter": "breakaway", "schism": "breakaway",
+    "schismatic": "breakaway", "faction": "breakaway", "split": "breakaway",
+    "disputed": "disputed", "irregular": "disputed", "contested": "disputed",
+    "unrecognized": "unrecognized", "unrecognised": "unrecognized",
+    "not recognized": "unrecognized", "not recognised": "unrecognized",
 }
 
 
@@ -227,7 +234,8 @@ def _parse_json_items(text: str) -> List[DatedItem]:
                 details=_details(lowered) + _readings(lowered),
                 is_collection=_truthy(lowered),
                 perspective=_first_string(lowered, ("perspective",)),
-                stance=_STANCES.get(_first_string(lowered, ("stance",)).casefold(), ""),
+                parent_body=_first_string(lowered, ("parent_body", "parent", "reports_to", "under")),
+                standing=_STANDINGS.get(_first_string(lowered, ("standing", "status")).casefold(), ""),
                 stage=_first_string(lowered, ("stage", "step", "position")),
                 date_text=date_text,
             )

@@ -843,7 +843,8 @@ class TraceOrchestrator:
                 confidence=0.5,
                 evidence=None,
                 perspective=research_modes.perspective_label(spec, item.perspective),
-                stance=item.stance,
+                parent_body=item.parent_body,
+                standing=item.standing,
             )
             for i, item in enumerate(items)
         ]
@@ -875,7 +876,8 @@ class TraceOrchestrator:
             confidence=first.confidence,
             details=list(first.details),
             perspective=first.perspective,
-            stance=first.stance,
+            parent_body=first.parent_body,
+            standing=first.standing,
         )
 
         return TraceResponse(
