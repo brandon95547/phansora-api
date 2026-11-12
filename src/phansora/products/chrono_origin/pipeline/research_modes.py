@@ -40,17 +40,39 @@ CHRONOLOGY_PERSPECTIVES = {
         "people, places and dates behind the subject as historians reconstruct them, apart "
         "from what the account claims",
     ),
-    # The two allegorical readings: the dashboard offers them as one lens, Allegorical,
-    # and each is still researched as a timeline of its own.
-    "bodily_spiritual": (
-        "Bodily & Spiritual",
-        "readings that take the account as symbolism of the body, the mind or the inner "
-        "life: allegory, initiation, psychological or spiritual development",
+    # The allegorical readings: the dashboard offers them under one lens, Allegorical,
+    # and each is researched as a timeline of its own. Each asks whether the WRITERS meant
+    # the account this way (ALLEGORICAL_READINGS below), so each is graded by intent.
+    "coded_political": (
+        "Political & Coded History",
+        "readings that hold the writers disguised real rulers, nations and events of their "
+        "own time in the account: coded commentary on the world they wrote in",
+    ),
+    "numerical": (
+        "Symbolic & Numerical",
+        "readings that hold the writers encoded meaning in numbers, names and symbols: "
+        "gematria, number schemes, symbolic names and counts",
+    ),
+    "ritual": (
+        "Seasonal & Ritual",
+        "readings that hold the account began as the words or pattern of a seasonal rite: "
+        "a festival, the harvest, the death and return of the year",
+    ),
+    "mystical": (
+        "Spiritual & Mystical",
+        "readings that hold the writers meant the account as a picture of the soul: its "
+        "fall, trials, awakening or return",
     ),
     "solar_astronomical": (
         "Solar & Astronomical",
-        "readings that tie the account to celestial cycles: the sun's year, the moon, the "
-        "planets, constellations, equinoxes, solstices and the calendar",
+        "readings that hold the writers encoded the sky in the account: the sun's year, the "
+        "moon, the planets, the constellations and zodiac, equinoxes, solstices and the "
+        "calendar",
+    ),
+    "initiatory": (
+        "Bodily & Initiatory",
+        "readings that hold the account encodes teachings for initiates: rites of passage, "
+        "the body as a temple, the stages of an initiation",
     ),
     "comparative": (
         "Ancient Parallels",
@@ -59,6 +81,25 @@ CHRONOLOGY_PERSPECTIVES = {
         "is the same story. Not later retellings or loose resemblances",
     ),
 }
+
+ALLEGORICAL_READINGS = (
+    "coded_political", "numerical", "ritual", "mystical", "solar_astronomical", "initiatory",
+)
+
+# An allegorical reading answers one question here: did the people who wrote the account
+# down mean it this way? A lesson a preacher draws, or an archetype a psychologist sees,
+# is a reading made later, and saying so is the point. Where nobody has proposed a reading
+# for the subject, the honest answer is one entry that says so, not an invented reading.
+_ALLEGORICAL_RULE = (
+    "FOR THE ALLEGORICAL READINGS ({names}): the question is whether the people who wrote "
+    "the account down meant it this way, not what later readers drew from it. Grade every "
+    "such entry in \"intent\": \"intended\" where evidence shows the writers meant it, "
+    "\"debated\" where specialists disagree, or \"later reading\" where it was read into the "
+    "account after it was written, naming in \"authorship\" who first proposed it. Where "
+    "no one has proposed one of these readings for this subject, give that perspective a "
+    "single entry titled \"No recorded reading\" with \"intent\": \"no tradition\", and "
+    "invent nothing."
+)
 
 GENEALOGY_FOCUS = {
     "families": (
@@ -325,6 +366,21 @@ def chronology_prompt(title: str, context: Optional[str], spec: ResearchSpec) ->
         for p in perspectives
     )
     subject = _subject(title, context)
+    allegorical = [CHRONOLOGY_PERSPECTIVES[p][0] for p in perspectives if p in ALLEGORICAL_READINGS]
+    allegory_rule = ""
+    intent_field = ""
+    if allegorical:
+        allegory_rule = "\n\n" + _ALLEGORICAL_RULE.format(names=_listed(allegorical))
+        if grouped:
+            allegory_rule += (
+                " In \"readings\", begin each allegorical reading with its intent in "
+                "brackets, e.g. [Debated]."
+            )
+        else:
+            intent_field = (
+                ',\n    "intent": "For an allegorical reading: intended, debated, later reading '
+                'or no tradition; otherwise empty"'
+            )
 
     if grouped:
         shape_rule = (
@@ -353,7 +409,7 @@ Using live web search, build the chronology of {subject} from these perspectives
 
 {shape_rule}
 
-Search separately for each perspective. Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.
+Search separately for each perspective. Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.{allegory_rule}
 
 The goal is a large, complete, ordered list with rich detail, not a brief summary. Include every stage or event the research supports.
 
@@ -368,7 +424,7 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "passage": "The passages, chapters or sources this entry draws on",
     "origin": "Where this account or reading comes from",
     "authorship": "Whose account or reading this is",
-    "significance": "What happens, or what this stage means in this perspective"{perspective_field}{readings_field},
+    "significance": "What happens, or what this stage means in this perspective"{perspective_field}{intent_field}{readings_field},
     "is_collection": false
   }}
 ]

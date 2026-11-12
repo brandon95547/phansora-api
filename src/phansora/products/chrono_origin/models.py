@@ -171,7 +171,8 @@ ResearchFocus = Literal[
 ]
 ResearchPerspective = Literal[
     # chronology
-    "narrative", "historical", "bodily_spiritual", "solar_astronomical", "comparative",
+    "narrative", "historical", "coded_political", "numerical", "ritual", "mystical",
+    "solar_astronomical", "initiatory", "comparative",
     # origins (historical, comparative shared)
     "textual", "archaeological", "linguistic",
     # parallels (historical shared)

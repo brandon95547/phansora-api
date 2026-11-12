@@ -106,7 +106,29 @@ class TestChronology:
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
             kind="chronology", perspectives=["solar_astronomical", "historical"]))
         assert "Solar & Astronomical:" in prompt and "Evidence:" in prompt
-        assert "Bodily & Spiritual:" not in prompt
+        assert "Bodily & Initiatory:" not in prompt
+
+    def test_an_allegorical_reading_is_graded_by_the_writers_intent(self):
+        prompt = rm.chronology_prompt("X", None, ResearchSpec(
+            kind="chronology", perspectives=["narrative", "coded_political"]))
+        assert "whether the people who wrote the account down meant it this way" in prompt
+        assert '"intent"' in prompt and "no tradition" in prompt
+        assert "Political & Coded History" in prompt.split("FOR THE ALLEGORICAL READINGS")[1]
+
+    def test_no_intent_is_asked_for_without_an_allegorical_reading(self):
+        prompt = rm.chronology_prompt("X", None, ResearchSpec(
+            kind="chronology", perspectives=["narrative", "historical"]))
+        assert "ALLEGORICAL" not in prompt and '"intent"' not in prompt
+
+    def test_grouped_allegorical_readings_carry_their_intent_in_brackets(self):
+        prompt = rm.chronology_prompt("X", None, ResearchSpec(
+            kind="chronology", perspectives=["narrative", "numerical"], layout="grouped"))
+        assert "[Debated]" in prompt and '"intent": "For an allegorical' not in prompt
+
+    def test_the_writers_intent_becomes_a_row_on_the_card(self):
+        text = json.dumps([{"title": "Babylon as Rome", "date": "c. 95 CE", "intent": "intended"}])
+        item = parse_dated_list(text)[0]
+        assert ("Writers' intent", "Intended") in item.details
 
     def test_separate_timelines_tag_each_entry_with_its_perspective(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
@@ -353,7 +375,9 @@ class TestTheIdsMatchTheDashboard:
         assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
         assert get_args(m.ResearchLayout) == ("separate", "grouped")
         assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
-            "narrative", "historical", "bodily_spiritual", "solar_astronomical", "comparative"]
+            "narrative", "historical", "coded_political", "numerical", "ritual", "mystical",
+            "solar_astronomical", "initiatory", "comparative"]
+        assert set(rm.ALLEGORICAL_READINGS) <= set(rm.CHRONOLOGY_PERSPECTIVES)
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
         assert list(rm.GENEALOGY_PERSPECTIVES) == ["historical", "traditional", "textual"]
         assert list(rm._DIRECTIONS) == ["ancestors", "descendants", "both"]

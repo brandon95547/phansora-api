@@ -117,6 +117,7 @@ _DETAIL_KEYS = (
     # Chronology
     ("passage", "Passage"),
     ("certainty", "Date certainty"),
+    ("intent", "Writers' intent"),
     # Genealogy
     ("generation", "Generation"),
     ("relationship", "Relationship"),
@@ -141,7 +142,7 @@ _DETAIL_KEYS = (
 )
 
 # Values written as a fixed vocabulary ("probable_influence"), shown as words.
-_WORD_VALUES = {"Relation", "Standing", "Date certainty"}
+_WORD_VALUES = {"Relation", "Standing", "Date certainty", "Writers' intent"}
 
 # Where a body stands against the official structure (Establishment), read leniently: the
 # prompt names four values, and a model that writes "schismatic" or "irregular" means one.
