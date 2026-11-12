@@ -581,14 +581,14 @@ def build_research_prompt(title: str, context: Optional[str]) -> str:
 def research_prompt_for(req: TraceRequest) -> str:
     """The prompt a request sends: its own kind's, or the trace prompt for Origins.
 
-    Origins is the trace, so it keeps build_research_prompt's checks and gets its focus
-    and perspectives appended, the way the context line is.
+    Origins is the trace, so it keeps build_research_prompt's checks and gets its own
+    question, focus and perspectives appended, the way the context line is.
     """
     own = research_modes.prompt_for(req.title, req.context, req.research)
     if own is not None:
         return own
     prompt = build_research_prompt(req.title, req.context)
-    extra = research_modes.origins_addendum(req.research)
+    extra = research_modes.origins_addendum(req.title, req.research)
     return f"{prompt.rstrip()}\n\n{extra}\n" if extra else prompt
 
 
@@ -602,8 +602,6 @@ def _research_key(req: TraceRequest) -> Optional[str]:
     # made before it keeps the key it was cached under.
     if data.get("direction") is None:
         data.pop("direction", None)
-    if spec.kind == "origins" and not spec.focus and not spec.perspectives:
-        return None  # the same request as a plain trace, so the same cache entry
     return json.dumps(data, sort_keys=True, ensure_ascii=False)
 
 

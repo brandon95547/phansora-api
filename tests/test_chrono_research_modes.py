@@ -55,10 +55,15 @@ class TestEachKindAsksItsOwnQuestion:
         _, client = run(TWO)
         assert client.searches[0].startswith("Using live web search, trace the complete historical lineage")
 
-    def test_origins_with_nothing_chosen_is_the_plain_trace(self, run):
+    def test_origins_asks_how_it_came_to_be_and_leaves_older_versions_out(self, run):
         _, plain = run(TWO)
         _, origins = run(TWO, research={"kind": "origins"})
-        assert plain.searches == origins.searches
+        prompt = origins.searches[0]
+        assert prompt.startswith(plain.searches[0].rstrip())
+        assert "how did" in prompt and "come to be?" in prompt
+        assert "Origin myth:" in prompt
+        assert "Older versions of the same story" in prompt and "leave them out" in prompt
+        assert "how did" not in plain.searches[0]
 
     def test_origins_appends_its_focus_and_perspectives(self, run):
         _, client = run(TWO, research={"kind": "origins", "focus": "words",
@@ -313,7 +318,8 @@ class TestTheRequestAndTheCache:
     def test_a_plain_trace_keeps_the_cache_key_it_always_had(self):
         assert request_key("The Flood", language="en") == request_key("The Flood", language="en", research=None)
         assert orch._research_key(TraceRequest(title="The Flood")) is None
-        assert orch._research_key(TraceRequest(title="The Flood", research=ResearchSpec())) is None
+        # Origins asks its own question now, so it is never the plain trace's entry.
+        assert orch._research_key(TraceRequest(title="The Flood", research=ResearchSpec())) is not None
 
     def test_a_request_from_before_genealogy_keeps_its_cache_key(self):
         # `direction` came later; a request that does not set it is keyed as it always was.
@@ -351,8 +357,8 @@ class TestTheIdsMatchTheDashboard:
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
         assert list(rm.GENEALOGY_PERSPECTIVES) == ["historical", "traditional", "textual"]
         assert list(rm._DIRECTIONS) == ["ancestors", "descendants", "both"]
-        assert list(rm.ORIGINS_FOCUS) == ["stories", "beliefs", "words", "practices"]
-        assert list(rm.ORIGINS_PERSPECTIVES) == ["historical", "textual", "archaeological", "linguistic", "comparative"]
+        assert list(rm.ORIGINS_FOCUS) == ["inventions", "customs", "words", "ideas", "texts"]
+        assert list(rm.ORIGINS_PERSPECTIVES) == ["historical", "textual", "archaeological", "linguistic"]
         assert list(rm.PARALLEL_FOCUS) == ["stories", "people", "symbols", "practices"]
         assert list(rm.PARALLEL_PERSPECTIVES) == ["historical", "literary", "symbolic", "cultural", "natural"]
         assert list(rm.ESTABLISHMENT_FOCUS) == ["religions", "societies", "governments", "companies", "movements"]

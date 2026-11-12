@@ -161,9 +161,9 @@ ResearchFocus = Literal[
     # genealogy
     "families", "dynasties", "deities", "schools", "languages",
     # origins
-    "stories", "beliefs", "words", "practices",
-    # parallels (stories, practices shared with origins)
-    "people", "symbols",
+    "inventions", "customs", "words", "ideas", "texts",
+    # parallels
+    "stories", "people", "symbols", "practices",
     # translations
     "wording", "choices", "manuscripts",
     # establishment

@@ -118,11 +118,10 @@ _DIRECTIONS = {
 }
 
 ORIGINS_PERSPECTIVES = {
-    "historical": ("Historical", "documented events, dates and people"),
+    "historical": ("Evidence", "documented events, dates and people, as records and scholarship establish them"),
     "textual": ("Textual", "the earliest writings, manuscripts and editions"),
     "archaeological": ("Archaeological & Material", "physical remains, artifacts and sites"),
     "linguistic": ("Linguistic", "words, names and their roots"),
-    "comparative": ("Comparative", "related developments in other cultures"),
 }
 
 PARALLEL_PERSPECTIVES = {
@@ -134,24 +133,29 @@ PARALLEL_PERSPECTIVES = {
 }
 
 ORIGINS_FOCUS = {
-    "stories": (
-        "Focus on the story or tradition itself: its earliest tellings, the older stories, "
-        "accounts and motifs it grew from, and how it was retold and changed."
+    "inventions": (
+        "Focus on the invention or discovery: who first made or found it, where and when, "
+        "the need it answered, the earlier techniques, materials and knowledge that made it "
+        "possible, and how it spread and was improved."
     ),
-    "beliefs": (
-        "Focus on the belief, idea or interpretation: where it was first stated, the "
-        "earlier ideas it developed from, who held it, and how its meaning changed."
+    "customs": (
+        "Focus on the custom or tradition: when and where it is first recorded, who first "
+        "kept it, the occasion, need or belief it grew out of, and how it spread and changed."
     ),
     "words": (
         "Focus on the word or name: its etymology, its earliest attestations, the older "
-        "words and roots it descends from, its cognates in related languages, and how its "
-        "form and meaning shifted. Inscriptions, glossaries and dictionaries are primary "
-        "material here."
+        "words and roots it descends from, and how its form and meaning shifted. "
+        "Inscriptions, glossaries and dictionaries are primary material here."
     ),
-    "practices": (
-        "Focus on the practice or object: its earliest physical and written evidence, the "
-        "earlier techniques, tools, customs and materials it came from, and how it spread "
-        "and changed."
+    "ideas": (
+        "Focus on the idea or belief: who first stated it, where and when, the earlier "
+        "ideas and questions it developed from, and how its meaning shifted as others took "
+        "it up."
+    ),
+    "texts": (
+        "Focus on the text or story as a written work: who first wrote it down, when, where "
+        "and why; the sources, events and circumstances its authors drew on; its earliest "
+        "surviving copies; and how it was edited, collected and received."
     ),
 }
 
@@ -254,11 +258,28 @@ def _clean(values: List[str], limit: int = 120) -> List[str]:
 
 
 # ------------------------------------------------------------------------- origins
-def origins_addendum(spec: Optional[ResearchSpec]) -> str:
-    """What Origins adds after the hand-tuned trace prompt. Empty with nothing chosen."""
+# Origins answers one question, "how did this come to be?", and leaves the others to the
+# kinds that own them: an older story of another culture that resembles this one is
+# Chronology's Ancient Parallels, a family tree is Genealogy, a comparison is Parallels.
+# The trace prompt it follows asks for predecessors in general, so this says which
+# predecessors count. Sent with every Origins request; a plain trace (no research at all)
+# is left as it always was.
+_ORIGINS_QUESTION = """\
+THE QUESTION FOR THIS TRACE: how did "{title}" come to be? Include, each as entries of their own:
+
+1. Its point of origin: the first known appearance of "{title}", where and when, and who made, wrote, said or found it.
+2. What made it possible: the need or occasion it answered, and the earlier techniques, materials, ideas, words or events it was built from.
+3. How it spread and changed, step by step, from that first appearance to its present-day form.
+4. Origin myths: popular claims about where "{title}" came from that the evidence does not support. Give each its own entry, dated when the claim first circulated, and begin its "significance" with "Origin myth:" followed by what the evidence shows instead.
+
+A predecessor here is something "{title}" was built from or grew out of. Older versions of the same story, myth or motif told by other cultures or traditions are not its origin: leave them out, even where scholars think this one drew on them. They are researched separately."""
+
+
+def origins_addendum(title: str, spec: Optional[ResearchSpec]) -> str:
+    """What Origins adds after the hand-tuned trace prompt. Empty for a plain trace."""
     if spec is None:
         return ""
-    parts: List[str] = []
+    parts: List[str] = [_ORIGINS_QUESTION.replace("{title}", title)]
     if spec.focus in ORIGINS_FOCUS:
         parts.append(ORIGINS_FOCUS[spec.focus])
     chosen = [ORIGINS_PERSPECTIVES[p] for p in spec.perspectives if p in ORIGINS_PERSPECTIVES]
