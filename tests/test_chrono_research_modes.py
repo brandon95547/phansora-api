@@ -100,7 +100,7 @@ class TestChronology:
     def test_only_the_chosen_perspectives_are_asked_for(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
             kind="chronology", perspectives=["solar_astronomical", "historical"]))
-        assert "Solar & Astronomical:" in prompt and "Historical:" in prompt
+        assert "Solar & Astronomical:" in prompt and "Evidence:" in prompt
         assert "Bodily & Spiritual:" not in prompt
 
     def test_separate_timelines_tag_each_entry_with_its_perspective(self):
@@ -146,7 +146,7 @@ class TestChronology:
         trace, _ = run(items, research={"kind": "chronology",
                                         "perspectives": ["solar_astronomical", "historical"]})
         assert trace.origin.perspective == "Solar & Astronomical"
-        assert trace.timeline[0].perspective == "Historical"
+        assert trace.timeline[0].perspective == "Evidence"
 
     def test_grouped_readings_become_rows_on_the_card(self):
         text = json.dumps([{"title": "Stage", "date": "", "readings": {
@@ -347,7 +347,7 @@ class TestTheIdsMatchTheDashboard:
         assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
         assert get_args(m.ResearchLayout) == ("separate", "grouped")
         assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
-            "narrative", "bodily_spiritual", "solar_astronomical", "historical", "comparative"]
+            "narrative", "historical", "bodily_spiritual", "solar_astronomical", "comparative"]
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
         assert list(rm.GENEALOGY_PERSPECTIVES) == ["historical", "traditional", "textual"]
         assert list(rm._DIRECTIONS) == ["ancestors", "descendants", "both"]

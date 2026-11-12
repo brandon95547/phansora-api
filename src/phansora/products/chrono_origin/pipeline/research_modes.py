@@ -34,6 +34,14 @@ CHRONOLOGY_PERSPECTIVES = {
         "the account as a selected text, tradition or source tells it: its events, in the "
         "words and order the account gives them",
     ),
+    "historical": (
+        "Evidence",
+        "what archaeology, records and scholarship show actually happened: the events, "
+        "people, places and dates behind the subject as historians reconstruct them, apart "
+        "from what the account claims",
+    ),
+    # The two allegorical readings: the dashboard offers them as one lens, Allegorical,
+    # and each is still researched as a timeline of its own.
     "bodily_spiritual": (
         "Bodily & Spiritual",
         "readings that take the account as symbolism of the body, the mind or the inner "
@@ -44,15 +52,11 @@ CHRONOLOGY_PERSPECTIVES = {
         "readings that tie the account to celestial cycles: the sun's year, the moon, the "
         "planets, constellations, equinoxes, solstices and the calendar",
     ),
-    "historical": (
-        "Historical",
-        "the historical events, people, places and dates behind the subject, as historians "
-        "and archaeologists reconstruct them",
-    ),
     "comparative": (
-        "Comparative",
-        "related accounts in other traditions, cultures, periods or sources, set beside "
-        "each point in the sequence",
+        "Ancient Parallels",
+        "older accounts of the same story from earlier cultures, matched to each point in "
+        "the sequence, each with its date and source; say where specialists dispute that it "
+        "is the same story. Not later retellings or loose resemblances",
     ),
 }
 
@@ -277,7 +281,7 @@ _SEQUENCE_RULES = {
         "an entry draws on in \"passage\"."
     ),
     "historical": (
-        "HISTORICAL ORDER. Order the entries by historical date, oldest first. Give each "
+        "BY DATE. Order the entries by historical date, oldest first. Give each "
         "date as the evidence supports it and mark its uncertainty in \"certainty\": "
         "established, approximate, disputed, or traditional (held by a tradition but not "
         "established by evidence)."
