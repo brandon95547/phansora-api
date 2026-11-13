@@ -840,7 +840,6 @@ class TraceOrchestrator:
                 citations=[],
                 confidence=0.5,
                 evidence=None,
-                perspective=research_modes.perspective_label(spec, item.perspective),
                 parent_body=item.parent_body,
                 standing=item.standing,
             )
@@ -873,7 +872,6 @@ class TraceOrchestrator:
             citations=[],
             confidence=first.confidence,
             details=list(first.details),
-            perspective=first.perspective,
             parent_body=first.parent_body,
             standing=first.standing,
         )

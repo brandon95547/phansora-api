@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 DatePrecision = Literal["exact", "year", "decade", "century", "millennium", "era", "unknown"]
@@ -181,7 +181,6 @@ ResearchPerspective = Literal[
     "traditional",
 ]
 ResearchSequence = Literal["narrative", "historical", "symbolic"]
-ResearchLayout = Literal["separate", "grouped"]
 ResearchDirection = Literal["ancestors", "descendants", "both"]
 
 
@@ -192,7 +191,6 @@ class ResearchSpec(BaseModel):
     focus: Optional[ResearchFocus] = None
     perspectives: List[ResearchPerspective] = Field(default_factory=list, max_length=5)
     sequence: Optional[ResearchSequence] = None
-    layout: Optional[ResearchLayout] = None
     # Genealogy: which way from the subject the line is followed.
     direction: Optional[ResearchDirection] = None
     # Parallels: two or more subjects are compared with each other; one is searched for
@@ -201,6 +199,13 @@ class ResearchSpec(BaseModel):
     # Translations.
     languages: List[str] = Field(default_factory=list, max_length=12)
     versions: List[str] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def _one_lens_for_a_chronology(self) -> "ResearchSpec":
+        # A chronology is one timeline, read through one lens.
+        if self.kind == "chronology" and len(self.perspectives) > 1:
+            raise ValueError("A chronology takes one perspective.")
+        return self
 
 
 class TraceRequest(BaseModel):
@@ -375,9 +380,6 @@ class TimelineEvent(BaseModel):
     # What the research reported about this item besides its title and date. Empty when
     # it reported nothing, which is a fact about the answer rather than a gap to fill.
     details: List[DetailField] = Field(default_factory=list)
-    # Which of the request's perspectives this item belongs to (Chronology with separate
-    # timelines). Empty for every other kind of research.
-    perspective: str = ""
     # Establishment: the body this one sits under, by its title as written on that item
     # (empty at the top), and where it stands: official, or outside the official structure
     # as breakaway, disputed or unrecognized. Empty for every other kind of research.
@@ -402,7 +404,6 @@ class OriginResult(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     evidence: Optional[EvidenceDossier] = None
     details: List[DetailField] = Field(default_factory=list)
-    perspective: str = ""
     parent_body: str = ""
     standing: str = ""
 

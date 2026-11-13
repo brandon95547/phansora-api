@@ -102,45 +102,40 @@ class TestChronology:
         assert "mark its uncertainty" in rm.chronology_prompt("X", None, spec("historical"))
         assert "SYMBOLIC ORDER" in rm.chronology_prompt("X", None, spec("symbolic"))
 
-    def test_only_the_chosen_perspectives_are_asked_for(self):
+    def test_only_the_chosen_perspective_is_asked_for(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["solar_astronomical", "historical"]))
-        assert "Solar & Astronomical:" in prompt and "Evidence:" in prompt
-        assert "Bodily & Initiatory:" not in prompt
+            kind="chronology", perspectives=["solar_astronomical"]))
+        assert "Solar & Astronomical:" in prompt
+        assert "Evidence:" not in prompt and "Bodily & Initiatory:" not in prompt
+
+    def test_a_chronology_takes_one_perspective(self):
+        with pytest.raises(ValidationError):
+            ResearchSpec(kind="chronology", perspectives=["narrative", "historical"])
+        # Other kinds still search through several.
+        assert len(ResearchSpec(kind="origins", perspectives=["textual", "linguistic"]).perspectives) == 2
+
+    def test_a_layout_from_an_older_request_is_ignored(self):
+        spec = ResearchSpec(kind="chronology", perspectives=["narrative"], layout="grouped")
+        assert not hasattr(spec, "layout")
+        prompt = rm.chronology_prompt("X", None, spec)
+        assert '"perspective"' not in prompt and '"readings"' not in prompt
 
     def test_an_allegorical_reading_is_graded_by_the_writers_intent(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["narrative", "coded_political"]))
+            kind="chronology", perspectives=["coded_political"]))
         assert "whether the people who wrote the account down meant it this way" in prompt
         assert '"intent"' in prompt and "no tradition" in prompt
-        assert "Political & Coded History" in prompt.split("FOR THE ALLEGORICAL READINGS")[1]
+        assert "Political & Coded History" in prompt.split("THIS IS AN ALLEGORICAL READING")[1]
 
     def test_no_intent_is_asked_for_without_an_allegorical_reading(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["narrative", "historical"]))
+            kind="chronology", perspectives=["narrative"]))
         assert "ALLEGORICAL" not in prompt and '"intent"' not in prompt
-
-    def test_grouped_allegorical_readings_carry_their_intent_in_brackets(self):
-        prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["narrative", "numerical"], layout="grouped"))
-        assert "[Debated]" in prompt and '"intent": "For an allegorical' not in prompt
 
     def test_the_writers_intent_becomes_a_row_on_the_card(self):
         text = json.dumps([{"title": "Babylon as Rome", "date": "c. 95 CE", "intent": "intended"}])
         item = parse_dated_list(text)[0]
         assert ("Writers' intent", "Intended") in item.details
-
-    def test_separate_timelines_tag_each_entry_with_its_perspective(self):
-        prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["narrative", "historical"], layout="separate"))
-        assert "ONE ENTRY PER EVENT PER PERSPECTIVE" in prompt
-        assert '"perspective"' in prompt and '"readings"' not in prompt
-
-    def test_grouped_stages_carry_every_perspectives_reading(self):
-        prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["narrative", "historical"], layout="grouped"))
-        assert "ONE ENTRY PER STAGE" in prompt
-        assert '"readings"' in prompt
 
     def test_interpretations_are_reported_not_asserted(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(kind="chronology"))
@@ -166,21 +161,6 @@ class TestChronology:
         trace, _ = run(items, research={"kind": "chronology", "sequence": "historical"})
         assert trace.ordering == "date"
         assert trace.origin.source_title == "Early"
-
-    def test_each_entry_keeps_its_perspective(self, run):
-        items = [{"title": "A", "date": "1 CE", "perspective": "solar & astronomical"},
-                 {"title": "B", "date": "2 CE", "perspective": "historical"}]
-        trace, _ = run(items, research={"kind": "chronology",
-                                        "perspectives": ["solar_astronomical", "historical"]})
-        assert trace.origin.perspective == "Solar & Astronomical"
-        assert trace.timeline[0].perspective == "Evidence"
-
-    def test_grouped_readings_become_rows_on_the_card(self):
-        text = json.dumps([{"title": "Stage", "date": "", "readings": {
-            "Narrative": "The waters rise.", "Historical": "A regional flood c. 2900 BCE."}}])
-        item = parse_dated_list(text)[0]
-        assert ("Narrative", "The waters rise.") in item.details
-        assert ("Historical", "A regional flood c. 2900 BCE.") in item.details
 
 
 class TestParallels:
@@ -373,7 +353,6 @@ class TestTheIdsMatchTheDashboard:
             "chronology", "genealogy", "origins", "parallels", "translations", "establishment")
         assert get_args(m.ResearchDirection) == ("ancestors", "descendants", "both")
         assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
-        assert get_args(m.ResearchLayout) == ("separate", "grouped")
         assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
             "narrative", "historical", "coded_political", "numerical", "ritual", "mystical",
             "solar_astronomical", "initiatory", "comparative"]

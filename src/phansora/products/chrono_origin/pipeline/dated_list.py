@@ -77,11 +77,10 @@ class DatedItem:
     # rather than left to `details` because it is not display metadata: it selects which
     # prompt an expansion of this node runs. See models.TimelineEvent.is_collection.
     is_collection: bool = False
-    # Set only by the research kinds that ask for them (research_modes): which
-    # perspective an entry belongs to, the body an entry sits under and where it stands
+    # Set only by the research kinds that ask for them (research_modes): the body an
+    # entry sits under and where it stands
     # (Establishment), its place in a narrative or symbolic sequence, and the date as
     # written, for an ordering that does not sort on it.
-    perspective: str = ""
     parent_body: str = ""
     standing: str = ""
     stage: str = ""
@@ -232,9 +231,8 @@ def _parse_json_items(text: str) -> List[DatedItem]:
                 year_end=year_end,
                 precision=precision,
                 era_label=era_label,
-                details=_details(lowered) + _readings(lowered),
+                details=_details(lowered),
                 is_collection=_truthy(lowered),
-                perspective=_first_string(lowered, ("perspective",)),
                 parent_body=_first_string(lowered, ("parent_body", "parent", "reports_to", "under")),
                 standing=_STANDINGS.get(_first_string(lowered, ("standing", "status")).casefold(), ""),
                 stage=_first_string(lowered, ("stage", "step", "position")),
@@ -315,23 +313,6 @@ def _details(entry: dict) -> Tuple[Tuple[str, str], ...]:
                 value = value[:1].upper() + value[1:]
             out.append((label, value))
             used.add(label)
-    return tuple(out)
-
-
-def _readings(entry: dict) -> Tuple[Tuple[str, str], ...]:
-    """A grouped chronology's per-perspective readings of one stage, as labelled rows.
-
-    Keyed by the perspective's name as the prompt wrote it, so the label is already the
-    reader's word for it.
-    """
-    readings = entry.get("readings")
-    if not isinstance(readings, dict):
-        return ()
-    out: List[Tuple[str, str]] = []
-    for key, value in readings.items():
-        label = " ".join(str(key).split())
-        if label and isinstance(value, (str, int, float)) and str(value).strip():
-            out.append((label, " ".join(str(value).split())))
     return tuple(out)
 
 

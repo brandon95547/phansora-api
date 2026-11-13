@@ -91,14 +91,13 @@ ALLEGORICAL_READINGS = (
 # is a reading made later, and saying so is the point. Where nobody has proposed a reading
 # for the subject, the honest answer is one entry that says so, not an invented reading.
 _ALLEGORICAL_RULE = (
-    "FOR THE ALLEGORICAL READINGS ({names}): the question is whether the people who wrote "
+    "THIS IS AN ALLEGORICAL READING ({name}): the question is whether the people who wrote "
     "the account down meant it this way, not what later readers drew from it. Grade every "
-    "such entry in \"intent\": \"intended\" where evidence shows the writers meant it, "
+    "entry in \"intent\": \"intended\" where evidence shows the writers meant it, "
     "\"debated\" where specialists disagree, or \"later reading\" where it was read into the "
     "account after it was written, naming in \"authorship\" who first proposed it. Where "
-    "no one has proposed one of these readings for this subject, give that perspective a "
-    "single entry titled \"No recorded reading\" with \"intent\": \"no tradition\", and "
-    "invent nothing."
+    "no one has proposed this reading for this subject, return a single entry titled "
+    "\"No recorded reading\" with \"intent\": \"no tradition\", and invent nothing."
 )
 
 GENEALOGY_FOCUS = {
@@ -350,66 +349,32 @@ _SEQUENCE_RULES = {
     ),
     "symbolic": (
         "SYMBOLIC ORDER. Order the entries by the stages or cycles of the interpretation "
-        "itself: the phases, stations, initiations, seasons or cycles each perspective "
+        "itself: the phases, stations, initiations, seasons or cycles the perspective "
         "describes, in the order it describes them, not by historical date."
     ),
 }
 
 
 def chronology_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
-    perspectives = [p for p in spec.perspectives if p in CHRONOLOGY_PERSPECTIVES] or ["historical"]
+    # One timeline, read through one lens (ResearchSpec allows a chronology one).
+    lens = next((p for p in spec.perspectives if p in CHRONOLOGY_PERSPECTIVES), "historical")
+    label, description = CHRONOLOGY_PERSPECTIVES[lens]
     sequence = spec.sequence if spec.sequence in _SEQUENCE_RULES else "historical"
-    grouped = spec.layout == "grouped" and len(perspectives) > 1
-    labels = [CHRONOLOGY_PERSPECTIVES[p][0] for p in perspectives]
-    lines = "\n".join(
-        f"* {CHRONOLOGY_PERSPECTIVES[p][0]}: {CHRONOLOGY_PERSPECTIVES[p][1]}"
-        for p in perspectives
-    )
     subject = _subject(title, context)
-    allegorical = [CHRONOLOGY_PERSPECTIVES[p][0] for p in perspectives if p in ALLEGORICAL_READINGS]
     allegory_rule = ""
     intent_field = ""
-    if allegorical:
-        allegory_rule = "\n\n" + _ALLEGORICAL_RULE.format(names=_listed(allegorical))
-        if grouped:
-            allegory_rule += (
-                " In \"readings\", begin each allegorical reading with its intent in "
-                "brackets, e.g. [Debated]."
-            )
-        else:
-            intent_field = (
-                ',\n    "intent": "For an allegorical reading: intended, debated, later reading '
-                'or no tradition; otherwise empty"'
-            )
-
-    if grouped:
-        shape_rule = (
-            "ONE ENTRY PER STAGE of the sequence. Each entry gives, in \"readings\", what "
-            "each perspective says about that stage, keyed by the perspective's name "
-            f"exactly as written here: {_listed(labels)}. Leave a perspective out of a "
-            "stage where it says nothing about it, rather than inventing a reading."
-        )
-        readings_field = ',\n    "readings": {"' + labels[0] + '": "What this perspective says about the stage"}'
-        perspective_field = ""
-    else:
-        shape_rule = (
-            "ONE ENTRY PER EVENT PER PERSPECTIVE. Name the perspective each entry belongs "
-            f"to in \"perspective\", exactly as written here: {_listed(labels)}. Each "
-            "perspective's entries must make a complete sequence on their own."
-        )
-        readings_field = ""
-        perspective_field = f',\n    "perspective": "{labels[0]}"'
+    if lens in ALLEGORICAL_READINGS:
+        allegory_rule = "\n\n" + _ALLEGORICAL_RULE.format(name=label)
+        intent_field = ',\n    "intent": "intended, debated, later reading or no tradition"'
 
     return f"""\
-Using live web search, build the chronology of {subject} from these perspectives:
+Using live web search, build the chronology of {subject} as read through this perspective:
 
-{lines}
+* {label}: {description}
 
 {_SEQUENCE_RULES[sequence]}
 
-{shape_rule}
-
-Search separately for each perspective. Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.{allegory_rule}
+Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.{allegory_rule}
 
 The goal is a large, complete, ordered list with rich detail, not a brief summary. Include every stage or event the research supports.
 
@@ -424,7 +389,7 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "passage": "The passages, chapters or sources this entry draws on",
     "origin": "Where this account or reading comes from",
     "authorship": "Whose account or reading this is",
-    "significance": "What happens, or what this stage means in this perspective"{perspective_field}{intent_field}{readings_field},
+    "significance": "What happens, or what this stage means in this perspective"{intent_field},
     "is_collection": false
   }}
 ]
@@ -654,15 +619,3 @@ def ordering_for(spec: Optional[ResearchSpec]) -> str:
     if spec is not None and spec.kind == "establishment":
         return "given"
     return "date"
-
-
-def perspective_label(spec: Optional[ResearchSpec], value: str) -> str:
-    """A perspective as the model wrote it, matched back to the label the request used."""
-    value = (value or "").strip()
-    if not value or spec is None:
-        return value
-    table = CHRONOLOGY_PERSPECTIVES if spec.kind == "chronology" else {}
-    for pid, (label, _) in table.items():
-        if value.casefold() in (label.casefold(), pid.casefold(), pid.replace("_", " ").casefold()):
-            return label
-    return value
