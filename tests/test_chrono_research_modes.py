@@ -179,9 +179,12 @@ class TestChronology:
             kind="chronology", perspectives=["narrative"]))
         assert "INTERPRETATION" not in prompt and '"intent"' not in prompt
 
-    def test_interpretations_are_reported_not_asserted(self):
+    def test_a_chronology_tells_the_events_and_leaves_readings_to_interpretations(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(kind="chronology"))
-        assert "do not present an interpretation as historical fact" in prompt
+        assert "Report the events the accounts themselves tell" in prompt
+        assert "belong to Interpretations and are left out" in prompt
+        assert "Do not present a traditional account as historical fact" in prompt
+        assert "reading is" not in prompt and "Winter solstice" not in prompt
 
     def test_a_narrative_order_is_kept_as_given(self, run):
         items = [

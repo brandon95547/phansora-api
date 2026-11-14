@@ -411,7 +411,7 @@ Using live web search, build the chronology of {subject} as read through this pe
 
 {_CHRONOLOGY_CORRELATION}
 
-Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.
+Report the events the accounts themselves tell, not what later readers made of them: symbolic, allegorical and other readings of the account belong to Interpretations and are left out. Do not present a traditional account as historical fact, and do not dismiss it. Where the historical record contradicts an event, say so in that entry.
 
 The goal is a large, complete, ordered list with rich detail, not a brief summary. Include every stage or event the research supports.
 
@@ -420,13 +420,13 @@ Return the result as a JSON array and nothing else, one object per entry, in the
 [
   {{
     "title": "What happens at this point, named briefly",
-    "stage": "Its place in the sequence, e.g. 1, Stage 3, Winter solstice, Exodus 14",
+    "stage": "Its place in the sequence, e.g. 1, Stage 3, Exodus 14",
     "date": "Historical date or range where one is known, e.g. c. 1200 BCE, 1066 CE; otherwise empty",
     "certainty": "established, approximate, disputed or traditional",
 {_source_fields("Every passage and source that tells or dates this event, across all books and accounts, e.g. 2 Samuel 5:1-5; 1 Chronicles 11:1-3")}
-    "origin": "Where this account or reading comes from",
-    "authorship": "Whose account or reading this is",
-    "significance": "What happens, or what this stage means in this perspective",
+    "origin": "Where this account comes from",
+    "authorship": "Whose account this is",
+    "significance": "What happens at this point, and why it matters to the whole",
     "is_collection": false
   }}
 ]
