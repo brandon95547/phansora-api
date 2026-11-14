@@ -222,6 +222,26 @@ class TraceRequest(BaseModel):
     research: Optional[ResearchSpec] = None
 
 
+class ClarifyRequest(BaseModel):
+    """What the start screen is about to research: is it clear which subject is meant?"""
+
+    title: str = Field(..., min_length=2, max_length=300)
+    context: Optional[str] = Field(default=None, max_length=300)
+    kind: Optional[ResearchKind] = None
+
+
+class ClarifyOption(BaseModel):
+    label: str
+    # The phrase that tells the research which one: it becomes the request's context.
+    context: str
+
+
+class ClarifyResponse(BaseModel):
+    clear: bool
+    question: str = ""
+    options: List[ClarifyOption] = Field(default_factory=list)
+
+
 class CacheKeyRequest(BaseModel):
     """Invalidate a cached trace by its title (see /cache/invalidate)."""
     title: str = Field(..., min_length=1)

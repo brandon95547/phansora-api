@@ -13,7 +13,8 @@ from phansora.shared.auth import enforce_user_scope
 from phansora.shared.errors import fail
 
 from .config import get_settings
-from .models import CacheKeyRequest, ExpandRequest, ExpandResponse, TraceRequest
+from .models import CacheKeyRequest, ClarifyRequest, ClarifyResponse, ExpandRequest, ExpandResponse, TraceRequest
+from .pipeline.clarify import clarify
 from .pipeline.orchestrator import TraceOrchestrator
 from .services.cache import delete_cached
 from .services.job_manager import JobManager
@@ -108,6 +109,27 @@ def get_trace_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found or expired.")
     return job.to_dict()
+
+
+# -------------------------------------------------------------------- clarify
+# One light call, no search: usually a few seconds. The dashboard stops waiting long before
+# this handler would, and goes ahead with the research; the handler's own ceiling is the
+# request timeout, as Expand's is, so its worker is always returned (see config).
+@app.post("/clarify", response_model=ClarifyResponse)
+async def clarify_subject(req: ClarifyRequest):
+    """Whether it is clear which subject is meant, and if not, the likely meanings."""
+    _ensure_configured()
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(app.state.executor, clarify, app.state.orchestrator.client, req),
+            timeout=get_settings().chrono_request_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="The subject check took too long.") from None
+    except Exception as exc:
+        raise fail(503, "The subject check is unavailable.", exc, logger=logger,
+                   context="Clarify failed") from exc
 
 
 # --------------------------------------------------------------------- expand
