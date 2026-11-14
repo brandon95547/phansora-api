@@ -41,12 +41,6 @@ CHRONOLOGY_PERSPECTIVES = {
         "people, places and dates behind the subject as historians reconstruct them, apart "
         "from what the account claims",
     ),
-    "comparative": (
-        "Earlier Versions",
-        "older accounts of the same story from earlier cultures, matched to each point in "
-        "the sequence, each with its date and source; say where specialists dispute that it "
-        "is the same story. Not later retellings or loose resemblances",
-    ),
 }
 
 # Interpretations: what the writers may have encoded beneath the surface. One reading per
@@ -300,7 +294,7 @@ def _clean(values: List[str], limit: int = 120) -> List[str]:
 # ------------------------------------------------------------------------- origins
 # Origins answers one question, "how did this come to be?", and leaves the others to the
 # kinds that own them: an older story of another culture that resembles this one is
-# Chronology's Earlier Versions, a family tree is Genealogy, a comparison is Parallels.
+# Parallels, a family tree is Genealogy.
 # The trace prompt it follows asks for predecessors in general, so this says which
 # predecessors count. Sent with every Origins request; a plain trace (no research at all)
 # is left as it always was.
@@ -312,7 +306,7 @@ THE QUESTION FOR THIS TRACE: how did "{title}" come to be? Include, each as entr
 3. How it spread and changed, step by step, from that first appearance to its present-day form.
 4. Origin myths: popular claims about where "{title}" came from that the evidence does not support. Give each its own entry, dated when the claim first circulated, and begin its "significance" with "Origin myth:" followed by what the evidence shows instead.
 
-A predecessor here is something "{title}" was built from or grew out of. Older versions of the same story, myth or motif told by other cultures or traditions are not its origin: leave them out, even where scholars think this one drew on them. They are researched separately."""
+A predecessor here is something "{title}" was built from or grew out of. Older versions of the same story, myth or motif told by other cultures or traditions are not its origin: leave them out, even where scholars think this one drew on them. They are researched as Parallels."""
 
 
 def origins_addendum(title: str, spec: Optional[ResearchSpec]) -> str:

@@ -107,9 +107,14 @@ class TestChronology:
 
     def test_only_the_chosen_perspective_is_asked_for(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["comparative"]))
-        assert "Earlier Versions:" in prompt
-        assert "Evidence:" not in prompt and "Narrative:" not in prompt
+            kind="chronology", perspectives=["narrative"]))
+        assert "Narrative:" in prompt
+        assert "Evidence:" not in prompt
+
+    def test_earlier_versions_are_gone(self):
+        # Older tellings of a story by other cultures are Parallels' to find.
+        with pytest.raises(ValidationError):
+            ResearchSpec(kind="chronology", perspectives=["comparative"])
 
     def test_the_readings_are_no_longer_a_chronology_lens(self):
         # They are Interpretations' focus now; a chronology asking for one is refused.
@@ -389,7 +394,7 @@ class TestTheIdsMatchTheDashboard:
             "establishment")
         assert get_args(m.ResearchDirection) == ("ancestors", "descendants", "both")
         assert get_args(m.ResearchSequence) == ("narrative", "historical")
-        assert list(rm.CHRONOLOGY_PERSPECTIVES) == ["narrative", "historical", "comparative"]
+        assert list(rm.CHRONOLOGY_PERSPECTIVES) == ["narrative", "historical"]
         assert list(rm.INTERPRETATION_READINGS) == [
             "coded_political", "numerical", "ritual", "mystical", "solar_astronomical", "initiatory"]
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
