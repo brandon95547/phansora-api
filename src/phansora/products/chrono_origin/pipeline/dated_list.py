@@ -116,6 +116,9 @@ _DETAIL_KEYS = (
     # Chronology
     ("passage", "Passage"),
     ("certainty", "Date certainty"),
+    # Interpretations
+    ("element", "Element"),
+    ("reading", "Read as"),
     ("intent", "Writers' intent"),
     # Genealogy
     ("generation", "Generation"),

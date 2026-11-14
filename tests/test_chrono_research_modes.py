@@ -1,6 +1,6 @@
-"""The five kinds of research on the start screen, each asking its own question.
+"""The seven kinds of research on the start screen, each asking its own question.
 
-The failure these pin is the one the screen was most likely to ship with: five cards
+The failure these pin is the one the screen was most likely to ship with: a card per kind
 over one trace prompt, so that Chronology, Parallels, Translations and Evidence all came
 back as the same lineage under different headings.
 """
@@ -77,6 +77,7 @@ class TestEachKindAsksItsOwnQuestion:
     @pytest.mark.parametrize("kind,marker", [
         ("chronology", "build the chronology of"),
         ("genealogy", "trace the genealogy of"),
+        ("interpretations", "has been read through this interpretation"),
         ("parallels", "find the parallels to"),
         ("translations", "is worded across languages and versions"),
         ("establishment", "map the power structure of"),
@@ -89,7 +90,7 @@ class TestEachKindAsksItsOwnQuestion:
         assert '"The Flood"' in prompt
 
     def test_the_context_reaches_every_kind(self, run):
-        for kind in ("chronology", "genealogy", "parallels", "translations", "establishment"):
+        for kind in ("chronology", "genealogy", "interpretations", "parallels", "translations", "establishment"):
             _, client = run(TWO, research={"kind": kind}, context="Mesopotamian myth")
             assert "Mesopotamian myth" in client.searches[0], kind
 
@@ -100,13 +101,20 @@ class TestChronology:
         assert "NARRATIVE ORDER" in rm.chronology_prompt("X", None, spec("narrative"))
         assert "bring the related passages" in rm.chronology_prompt("X", None, spec("narrative"))
         assert "mark its uncertainty" in rm.chronology_prompt("X", None, spec("historical"))
-        assert "SYMBOLIC ORDER" in rm.chronology_prompt("X", None, spec("symbolic"))
+        # The order of an interpretation's own stages left with it.
+        with pytest.raises(ValidationError):
+            spec("symbolic")
 
     def test_only_the_chosen_perspective_is_asked_for(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["solar_astronomical"]))
-        assert "Solar & Astronomical:" in prompt
-        assert "Evidence:" not in prompt and "Bodily & Initiatory:" not in prompt
+            kind="chronology", perspectives=["comparative"]))
+        assert "Earlier Versions:" in prompt
+        assert "Evidence:" not in prompt and "Narrative:" not in prompt
+
+    def test_the_readings_are_no_longer_a_chronology_lens(self):
+        # They are Interpretations' focus now; a chronology asking for one is refused.
+        with pytest.raises(ValidationError):
+            ResearchSpec(kind="chronology", perspectives=["solar_astronomical"])
 
     def test_a_chronology_takes_one_perspective(self):
         with pytest.raises(ValidationError):
@@ -120,22 +128,10 @@ class TestChronology:
         prompt = rm.chronology_prompt("X", None, spec)
         assert '"perspective"' not in prompt and '"readings"' not in prompt
 
-    def test_an_allegorical_reading_is_graded_by_the_writers_intent(self):
-        prompt = rm.chronology_prompt("X", None, ResearchSpec(
-            kind="chronology", perspectives=["coded_political"]))
-        assert "whether the people who wrote the account down meant it this way" in prompt
-        assert '"intent"' in prompt and "no tradition" in prompt
-        assert "Political & Coded History" in prompt.split("THIS IS AN ALLEGORICAL READING")[1]
-
-    def test_no_intent_is_asked_for_without_an_allegorical_reading(self):
+    def test_a_chronology_asks_for_no_intent(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
             kind="chronology", perspectives=["narrative"]))
-        assert "ALLEGORICAL" not in prompt and '"intent"' not in prompt
-
-    def test_the_writers_intent_becomes_a_row_on_the_card(self):
-        text = json.dumps([{"title": "Babylon as Rome", "date": "c. 95 CE", "intent": "intended"}])
-        item = parse_dated_list(text)[0]
-        assert ("Writers' intent", "Intended") in item.details
+        assert "INTERPRETATION" not in prompt and '"intent"' not in prompt
 
     def test_interpretations_are_reported_not_asserted(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(kind="chronology"))
@@ -161,6 +157,45 @@ class TestChronology:
         trace, _ = run(items, research={"kind": "chronology", "sequence": "historical"})
         assert trace.ordering == "date"
         assert trace.origin.source_title == "Early"
+
+
+class TestInterpretations:
+    def test_the_reading_chosen_is_the_one_asked_for(self):
+        prompt = rm.interpretations_prompt("Revelation 13", None, ResearchSpec(
+            kind="interpretations", focus="numerical"))
+        assert "Symbolic & Numerical:" in prompt
+        assert "Political & Coded History:" not in prompt
+
+    def test_every_entry_is_graded_by_the_writers_intent(self):
+        prompt = rm.interpretations_prompt("X", None, ResearchSpec(
+            kind="interpretations", focus="coded_political"))
+        assert "whether the people who made the subject meant it this way" in prompt
+        assert '"intent"' in prompt and "no tradition" in prompt
+        assert "Political & Coded History" in prompt.split("THIS IS AN INTERPRETATION")[1]
+
+    def test_a_subject_with_no_sequence_goes_element_by_element(self):
+        prompt = rm.interpretations_prompt("666", None, ResearchSpec(
+            kind="interpretations", focus="numerical"))
+        assert "element by element where it has none" in prompt
+        assert '"element"' in prompt and '"reading"' in prompt
+
+    def test_the_element_reading_and_intent_become_rows_on_the_card(self):
+        text = json.dumps([{"title": "Babylon as Rome", "date": "c. 95 CE", "element": "Babylon",
+                            "reading": "Rome", "intent": "intended"}])
+        details = parse_dated_list(text)[0].details
+        assert ("Element", "Babylon") in details and ("Read as", "Rome") in details
+        assert ("Writers' intent", "Intended") in details
+
+    def test_its_entries_keep_the_order_given(self, run):
+        items = [{"title": "Spring", "stage": "1", "date": "1890s"},
+                 {"title": "Winter", "stage": "2", "date": "c. 200 CE"}]
+        trace, _ = run(items, research={"kind": "interpretations", "focus": "ritual"})
+        assert trace.ordering == "given"
+        assert [trace.origin.source_title] + [e.source_title for e in trace.timeline] == ["Spring", "Winter"]
+
+    def test_a_reading_is_a_focus_of_interpretations_only(self):
+        with pytest.raises(ValidationError):
+            ResearchSpec(kind="interpretations", perspectives=["numerical"])
 
 
 class TestParallels:
@@ -350,13 +385,13 @@ class TestTheIdsMatchTheDashboard:
         from phansora.products.chrono_origin import models as m
 
         assert get_args(m.ResearchKind) == (
-            "chronology", "genealogy", "origins", "parallels", "translations", "establishment")
+            "chronology", "genealogy", "origins", "interpretations", "parallels", "translations",
+            "establishment")
         assert get_args(m.ResearchDirection) == ("ancestors", "descendants", "both")
-        assert get_args(m.ResearchSequence) == ("narrative", "historical", "symbolic")
-        assert list(rm.CHRONOLOGY_PERSPECTIVES) == [
-            "narrative", "historical", "coded_political", "numerical", "ritual", "mystical",
-            "solar_astronomical", "initiatory", "comparative"]
-        assert set(rm.ALLEGORICAL_READINGS) <= set(rm.CHRONOLOGY_PERSPECTIVES)
+        assert get_args(m.ResearchSequence) == ("narrative", "historical")
+        assert list(rm.CHRONOLOGY_PERSPECTIVES) == ["narrative", "historical", "comparative"]
+        assert list(rm.INTERPRETATION_READINGS) == [
+            "coded_political", "numerical", "ritual", "mystical", "solar_astronomical", "initiatory"]
         assert list(rm.GENEALOGY_FOCUS) == ["families", "dynasties", "deities", "schools", "languages"]
         assert list(rm.GENEALOGY_PERSPECTIVES) == ["historical", "traditional", "textual"]
         assert list(rm._DIRECTIONS) == ["ancestors", "descendants", "both"]

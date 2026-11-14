@@ -156,12 +156,16 @@ Attribution = Literal[
 # The ids are mirrored in the phansora repo (src/chrono-origin/research.js and
 # assets/js/products/chrono-origin/research-modes.js) and pinned by a test on each side.
 # A value here with no prompt behind it would be a label that changes nothing.
-ResearchKind = Literal["chronology", "genealogy", "origins", "parallels", "translations", "establishment"]
+ResearchKind = Literal[
+    "chronology", "genealogy", "origins", "interpretations", "parallels", "translations", "establishment",
+]
 ResearchFocus = Literal[
     # genealogy
     "families", "dynasties", "deities", "schools", "languages",
     # origins
     "inventions", "customs", "words", "ideas", "texts",
+    # interpretations: the reading
+    "coded_political", "numerical", "ritual", "mystical", "solar_astronomical", "initiatory",
     # parallels
     "stories", "people", "symbols", "practices",
     # translations
@@ -171,8 +175,7 @@ ResearchFocus = Literal[
 ]
 ResearchPerspective = Literal[
     # chronology
-    "narrative", "historical", "coded_political", "numerical", "ritual", "mystical",
-    "solar_astronomical", "initiatory", "comparative",
+    "narrative", "historical", "comparative",
     # origins (historical, comparative shared)
     "textual", "archaeological", "linguistic",
     # parallels (historical shared)
@@ -180,7 +183,7 @@ ResearchPerspective = Literal[
     # genealogy (historical, textual shared)
     "traditional",
 ]
-ResearchSequence = Literal["narrative", "historical", "symbolic"]
+ResearchSequence = Literal["narrative", "historical"]
 ResearchDirection = Literal["ancestors", "descendants", "both"]
 
 

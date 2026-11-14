@@ -1,11 +1,12 @@
-"""The six kinds of research the start screen offers, and the prompt each one sends.
+"""The seven kinds of research the start screen offers, and the prompt each one sends.
 
 Every kind runs the same pipeline as a trace: one grounded call in which the model runs
 its own searches and answers with a JSON array, read by ``dated_list`` and laid on the
 board. What differs is the question, and the question is the whole product: a
-chronology asks for an ORDER, a genealogy for DESCENT, a parallel for a COMPARISON, a
-translation for WORDING, an establishment for a HIERARCHY. Changing the heading on the
-same trace prompt would have answered all six with the same lineage.
+chronology asks for an ORDER, a genealogy for DESCENT, an interpretation for a MEANING, a
+parallel for a COMPARISON, a translation for WORDING, an establishment for a HIERARCHY.
+Changing the heading on the same trace prompt would have answered them all with the same
+lineage.
 
 Origins is the trace itself. ``RESEARCH_PROMPT`` is tuned by hand against the live model,
 so its focus and perspectives are added after it, as the context line is, rather than
@@ -40,9 +41,18 @@ CHRONOLOGY_PERSPECTIVES = {
         "people, places and dates behind the subject as historians reconstruct them, apart "
         "from what the account claims",
     ),
-    # The allegorical readings: the dashboard offers them under one lens, Allegorical,
-    # and each is researched as a timeline of its own. Each asks whether the WRITERS meant
-    # the account this way (ALLEGORICAL_READINGS below), so each is graded by intent.
+    "comparative": (
+        "Earlier Versions",
+        "older accounts of the same story from earlier cultures, matched to each point in "
+        "the sequence, each with its date and source; say where specialists dispute that it "
+        "is the same story. Not later retellings or loose resemblances",
+    ),
+}
+
+# Interpretations: what the writers may have encoded beneath the surface. One reading per
+# request, chosen as its focus, and each asks whether the WRITERS meant the subject this
+# way, so each entry is graded by intent.
+INTERPRETATION_READINGS = {
     "coded_political": (
         "Political & Coded History",
         "readings that hold the writers disguised real rulers, nations and events of their "
@@ -74,28 +84,18 @@ CHRONOLOGY_PERSPECTIVES = {
         "readings that hold the account encodes teachings for initiates: rites of passage, "
         "the body as a temple, the stages of an initiation",
     ),
-    "comparative": (
-        "Earlier Versions",
-        "older accounts of the same story from earlier cultures, matched to each point in "
-        "the sequence, each with its date and source; say where specialists dispute that it "
-        "is the same story. Not later retellings or loose resemblances",
-    ),
 }
 
-ALLEGORICAL_READINGS = (
-    "coded_political", "numerical", "ritual", "mystical", "solar_astronomical", "initiatory",
-)
-
-# An allegorical reading answers one question here: did the people who wrote the account
-# down mean it this way? A lesson a preacher draws, or an archetype a psychologist sees,
+# An interpretation answers one question here: did the people who made the subject mean
+# it this way? A lesson a preacher draws, or an archetype a psychologist sees,
 # is a reading made later, and saying so is the point. Where nobody has proposed a reading
 # for the subject, the honest answer is one entry that says so, not an invented reading.
-_ALLEGORICAL_RULE = (
-    "THIS IS AN ALLEGORICAL READING ({name}): the question is whether the people who wrote "
-    "the account down meant it this way, not what later readers drew from it. Grade every "
+_INTENT_RULE = (
+    "THIS IS AN INTERPRETATION ({name}): the question is whether the people who made "
+    "the subject meant it this way, not what later readers drew from it. Grade every "
     "entry in \"intent\": \"intended\" where evidence shows the writers meant it, "
     "\"debated\" where specialists disagree, or \"later reading\" where it was read into the "
-    "account after it was written, naming in \"authorship\" who first proposed it. Where "
+    "subject after it was made, naming in \"authorship\" who first proposed it. Where "
     "no one has proposed this reading for this subject, return a single entry titled "
     "\"No recorded reading\" with \"intent\": \"no tradition\", and invent nothing."
 )
@@ -347,11 +347,6 @@ _SEQUENCE_RULES = {
         "established, approximate, disputed, or traditional (held by a tradition but not "
         "established by evidence)."
     ),
-    "symbolic": (
-        "SYMBOLIC ORDER. Order the entries by the stages or cycles of the interpretation "
-        "itself: the phases, stations, initiations, seasons or cycles the perspective "
-        "describes, in the order it describes them, not by historical date."
-    ),
 }
 
 
@@ -361,11 +356,6 @@ def chronology_prompt(title: str, context: Optional[str], spec: ResearchSpec) ->
     label, description = CHRONOLOGY_PERSPECTIVES[lens]
     sequence = spec.sequence if spec.sequence in _SEQUENCE_RULES else "historical"
     subject = _subject(title, context)
-    allegory_rule = ""
-    intent_field = ""
-    if lens in ALLEGORICAL_READINGS:
-        allegory_rule = "\n\n" + _ALLEGORICAL_RULE.format(name=label)
-        intent_field = ',\n    "intent": "intended, debated, later reading or no tradition"'
 
     return f"""\
 Using live web search, build the chronology of {subject} as read through this perspective:
@@ -374,7 +364,7 @@ Using live web search, build the chronology of {subject} as read through this pe
 
 {_SEQUENCE_RULES[sequence]}
 
-Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.{allegory_rule}
+Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.
 
 The goal is a large, complete, ordered list with rich detail, not a brief summary. Include every stage or event the research supports.
 
@@ -389,7 +379,48 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "passage": "The passages, chapters or sources this entry draws on",
     "origin": "Where this account or reading comes from",
     "authorship": "Whose account or reading this is",
-    "significance": "What happens, or what this stage means in this perspective"{intent_field},
+    "significance": "What happens, or what this stage means in this perspective",
+    "is_collection": false
+  }}
+]
+
+{_JSON_RULES}"""
+
+
+# ------------------------------------------------------------------- interpretations
+# What the subject was meant to encode, through one reading. Its own kind, not a lens on a
+# timeline: a number, a symbol or a building has no order of events, so the entries follow
+# the subject's own order where it has one (a story's passages, a rite's stages, the
+# year's seasons) and go element by element where it does not.
+def interpretations_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
+    reading = spec.focus if spec.focus in INTERPRETATION_READINGS else "numerical"
+    label, description = INTERPRETATION_READINGS[reading]
+    subject = _subject(title, context)
+
+    return f"""\
+Using live web search, find how {subject} has been read through this interpretation:
+
+* {label}: {description}
+
+{_INTENT_RULE.format(name=label)}
+
+Give each element the reading decodes its own entry: a passage, figure, number, name, symbol, motif or feature of the subject, and what this reading takes it to mean. Order the entries by the subject's own sequence where it has one (the order of a story's passages, a rite's stages, the year's seasons, an initiation's degrees), and element by element where it has none. Report each reading as the people who hold it hold it, naming whose reading it is: do not present it as fact, and do not dismiss it. Where the evidence contradicts a reading, say so in that entry.
+
+The goal is a large, complete list with rich detail, not a brief summary. Include every element the research supports.
+
+Return the result as a JSON array and nothing else, one object per entry, in the order described above:
+
+[
+  {{
+    "title": "The element and what it is read as, named briefly, e.g. 666 as Nero Caesar",
+    "stage": "Its place in the subject's sequence, e.g. Exodus 14, Stage 3, Winter solstice; empty where there is none",
+    "element": "The passage, figure, number, symbol or feature being read",
+    "reading": "What this interpretation takes it to mean",
+    "date": "When this reading is first attested, e.g. c. 180 CE, 1890s",
+    "intent": "intended, debated, later reading or no tradition",
+    "authorship": "Who first proposed this reading, and who holds it now",
+    "origin": "The tradition, school or text the reading comes from",
+    "significance": "Why the reading matters, and what the evidence says of it",
     "is_collection": false
   }}
 ]
@@ -594,6 +625,7 @@ Return the result as a JSON array and nothing else, one object per entry, the to
 # ------------------------------------------------------------------------ dispatch
 _BUILDERS = {
     "chronology": chronology_prompt,
+    "interpretations": interpretations_prompt,
     "genealogy": genealogy_prompt,
     "parallels": parallels_prompt,
     "translations": translations_prompt,
@@ -610,7 +642,10 @@ def prompt_for(title: str, context: Optional[str], spec: Optional[ResearchSpec])
 
 def ordering_for(spec: Optional[ResearchSpec]) -> str:
     """"given" when the research's own order is the finding and a date sort would undo it."""
-    if spec is not None and spec.kind == "chronology" and spec.sequence in ("narrative", "symbolic"):
+    if spec is not None and spec.kind == "chronology" and spec.sequence == "narrative":
+        return "given"
+    # An interpretation follows the subject's own sequence, or goes element by element.
+    if spec is not None and spec.kind == "interpretations":
         return "given"
     # A line of descent is ordered by generation, and a mythic one has no dates to sort by.
     if spec is not None and spec.kind == "genealogy":
