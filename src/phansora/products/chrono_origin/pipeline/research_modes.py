@@ -75,7 +75,7 @@ CHRONOLOGY_PERSPECTIVES = {
         "the body as a temple, the stages of an initiation",
     ),
     "comparative": (
-        "Ancient Parallels",
+        "Earlier Versions",
         "older accounts of the same story from earlier cultures, matched to each point in "
         "the sequence, each with its date and source; say where specialists dispute that it "
         "is the same story. Not later retellings or loose resemblances",
@@ -300,7 +300,7 @@ def _clean(values: List[str], limit: int = 120) -> List[str]:
 # ------------------------------------------------------------------------- origins
 # Origins answers one question, "how did this come to be?", and leaves the others to the
 # kinds that own them: an older story of another culture that resembles this one is
-# Chronology's Ancient Parallels, a family tree is Genealogy, a comparison is Parallels.
+# Chronology's Earlier Versions, a family tree is Genealogy, a comparison is Parallels.
 # The trace prompt it follows asks for predecessors in general, so this says which
 # predecessors count. Sent with every Origins request; a plain trace (no research at all)
 # is left as it always was.
