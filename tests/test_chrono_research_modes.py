@@ -95,12 +95,53 @@ class TestEachKindAsksItsOwnQuestion:
             assert "Mesopotamian myth" in client.searches[0], kind
 
 
+# ------------------------------------------------------------- correlated across sources
+class TestEveryKindCorrelatesItsSources:
+    """One unified result per kind, not a list per source, with its agreement reported."""
+
+    @pytest.mark.parametrize("research,unified", [
+        ({"kind": "chronology", "perspectives": ["narrative"], "sequence": "narrative"},
+         "one timeline of the subject, not a list per source"),
+        ({"kind": "genealogy", "focus": "families"}, "Build ONE tree"),
+        ({"kind": "origins"}, "Reconstruct ONE path"),
+        ({"kind": "interpretations", "focus": "numerical"}, "give each reading its own entry"),
+        ({"kind": "parallels", "focus": "stories"}, "one entry naming them all"),
+        ({"kind": "translations", "focus": "wording"}, "identical wording are one entry"),
+        ({"kind": "establishment", "focus": "religions"}, "ONE structure"),
+    ])
+    def test_each_kind_merges_its_sources_into_one_result(self, run, research, unified):
+        _, client = run(TWO, research=research)
+        prompt = client.searches[0]
+        assert "CORRELATE ACROSS SOURCES" in prompt
+        assert unified in prompt
+        for field in ('"sources"', '"agreement"', '"conflicts"'):
+            assert field in prompt, (research["kind"], field)
+
+    def test_a_plain_trace_is_left_as_it_was(self, run):
+        _, client = run(TWO)
+        assert "CORRELATE ACROSS SOURCES" not in client.searches[0]
+
+    def test_the_correlation_becomes_rows_on_the_card(self):
+        text = json.dumps([{"title": "David anointed king", "date": "c. 1000 BCE",
+                            "sources": "2 Samuel 5:1-5; 1 Chronicles 11:1-3",
+                            "agreement": "differ", "conflicts": "Chronicles omits the seven years at Hebron"}])
+        details = parse_dated_list(text)[0].details
+        assert ("Sources", "2 Samuel 5:1-5; 1 Chronicles 11:1-3") in details
+        assert ("Agreement", "Differ") in details
+        assert ("Conflicts", "Chronicles omits the seven years at Hebron") in details
+        single = parse_dated_list(json.dumps([{"title": "X", "date": "1", "agreement": "single source"}]))[0]
+        assert ("Agreement", "Single source") in single.details
+
+
 class TestChronology:
     def test_each_sequence_is_its_own_instruction(self):
         spec = lambda seq: ResearchSpec(kind="chronology", perspectives=["historical"], sequence=seq)
         assert "NARRATIVE ORDER" in rm.chronology_prompt("X", None, spec("narrative"))
-        assert "bring the related passages" in rm.chronology_prompt("X", None, spec("narrative"))
-        assert "mark its uncertainty" in rm.chronology_prompt("X", None, spec("historical"))
+        narrative = rm.chronology_prompt("X", None, spec("narrative"))
+        assert "Reconstruct ONE sequence of events from every account" in narrative
+        assert "align the parallel passages" in narrative
+        assert "where that evidence converges" in rm.chronology_prompt("X", None, spec("historical"))
+        assert "Mark its uncertainty" in rm.chronology_prompt("X", None, spec("historical"))
         # The order of an interpretation's own stages left with it.
         with pytest.raises(ValidationError):
             spec("symbolic")

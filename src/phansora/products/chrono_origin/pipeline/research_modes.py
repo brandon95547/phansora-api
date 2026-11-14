@@ -32,8 +32,8 @@ from ..models import ResearchSpec
 CHRONOLOGY_PERSPECTIVES = {
     "narrative": (
         "Narrative",
-        "the account as a selected text, tradition or source tells it: its events, in the "
-        "words and order the account gives them",
+        "what the texts and traditions say happened: every telling of the account, its "
+        "events aligned into one sequence across all of them",
     ),
     "historical": (
         "Evidence",
@@ -270,6 +270,34 @@ No prose before or after the array. No code fences.
 """
 
 
+# Every kind correlates its sources rather than following one. A chronology of a story told
+# in several books is one sequence with each event placed once; a line of descent is one
+# tree; a parallel reported by several scholars is one comparison. What a "unit" is, and how
+# the units are unified, differs by kind, so each prompt names its own; the rule and the
+# three fields that report it are the same everywhere.
+def _correlation(unit: str, unify: str) -> str:
+    return (
+        "CORRELATE ACROSS SOURCES. Search every relevant source, not one: each text, book, "
+        "version, tradition, record, inscription, excavation and scholarly treatment that bears "
+        f"on the subject, and treat each as one witness. Where several sources record the same "
+        f"{unit}, merge them into ONE entry that names every one of them in \"sources\", rather "
+        f"than one entry per source. {unify} In \"agreement\" say whether the sources agree, "
+        "differ in detail, conflict, or rest on a single source; in \"conflicts\" say exactly "
+        "where they disagree (order, date, names, numbers, details) and whose version is whose. "
+        "Never settle a conflict silently by following one source, and never drop an entry "
+        "because only one source has it: mark it a single source."
+    )
+
+
+def _source_fields(sources: str) -> str:
+    """The three fields every kind reports its correlation in, for its JSON template."""
+    return (
+        f'    "sources": "{sources}",\n'
+        '    "agreement": "agree, differ, conflict or single source",\n'
+        '    "conflicts": "Where the sources disagree, and whose version is whose; empty where they agree",'
+    )
+
+
 def _subject(title: str, context: Optional[str]) -> str:
     title = title.strip()
     return f'"{title}" ({context.strip()})' if context and context.strip() else f'"{title}"'
@@ -309,11 +337,23 @@ THE QUESTION FOR THIS TRACE: how did "{title}" come to be? Include, each as entr
 A predecessor here is something "{title}" was built from or grew out of. Older versions of the same story, myth or motif told by other cultures or traditions are not its origin: leave them out, even where scholars think this one drew on them. They are researched as Parallels."""
 
 
+_ORIGINS_CORRELATION = (
+    _correlation(
+        "step in its history",
+        "Reconstruct ONE path from its origin to the present that the sources together "
+        "support, and where they give rival first appearances or rival routes, keep each as "
+        "its own entry and say in \"conflicts\" which source holds which.",
+    )
+    + ' Add "sources", "agreement" and "conflicts" to every object: "sources" names every '
+    "source the step draws on; \"agreement\" is agree, differ, conflict or single source."
+)
+
+
 def origins_addendum(title: str, spec: Optional[ResearchSpec]) -> str:
     """What Origins adds after the hand-tuned trace prompt. Empty for a plain trace."""
     if spec is None:
         return ""
-    parts: List[str] = [_ORIGINS_QUESTION.replace("{title}", title)]
+    parts: List[str] = [_ORIGINS_QUESTION.replace("{title}", title), _ORIGINS_CORRELATION]
     if spec.focus in ORIGINS_FOCUS:
         parts.append(ORIGINS_FOCUS[spec.focus])
     chosen = [ORIGINS_PERSPECTIVES[p] for p in spec.perspectives if p in ORIGINS_PERSPECTIVES]
@@ -329,19 +369,30 @@ def origins_addendum(title: str, spec: Optional[ResearchSpec]) -> str:
 # ---------------------------------------------------------------------- chronology
 _SEQUENCE_RULES = {
     "narrative": (
-        "NARRATIVE ORDER. Order the entries by the order of events the account itself "
-        "implies, not by when each source was written. Where the account is told across "
-        "several books, texts, episodes, sources or tellings, bring the related passages "
-        "together at the point in the sequence where they belong, and name every passage "
-        "an entry draws on in \"passage\"."
+        "UNIFIED NARRATIVE ORDER. Reconstruct ONE sequence of events from every account of "
+        "it, not the order of any one book or source, and not the order the sources were "
+        "written in. Where the subject is told in several books, texts or tellings (parallel "
+        "histories, several gospels, an episode retold in a later book, rival versions in "
+        "different traditions), align the parallel passages: each event is one entry, placed "
+        "where it falls in the reconstructed sequence, with every passage that tells it named "
+        "in \"sources\". Where the accounts place an event differently, place it where the "
+        "weight of the accounts puts it and say in \"conflicts\" which places it elsewhere; "
+        "where the order cannot be determined, say so there too."
     ),
     "historical": (
-        "BY DATE. Order the entries by historical date, oldest first. Give each "
-        "date as the evidence supports it and mark its uncertainty in \"certainty\": "
-        "established, approximate, disputed, or traditional (held by a tradition but not "
-        "established by evidence)."
+        "BY DATE. Order the entries by historical date, oldest first. For each event, bring "
+        "together every kind of evidence that bears on it (texts, inscriptions, records, "
+        "archaeology, dating methods) and give the date where that evidence converges. Mark "
+        "its uncertainty in \"certainty\": established, approximate, disputed, or traditional "
+        "(held by a tradition but not established by evidence)."
     ),
 }
+
+
+_CHRONOLOGY_CORRELATION = _correlation(
+    "event",
+    "The result is one timeline of the subject, not a list per source.",
+)
 
 
 def chronology_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
@@ -358,6 +409,8 @@ Using live web search, build the chronology of {subject} as read through this pe
 
 {_SEQUENCE_RULES[sequence]}
 
+{_CHRONOLOGY_CORRELATION}
+
 Report each interpretation as the people who hold it hold it, naming whose reading it is: do not present an interpretation as historical fact, and do not dismiss it. Where the historical record contradicts a reading, say so in that entry.
 
 The goal is a large, complete, ordered list with rich detail, not a brief summary. Include every stage or event the research supports.
@@ -370,7 +423,7 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "stage": "Its place in the sequence, e.g. 1, Stage 3, Winter solstice, Exodus 14",
     "date": "Historical date or range where one is known, e.g. c. 1200 BCE, 1066 CE; otherwise empty",
     "certainty": "established, approximate, disputed or traditional",
-    "passage": "The passages, chapters or sources this entry draws on",
+{_source_fields("Every passage and source that tells or dates this event, across all books and accounts, e.g. 2 Samuel 5:1-5; 1 Chronicles 11:1-3")}
     "origin": "Where this account or reading comes from",
     "authorship": "Whose account or reading this is",
     "significance": "What happens, or what this stage means in this perspective",
@@ -386,6 +439,13 @@ Return the result as a JSON array and nothing else, one object per entry, in the
 # timeline: a number, a symbol or a building has no order of events, so the entries follow
 # the subject's own order where it has one (a story's passages, a rite's stages, the
 # year's seasons) and go element by element where it does not.
+_INTERPRETATIONS_CORRELATION = _correlation(
+    "reading of an element",
+    "Where proponents read the same element differently, give each reading its own entry,"
+    " and say in \"conflicts\" how they differ.",
+)
+
+
 def interpretations_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     reading = spec.focus if spec.focus in INTERPRETATION_READINGS else "numerical"
     label, description = INTERPRETATION_READINGS[reading]
@@ -397,6 +457,8 @@ Using live web search, find how {subject} has been read through this interpretat
 * {label}: {description}
 
 {_INTENT_RULE.format(name=label)}
+
+{_INTERPRETATIONS_CORRELATION}
 
 Give each element the reading decodes its own entry: a passage, figure, number, name, symbol, motif or feature of the subject, and what this reading takes it to mean. Order the entries by the subject's own sequence where it has one (the order of a story's passages, a rite's stages, the year's seasons, an initiation's degrees), and element by element where it has none. Report each reading as the people who hold it hold it, naming whose reading it is: do not present it as fact, and do not dismiss it. Where the evidence contradicts a reading, say so in that entry.
 
@@ -413,6 +475,7 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "date": "When this reading is first attested, e.g. c. 180 CE, 1890s",
     "intent": "intended, debated, later reading or no tradition",
     "authorship": "Who first proposed this reading, and who holds it now",
+{_source_fields("Every work that proposes, supports or disputes this reading")}
     "origin": "The tradition, school or text the reading comes from",
     "significance": "Why the reading matters, and what the evidence says of it",
     "is_collection": false
@@ -423,6 +486,12 @@ Return the result as a JSON array and nothing else, one object per entry, in the
 
 
 # ----------------------------------------------------------------------- genealogy
+_GENEALOGY_CORRELATION = _correlation(
+    "member of the line",
+    "Build ONE tree from all of them: a member every source agrees on appears once.",
+)
+
+
 def genealogy_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     name, scope, parent = GENEALOGY_FOCUS.get(spec.focus or "", GENEALOGY_FOCUS["families"])
     direction = _DIRECTIONS.get(spec.direction or "", _DIRECTIONS["ancestors"]).format(parent=parent)
@@ -440,7 +509,7 @@ Using live web search, trace the genealogy of {_subject(title, context)} among {
 
 Include the subject itself as its own entry. Give each member of the line its own entry, and give "generation" relative to the subject: 0 for the subject, -1 for a {parent}, -2 for the generation before that, 1 for a child or successor, and so on.
 
-Where sources or traditions disagree about a link (two different fathers, a disputed succession, a contested language family), include each version and say whose it is in "line". Report traditional and mythic descent as the tradition gives it, naming the tradition: do not present it as historical fact, and do not dismiss it. Never invent a link to complete a line: where it breaks, end it.
+{_GENEALOGY_CORRELATION} Where sources or traditions disagree about a link (two different fathers, a disputed succession, a contested language family), include each version as its own entry, say whose it is in "line", and say in "conflicts" which source gives the other. Report traditional and mythic descent as the tradition gives it, naming the tradition: do not present it as historical fact, and do not dismiss it. Never invent a link to complete a line: where it breaks, end it.
 
 The goal is a large, complete line with rich detail, not a brief summary. Include every member the research supports, not only the famous ones.
 
@@ -455,6 +524,7 @@ Return the result as a JSON array and nothing else, one object per member of the
     "line": "Which line or version of the genealogy it belongs to, and whose account that is",
     "origin": "Where it lived, ruled, taught or was spoken",
     "authorship": "The record, text or tradition that attests the link",
+{_source_fields("Every record, text or tradition that attests this member and its link")}
     "significance": "Who it was, and why it matters to the line",
     "is_collection": false
   }}
@@ -464,6 +534,14 @@ Return the result as a JSON array and nothing else, one object per member of the
 
 
 # ----------------------------------------------------------------------- parallels
+_PARALLELS_CORRELATION = _correlation(
+    "parallel",
+    "A comparison several scholars or sources make is one entry naming them all; where "
+    "they disagree about whether it is a real parallel, or about what is shared, say so "
+    "in \"conflicts\".",
+)
+
+
 def parallels_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     focus_name, focus_desc = PARALLEL_FOCUS.get(spec.focus or "", PARALLEL_FOCUS["stories"])
     subjects = _clean(spec.subjects, 200) or [title.strip()]
@@ -498,6 +576,8 @@ Do not reduce a relational or narrative parallel to one participant: name the wh
     return f"""\
 {task}{lens}{context_line}
 
+{_PARALLELS_CORRELATION}
+
 Before returning, search separately for each kind of parallel above. Finding one result does not complete a kind.
 
 Return the result as a JSON array and nothing else, one object per entry, oldest first:
@@ -512,6 +592,7 @@ Return the result as a JSON array and nothing else, one object per entry, oldest
     "differences": "The specific ways it differs",
     "relation": "direct_source, probable_influence, possible_influence, independent_parallel or disputed_parallel",
     "authorship": "Source, author or community that attests it",
+{_source_fields("Every source and scholar that attests or proposes this parallel")}
     "significance": "Why the comparison matters, and who makes it",
     "is_collection": false
   }}
@@ -521,6 +602,16 @@ Return the result as a JSON array and nothing else, one object per entry, oldest
 
 
 # -------------------------------------------------------------------- translations
+_TRANSLATIONS_CORRELATION = _correlation(
+    "reading of the text",
+    "Align every version to the same text, so the result reads as one comparison: "
+    "versions that share an identical wording are one entry naming each of them, and in "
+    "\"agreement\" say whether this wording agrees with the original and the other "
+    "versions, differs, or stands alone. Where witnesses to one version disagree "
+    "(editions, printings, manuscripts), say so in \"conflicts\".",
+)
+
+
 def translations_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     focus = TRANSLATION_FOCUS.get(spec.focus or "", TRANSLATION_FOCUS["wording"])
     languages = _clean(spec.languages, 40)
@@ -543,6 +634,8 @@ Focus on {focus}
 
 Include the earliest form you can find and every version the research shows, each as its own entry: originals, manuscripts and early witnesses, translations, revisions and modern editions. Search separately for each language and each named version. A version not found is left out, not invented.
 
+{_TRANSLATIONS_CORRELATION}
+
 Quote briefly. "wording" is at most about 25 words. For a modern translation still under copyright, give only the key words or a close paraphrase, marked as a paraphrase.
 
 Return the result as a JSON array and nothing else, one object per version, oldest first:
@@ -557,6 +650,7 @@ Return the result as a JSON array and nothing else, one object per version, olde
     "meaning": "What that wording means, and how it differs from the others",
     "translation_choice": "The choice made here and why, where the research says",
     "manuscript_basis": "The source text or manuscripts it follows",
+{_source_fields("Every edition, manuscript or reference that gives this wording")}
     "origin": "Where it was made",
     "significance": "Why this version matters to the comparison",
     "is_collection": false
@@ -567,6 +661,13 @@ Return the result as a JSON array and nothing else, one object per version, olde
 
 
 # ------------------------------------------------------------------- establishment
+_ESTABLISHMENT_CORRELATION = _correlation(
+    "office, body or group",
+    "Reconcile them into ONE structure: official charters and directories, the groups' "
+    "own accounts, and independent reports.",
+)
+
+
 def establishment_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     name, parts, top = ESTABLISHMENT_FOCUS.get(spec.focus or "", ESTABLISHMENT_FOCUS["companies"])
 
@@ -591,7 +692,7 @@ Classify each entry in "standing":
 * disputed: claims a place in it, but that claim is contested or irregular
 * unrecognized: a body the official structure does not recognize
 
-Report each body's standing as the sources give it, and where the official structure and the group disagree about it, give both views in "relationship". Do not take a side.
+{_ESTABLISHMENT_CORRELATION} Report each body's standing as the sources give it, and where the official structure and the group disagree about it, give both views in "relationship". Do not take a side.
 
 The goal is a large, complete map with rich detail, not a brief summary. Include every body the research supports.
 
@@ -608,6 +709,7 @@ Return the result as a JSON array and nothing else, one object per entry, the to
     "authority": "What it governs, controls or answers for",
     "relationship": "How it relates to the body above it; for a body outside the structure, how and why it split, and how each side regards the other",
     "origin": "Where it is based",
+{_source_fields("Every charter, directory, report or account that places this body in the structure")}
     "significance": "Its role in the structure, and why it matters",
     "is_collection": false
   }}

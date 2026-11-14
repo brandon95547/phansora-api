@@ -113,6 +113,10 @@ _DETAIL_KEYS = (
     ("function", "Function"),
     ("description", "Description"),
     ("notes", "Notes"),
+    # Every kind: what the entry was correlated from, and whether those sources agree.
+    ("sources", "Sources"),
+    ("agreement", "Agreement"),
+    ("conflicts", "Conflicts"),
     # Chronology
     ("passage", "Passage"),
     ("certainty", "Date certainty"),
@@ -144,7 +148,7 @@ _DETAIL_KEYS = (
 )
 
 # Values written as a fixed vocabulary ("probable_influence"), shown as words.
-_WORD_VALUES = {"Relation", "Standing", "Date certainty", "Writers' intent"}
+_WORD_VALUES = {"Relation", "Standing", "Date certainty", "Writers' intent", "Agreement"}
 
 # Where a body stands against the official structure (Establishment), read leniently: the
 # prompt names four values, and a model that writes "schismatic" or "irregular" means one.
