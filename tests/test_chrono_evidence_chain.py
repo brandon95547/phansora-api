@@ -193,6 +193,8 @@ def test_the_modes_are_the_ones_the_dialog_offers():
     ids = {
         "discovery", "earlier", "people", "events", "chronology", "places", "lineages",
         "nations", "beliefs", "texts", "objects", "practices", "traditions",
+        # A Narrative Order chronology's own four.
+        "next", "placement", "within", "accounts",
     }
     assert set(ExpandMode.__args__) == ids
     assert set(EXPAND_MODES) == ids, "model vocabulary and prompt directives have drifted"
@@ -770,3 +772,53 @@ def test_the_shaping_call_reformats_and_does_not_re_aim():
     # No second axis. The words that aim a search belong to the body, not to this.
     for directive in ("live web search", "search separately", "Before searching"):
         assert directive not in filled, f"the shaping call re-aims with {directive!r}"
+
+
+# ----------------------------------------- a Narrative Order chronology's own four
+# On a Narrative Order chronology the cards run in one order rebuilt from every account,
+# and Expand asks about a card's place in it. The order the research gives is the finding.
+def test_the_narrative_modes_name_the_story_and_the_next_card():
+    from phansora.products.chrono_origin.pipeline.prompts import expand_body, expand_mode
+
+    filled = expand_body(
+        expand_mode("next"), "Baptism of Jesus", story="New Testament",
+        next_title="Temptation of Jesus in the Wilderness",
+    )
+    assert "Baptism of Jesus" in filled
+    assert "Temptation of Jesus in the Wilderness" in filled
+    assert "New Testament" in filled
+    assert "{" not in filled.split("`")[0]  # no placeholder left unfilled
+
+    # With no card after it, the body still reads.
+    alone = expand_body(expand_mode("next"), "Baptism of Jesus", story="New Testament")
+    assert "{next}" not in alone and "the event that follows it" in alone
+
+    for mode in ("placement", "within", "accounts"):
+        body = expand_body(expand_mode(mode), "Baptism of Jesus", story="New Testament")
+        assert "{story}" not in body and "New Testament" in body, mode
+        assert expand_mode(mode)["order"] == "given", mode
+
+
+def test_the_shaping_call_is_asked_for_each_results_passage():
+    from phansora.products.chrono_origin.pipeline.prompts import EXPAND_EXTRACT_PROMPT
+
+    assert '"passage"' in EXPAND_EXTRACT_PROMPT
+
+
+def test_a_story_keeps_its_order_and_shows_its_passage_where_a_date_would_be():
+    entries = [
+        {"name": "John baptizes in the Jordan", "passage": "Mark 1:4-8; Luke 3:3-18", "relation": "records"},
+        {"name": "Herod Antipas", "year": -4, "relation": "context"},
+        {"name": "The Spirit descends", "passage": "Matthew 3:16", "relation": "records"},
+    ]
+    events, _ = _adapt(entries, keep_order=True)
+    assert [e.source_title for e in events] == [
+        "John baptizes in the Jordan", "Herod Antipas", "The Spirit descends",
+    ]
+    first = events[0]
+    assert first.era_label == "Mark 1:4-8; Luke 3:3-18"
+    assert {"label": "Passage", "value": "Mark 1:4-8; Luke 3:3-18"} in [d.model_dump() for d in first.details]
+
+    # Every other mode still sorts by date, undated last.
+    by_date, _ = _adapt(entries)
+    assert by_date[0].source_title == "Herod Antipas"

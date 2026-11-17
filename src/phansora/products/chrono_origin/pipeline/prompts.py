@@ -191,9 +191,9 @@ No prose before or after the array. No code fences.
 # scope had been baked into the title one call earlier, where nothing was checking. Renaming
 # the card fixes that card. This fixes the next one.
 _JSON_TAIL = """\
-Return JSON only, ordered chronologically from earliest to latest:
+Return JSON only, in the order the research gives the results:
 
-{"events":[{"name":"","year":<signed integer, negative = BCE>,"group":"","relation":"","shared":"","url":"","is_collection":false}]}
+{"events":[{"name":"","year":<signed integer, negative = BCE>,"passage":"","group":"","relation":"","shared":"","url":"","is_collection":false}]}
 
 One object per result in the research. If the research contains results, the list is never
 empty.
@@ -205,6 +205,10 @@ be researched, and a scope written into a name limits everything found under it 
 result that is an EVENT rather than a named thing takes a short phrase saying what happened.
 
 `shared` — why it is connected. `group` — which part or category it belongs to.
+
+`passage` — where the result is told in a text, its reference (book, chapter and verses),
+every one when several texts tell it, separated by semicolons. Empty when it is not told in
+a text.
 
 `is_collection` — true when the result is itself a set of separately made works gathered
 under one name: an anthology, a canon, collected letters, a series, a catalogue, a product
@@ -780,6 +784,103 @@ a category does not complete that category.
 
 """,
     },
+    # ------------------------------------------------------------------ Narrative Order
+    # A Narrative Order chronology is one order of events rebuilt from every account of a
+    # story, and its cards run left to right in that order. Expanding a card there asks
+    # about its place in the order: what lies between it and the next card, why it sits
+    # where it does, what happens inside it, and how the accounts tell it. `{story}` is
+    # the trace, `{next}` the card after this one. Their results keep the order the
+    # research gives them ("order": "given"): the order IS the finding, and most of them
+    # have no year to sort by.
+    "next": {
+        "query": "what happens next narrative sequence passage between",
+        "label": "To the next event",
+        "order": "given",
+        "body": """\
+Using live web search, find what the accounts of {story} tell between {subject} and {next}.
+
+{subject} is one event in a single narrative order rebuilt from every account of {story}, and
+{next} is the event placed directly after it. Return the steps of the story that fall between
+the two, in story order: what the accounts narrate after {subject} and before {next}.
+
+- Return only what lies between them: not {subject} itself, and not {next} or anything after
+  it.
+- One result per step, named as what happens in it, in a short phrase.
+- Give each step's passage, and every account's passage where several tell it.
+- Where only some of the accounts include a step, say which in `shared`.
+- If the accounts move straight from one to the other with nothing between them, return the
+  passage that joins them as one result and say so.
+- Classify a step as `records` when an account narrates it, and `context` when it is
+  background the accounts assume.
+- A year only where the step has a defensible date; otherwise none.
+""",
+    },
+    "placement": {
+        "query": "narrative order sequence placement harmony accounts position",
+        "label": "Why it's placed here",
+        "order": "given",
+        "body": """\
+Using live web search, find why {subject} is placed where it is in the narrative order of
+{story}.
+
+{subject} is one event in a single order of events rebuilt from every account of {story}.
+Its position is itself a claim. Return what fixes it there:
+
+- each account that narrates {subject}, and where in that account it falls: what comes just
+  before and just after it there
+- statements in the text that fix its time: a day, a feast, a season, a reign, an age, "after
+  these things"
+- the harmonies, commentaries and scholars that place it here, and on what grounds
+- every account or authority that places it somewhere else, and where
+
+One result per account, statement or authority, named as the account or authority itself;
+`shared` says what it shows about the position. Give the passage where there is one.
+Classify each as `records` when it is a text itself placing the event, `context` when it is a
+later harmony or scholar's judgement, and `disputed_parallel` when it places the event
+elsewhere.
+""",
+    },
+    "within": {
+        "query": "episode scenes steps sequence account passage details",
+        "label": "What happened within it",
+        "order": "given",
+        "body": """\
+Using live web search, find the steps within {subject}, as the accounts of {story} tell them.
+
+Treat {subject} as a stretch of the story rather than a single moment, and break it into what
+happens in it, in story order:
+
+- one result per step, named as what happens in it, in a short phrase
+- each step's passage, and every account's passage where several tell it
+- where the accounts tell the steps in a different order, or only one of them has a step, say
+  so in `shared`
+- nothing from before {subject} begins or after it ends
+
+If {subject} is a single moment with no steps of its own, return it as one result and say so.
+Classify a step as `records` when an account narrates it, and `context` when it is
+background.
+""",
+    },
+    "accounts": {
+        "query": "accounts compared differences discrepancies parallel passages versions",
+        "label": "How the accounts differ",
+        "order": "given",
+        "body": """\
+Using live web search, compare how each account of {story} tells {subject}.
+
+Return one result per account that narrates {subject}, named as the account itself, with its
+passage; in `shared`, say what that account has that the others lack, what it leaves out, and
+what it tells differently: the order, the people, the place, the time, the words spoken, the
+outcome.
+
+Then one result per point on which the accounts disagree, named as the point in a short
+phrase, with `shared` setting out each account's version of it.
+
+- Report the differences, not a harmonized retelling.
+- Say where scholars hold a difference to be reconcilable, and where they do not.
+- Classify an account as `records` and a point of disagreement as `disputed_parallel`.
+""",
+    },
 }
 
 
@@ -833,7 +934,13 @@ def expand_extract(subject: str, research: str, citations_block: str) -> str:
     )
 
 
-def expand_body(mode: dict, subject: str, is_collection: bool = False) -> str:
+def expand_body(
+    mode: dict,
+    subject: str,
+    is_collection: bool = False,
+    story: Optional[str] = None,
+    next_title: Optional[str] = None,
+) -> str:
     """A mode's body with the node's own title in it, and its level set by the node.
 
     `.replace`, not `.format`: the body ends in a JSON template, and every brace in it
@@ -847,7 +954,13 @@ def expand_body(mode: dict, subject: str, is_collection: bool = False) -> str:
     body = mode.get("collection_body") if is_collection else None
     if body is None:
         body = (COLLECTION_RULE + mode["body"]) if is_collection else mode["body"]
-    return body.replace("{subject}", subject or "this subject")
+    # The Narrative Order modes also name the trace and the card after this one.
+    return (
+        body
+        .replace("{story}", (story or "").strip() or "the story")
+        .replace("{next}", (next_title or "").strip() or "the event that follows it in the story")
+        .replace("{subject}", subject or "this subject")
+    )
 
 
 # The wrapper, and everything in it earns its line.

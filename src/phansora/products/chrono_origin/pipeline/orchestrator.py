@@ -262,6 +262,7 @@ def adapt_expand_events(
     parent_id: str,
     max_events: int,
     to_citations,
+    keep_order: bool = False,
 ) -> Tuple[List[TimelineEvent], List[Connection]]:
     """Flat answer in, (events, connections) out.
 
@@ -304,6 +305,9 @@ def adapt_expand_events(
         # nothing to their year. So an undated find is shown, last, saying so — which is
         # a great deal more useful than a call that quietly returns four of nine.
         undated = year is None and year_end is None
+        # Where a text tells it ("Luke 1:5-25"). An undated find in a story is placed by its
+        # passage, so the passage stands where its date would ("Undated" says nothing).
+        passage = _text_of_keys(entry, "passage", "reference", "verses")
 
         word = _text_of_keys(entry, "relation", "classification", "link").lower()
         relation = (
@@ -332,6 +336,8 @@ def adapt_expand_events(
         # the board's nine relations cannot: "disputed parallel" and "independent
         # parallel" draw the same line and are not the same finding.
         details: List[DetailField] = []
+        if passage:
+            details.append(DetailField(label="Passage", value=passage))
         group = _text_of_keys(entry, "group", "category")
         if group:
             details.append(DetailField(label="Category", value=group.replace("_", " ")))
@@ -360,7 +366,7 @@ def adapt_expand_events(
                 id=event_id,
                 year=year,
                 year_end=year_end,
-                era_label=era or ("Undated" if undated else None),
+                era_label=era or (passage if undated and passage else ("Undated" if undated else None)),
                 precision="year" if year is not None else "unknown",
                 node_type=raw_kind if is_node_kind(raw_kind) else "event",
                 # A card produced by an expansion is itself a node the reader can expand,
@@ -404,7 +410,10 @@ def adapt_expand_events(
             )
         )
 
-    events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
+    # By date, undated last, unless the order the research gave is the finding itself
+    # (the Narrative Order modes: story order, mostly undated).
+    if not keep_order:
+        events.sort(key=lambda e: (e.year is None, e.year if e.year is not None else 0))
 
     # One record rather than twenty, so an expansion reads as a block in the terminal:
     # what the model found, what reached the board, and what did not.
@@ -917,7 +926,10 @@ class TraceOrchestrator:
                 f"\nThe subject is understood in this context: {req.context}\n"
                 if req.context else ""
             ),
-            mode_body=expand_body(mode, req.parent_source_title, req.parent_is_collection),
+            mode_body=expand_body(
+                mode, req.parent_source_title, req.parent_is_collection,
+                story=req.story_title, next_title=req.next_source_title,
+            ),
         )
         try:
             answer = self.client.grounded_search(prompt)
@@ -1062,6 +1074,7 @@ class TraceOrchestrator:
             parent_id=parent_id,
             max_events=req.max_events,
             to_citations=to_citations,
+            keep_order=mode.get("order") == "given",
         )
 
         snap = usage.snapshot()

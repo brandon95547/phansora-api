@@ -620,6 +620,12 @@ ExpandMode = Literal[
     "objects",     # physical evidence: artifacts, monuments, specimens
     "practices",   # laws, rules, customs, rituals, institutions
     "traditions",  # visions, prophecies, oral tradition, legend
+    # A Narrative Order chronology's own four: the board is one order of events rebuilt
+    # from every account, so expanding a card asks about its place in that order.
+    "next",        # the steps between this card and the next one
+    "placement",   # why the event sits at this point in the order
+    "within",      # the steps inside the event
+    "accounts",    # how each account tells it, and where they disagree
 ]
 
 
@@ -664,6 +670,13 @@ class ExpandRequest(BaseModel):
     existing: List[str] = Field(
         default_factory=list,
         description="Titles already on the timeline, so the expansion can avoid repeating them.",
+    )
+    # The card after this one on the timeline, for "next": the steps asked for are the
+    # ones between the two, so both ends have to be named.
+    next_source_title: Optional[str] = Field(
+        default=None,
+        max_length=300,
+        description="Title of the item that follows this one on the timeline, for the 'next' mode.",
     )
     language: str = Field(default="en")
 
