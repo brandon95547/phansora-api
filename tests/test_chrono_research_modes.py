@@ -146,6 +146,22 @@ class TestChronology:
         with pytest.raises(ValidationError):
             spec("symbolic")
 
+    def test_a_narrative_order_says_why_each_event_is_placed_where_it_is(self):
+        spec = lambda seq: ResearchSpec(kind="chronology", perspectives=["narrative"], sequence=seq)
+        narrative = rm.chronology_prompt("X", None, spec("narrative"))
+        assert '"placement"' in narrative
+        assert "rather than earlier or later" in narrative
+        assert "wording in the text that fixes its time" in narrative
+        # Worded for any story: no scripture in the example it is given.
+        template = narrative[narrative.index('"placement"'):]
+        assert "John" not in template.split("\n")[0]
+        # A date order needs no reason beyond the date.
+        assert '"placement"' not in rm.chronology_prompt("X", None, spec("historical"))
+        details = parse_dated_list(json.dumps([{
+            "title": "Prologue", "stage": "1", "placement": "The account opens with it",
+        }]))[0].details
+        assert ("Why here", "The account opens with it") in details
+
     def test_only_the_chosen_perspective_is_asked_for(self):
         prompt = rm.chronology_prompt("X", None, ResearchSpec(
             kind="chronology", perspectives=["narrative"]))

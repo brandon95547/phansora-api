@@ -377,7 +377,12 @@ _SEQUENCE_RULES = {
         "where it falls in the reconstructed sequence, with every passage that tells it named "
         "in \"sources\". Where the accounts place an event differently, place it where the "
         "weight of the accounts puts it and say in \"conflicts\" which places it elsewhere; "
-        "where the order cannot be determined, say so there too."
+        "where the order cannot be determined, say so there too. In \"placement\" say what "
+        "puts each event at this point rather than earlier or later: where it falls in each "
+        "account that tells it (what comes just before and after it there), any wording in "
+        "the text that fixes its time (a beginning, \"after these things\", a feast, a "
+        "season, a reign, an age), or, where the accounts do not settle it, the harmony or "
+        "scholarly tradition that places it here, named."
     ),
     "historical": (
         "BY DATE. Order the entries by historical date, oldest first. For each event, bring "
@@ -395,12 +400,21 @@ _CHRONOLOGY_CORRELATION = _correlation(
 )
 
 
+# A Narrative Order's position is itself a claim, so each entry says what fixes it there
+# (shown as "Why here"). A date sort needs no such field: the date is the reason.
+_PLACEMENT_FIELD = (
+    '\n    "placement": "What in the accounts puts this event here rather than earlier or later, '
+    'e.g. the account opens with it, before any dated event; or the text says it came three days after the last",'
+)
+
+
 def chronology_prompt(title: str, context: Optional[str], spec: ResearchSpec) -> str:
     # One timeline, read through one lens (ResearchSpec allows a chronology one).
     lens = next((p for p in spec.perspectives if p in CHRONOLOGY_PERSPECTIVES), "historical")
     label, description = CHRONOLOGY_PERSPECTIVES[lens]
     sequence = spec.sequence if spec.sequence in _SEQUENCE_RULES else "historical"
     subject = _subject(title, context)
+    placement = _PLACEMENT_FIELD if sequence == "narrative" else ""
 
     return f"""\
 Using live web search, build the chronology of {subject} as read through this perspective:
@@ -422,7 +436,7 @@ Return the result as a JSON array and nothing else, one object per entry, in the
     "title": "What happens at this point, named briefly",
     "stage": "Its place in the sequence, e.g. 1, Stage 3, Exodus 14",
     "date": "Historical date or range where one is known, e.g. c. 1200 BCE, 1066 CE; otherwise empty",
-    "certainty": "established, approximate, disputed or traditional",
+    "certainty": "established, approximate, disputed or traditional",{placement}
 {_source_fields("Every passage and source that tells or dates this event, across all books and accounts, e.g. 2 Samuel 5:1-5; 1 Chronicles 11:1-3")}
     "origin": "Where this account comes from",
     "authorship": "Whose account this is",

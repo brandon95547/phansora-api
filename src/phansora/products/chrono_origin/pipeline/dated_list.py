@@ -120,6 +120,7 @@ _DETAIL_KEYS = (
     # Chronology
     ("passage", "Passage"),
     ("certainty", "Date certainty"),
+    ("placement", "Why here"),
     # Interpretations
     ("element", "Element"),
     ("reading", "Read as"),
